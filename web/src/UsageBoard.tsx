@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useLayoutEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { api, Board, Burn, Subject, AccountWindow, ModelUsage } from "./api";
 import { fmtNum, personColor, modelColor, agoFrom, untilReset, windowTone, pct } from "./format";
@@ -78,16 +78,30 @@ function Seg<T extends string>({ value: v, onChange, options }: { value: T; onCh
 
 interface Tip { x: number; y: number; slice: Slice; rowLabel: string; rowTotal: number; metric: Metric }
 
+// The tip sits below and to the right of the cursor, and flips above it (or
+// hugs the right edge) when that would run off the viewport — a slice near the
+// bottom of a long page must never clip out of the window.
 function Tooltip({ tip }: { tip: Tip }) {
   const share = tip.rowTotal > 0 ? tip.slice.value / tip.rowTotal : 0;
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 240, h: 96 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setSize({ w: el.offsetWidth, h: el.offsetHeight });
+  }, [tip.slice.name, tip.rowLabel]);
+  const gap = 14;
+  const left = Math.max(8, Math.min(tip.x + gap, window.innerWidth - size.w - 8));
+  const fitsBelow = tip.y + gap + size.h + 8 <= window.innerHeight;
+  const top = fitsBelow ? tip.y + gap : Math.max(8, tip.y - gap - size.h);
   return (
     <motion.div
-      initial={{ opacity: 0, y: 4, scale: 0.97 }}
+      ref={ref}
+      initial={{ opacity: 0, y: fitsBelow ? 4 : -4, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.97 }}
       transition={{ duration: 0.12 }}
       className="pointer-events-none fixed z-50 w-max max-w-[240px] rounded-xl border border-line bg-raised px-3.5 py-2.5 shadow-2xl"
-      style={{ left: Math.min(tip.x + 14, window.innerWidth - 250), top: tip.y + 16 }}
+      style={{ left, top }}
     >
       <div className="flex items-center gap-2 text-[15px] font-semibold">
         <span className="h-2.5 w-2.5 rounded-full" style={{ background: tip.slice.color }} />

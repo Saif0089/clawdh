@@ -186,7 +186,7 @@ function Shell({ tab, setTab, actor, onSignOut }: { tab: Tab; setTab: (t: Tab) =
   };
   const tabs: [Tab, string][] = [["accounts", "Accounts"], ["people", "People"], ["usage", "Usage"], ["quotas", "Quotas"], ["activity", "Activity"]];
   return (
-    <div className="mx-auto max-w-5xl px-5 py-6 sm:px-8">
+    <div className="mx-auto max-w-5xl px-5 py-6 pb-24 sm:px-8">
       <header className="wordmark flex items-center gap-2.5 pb-4">
         <Logo />
         <span className="text-[22px] font-bold tracking-tight">clawdh</span>
