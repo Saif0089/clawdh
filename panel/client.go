@@ -120,10 +120,11 @@ type Client struct {
 // GatewayShare is one shared account this machine may run through the gateway:
 // where to route, and this person's key. It mirrors the panel's check-in reply.
 type GatewayShare struct {
-	Account string `json:"account"`
-	Slug    string `json:"slug"`
-	Gateway string `json:"gateway"`
-	Key     string `json:"key"`
+	Account   string    `json:"account"`
+	Slug      string    `json:"slug"`
+	Gateway   string    `json:"gateway"`
+	Key       string    `json:"key"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"` // when this access ends on its own; zero: until revoked
 }
 
 // LoadShares reads the cached gateway shares. A missing file is no shares.

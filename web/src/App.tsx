@@ -7,7 +7,7 @@ import { UsageBoard } from "./UsageBoard";
 import { Quotas } from "./Quotas";
 import { useDialog } from "./Dialog";
 import { DeviceJobs } from "./DeviceJobs";
-import { when, untilExpiry } from "./format";
+import { when, untilExpiry, accessLeft } from "./format";
 
 type Ask = ReturnType<typeof useDialog>["ask"];
 
@@ -276,23 +276,37 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
     if (!without.length) return void ask({ title: "Everyone already has it", note: "Everyone you've added can already use this account.", confirm: "Close", cancel: "" });
     const out = await ask({
       title: `Give access to ${a.name}`,
-      fields: [{ name: "people", label: "To", checks: without.map((p) => ({ value: p.id, label: p.name })) }],
-      note: "Pick everyone who should use this account. Many people can share it at once, through the gateway — it appears on each machine once they've joined.",
+      fields: [
+        { name: "people", label: "To", checks: without.map((p) => ({ value: p.id, label: p.name })) },
+        {
+          name: "hours",
+          label: "For how long",
+          pick: [
+            { value: "0", label: "Until I take it back" },
+            { value: "8", label: "8 hours" },
+            { value: "24", label: "A day" },
+            { value: "168", label: "A week" },
+          ],
+        },
+      ],
+      note: "Many people can share one account at once, through the gateway. Lending it for a while — someone from another team for the afternoon — ends on its own, and the history says so.",
       confirm: "Give access",
     });
     const ids = (out?.people as string[]) || [];
     if (!ids.length) return;
+    const hours = Number(out?.hours || 0);
     try {
       let lastGateway = "";
       for (const id of ids) {
-        const { gateway } = await api<{ gateway?: string }>("POST", `/api/accounts/${a.id}/share`, { personId: id });
+        const { gateway } = await api<{ gateway?: string }>("POST", `/api/accounts/${a.id}/share`, { personId: id, hours });
         lastGateway = gateway || lastGateway;
       }
       reload();
       const names = without.filter((p) => ids.includes(p.id)).map((p) => p.name).join(", ");
+      const forHow = hours ? ` for the next ${hours >= 24 ? `${Math.round(hours / 24)} day${hours >= 48 ? "s" : ""}` : `${hours} hours`} — then it ends on its own` : "";
       await ask(
         lastGateway
-          ? { title: "Done", note: `${names} can now use ${a.name}. It appears on each machine within a minute once they've joined.`, confirm: "Close", cancel: "" }
+          ? { title: "Done", note: `${names} can now use ${a.name}${forHow}. It appears on each machine within a minute once they've joined.`, confirm: "Close", cancel: "" }
           : { title: "Gateway not set", note: "There's no gateway configured (CLAWDH_GATEWAY_URL), so there's nowhere to point their access yet.", confirm: "Close", cancel: "" }
       );
     } catch (e: any) {
@@ -369,6 +383,7 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
                     {(a.shared || []).map((sh) => (
                       <span key={sh.shareId} className="group inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised-2 py-1 pl-2.5 pr-1.5 text-[13.5px]">
                         {sh.personName}
+                        {sh.expiresAt && <span className="text-[12px] text-faint" title={`Ends ${new Date(sh.expiresAt).toLocaleString()}`}>· {accessLeft(sh.expiresAt)}</span>}
                         <button onClick={() => revoke(a, sh)} className="rounded text-faint transition-colors hover:text-crit" title="Take access away">×</button>
                       </span>
                     ))}
@@ -476,8 +491,11 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                   <div className="text-[12px] font-medium uppercase tracking-[0.06em] text-faint">Can use</div>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {(p.can || []).length ? (
-                      (p.can || []).map((c) => (
-                        <span key={c} className="rounded-lg border border-line bg-raised-2 px-2.5 py-1 text-[13.5px]">{c}</span>
+                      (p.can || []).map((c, i) => (
+                        <span key={c + i} className="rounded-lg border border-line bg-raised-2 px-2.5 py-1 text-[13.5px]">
+                          {c}
+                          {p.canUntil?.[i] && <span className="ml-1.5 text-[12px] text-faint" title={`Ends ${new Date(p.canUntil[i]).toLocaleString()}`}>· {accessLeft(p.canUntil[i])}</span>}
+                        </span>
                       ))
                     ) : (
                       <span className="text-[14px] text-faint">Nothing shared yet — share an account from the Accounts tab.</span>

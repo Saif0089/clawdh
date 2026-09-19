@@ -383,6 +383,15 @@ function renderShared(shares) {
     node.querySelector(".run-cmd").textContent = cmd;
     const copyBtn = node.querySelector(".copy-cmd");
     copyBtn.addEventListener("click", () => copyToClipboard(cmd, copyBtn));
+    // Access lent for a while says so on its pill: "Ready · 6h left".
+    if (sh.expiresAt && !String(sh.expiresAt).startsWith("0001")) {
+      const pill = node.querySelector(".status-pill");
+      const left = new Date(sh.expiresAt).getTime() - Date.now();
+      const mins = Math.max(0, Math.round(left / 60000));
+      const word = mins < 60 ? mins + "m" : mins < 48 * 60 ? Math.round(mins / 60) + "h" : Math.round(mins / 1440) + "d";
+      pill.textContent = "Ready · " + word + " left";
+      pill.title = "This access ends on its own at " + new Date(sh.expiresAt).toLocaleString();
+    }
     // The gateway's own reading of this account's windows — the same bars a
     // local card draws, so every account shows usage the same way.
     const meters = node.querySelector(".meters");

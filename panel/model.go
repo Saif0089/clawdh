@@ -85,7 +85,20 @@ type Share struct {
 	// Claude credential, so this is a lower-stakes secret than the login itself.
 	SealedKey []byte    `json:"sealedKey,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+	// ExpiresAt, when set, is when this access ends on its own — "for the
+	// afternoon", "for the week" — so lending an account across teams never
+	// depends on someone remembering to take it back. Zero means until revoked.
+	// GrantedBy is who gave it, so the line that records it running out can say
+	// whose call it was.
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	GrantedBy string    `json:"grantedBy,omitempty"`
 }
+
+// Live reports whether a share still grants access at now: it has no
+// deadline, or the deadline hasn't passed. The gateway and every listing go
+// through this, so an expired share stops working the second its time is up,
+// whether or not the sweep has removed it yet.
+func (sh Share) Live(now time.Time) bool { return sh.ExpiresAt.IsZero() || now.Before(sh.ExpiresAt) }
 
 // JoinCode is a one-shot code that enrols a machine as a given person.
 type JoinCode struct {

@@ -189,3 +189,54 @@ func TestReissuingAShareRotatesTheKey(t *testing.T) {
 		t.Error("the new key does not work after re-issuing")
 	}
 }
+
+// Access given "for 8 hours" ends on its own: the gateway stops honouring the
+// key at the deadline, the next change sweeps the share away, and the history
+// says whose time ran out. Access given with no deadline stays.
+func TestTimedShareEndsOnItsOwn(t *testing.T) {
+	s, clock := newTestStore(t)
+	account, alice, bob := seed(t, s)
+	seal := func(k string) []byte { return []byte(k) }
+
+	key, err := s.IssueShareFor(account, alice, "Hassan", 8*time.Hour, seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueShare(account, bob, "Hassan", seal); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.Load()
+	if _, ok := d.ShareByKeyHashAt(HashToken(key), *clock); !ok {
+		t.Fatal("a timed share must work before its deadline")
+	}
+	last := d.Activity[len(d.Activity)-2]
+	if last.Who != "Hassan" || last.What != "gave Alice access to Work for 8 hours" {
+		t.Errorf("grant line = %q by %q", last.What, last.Who)
+	}
+
+	// Nine hours on: the key is dead at the gateway even before any sweep…
+	*clock = clock.Add(9 * time.Hour)
+	if _, ok := d.ShareByKeyHashAt(HashToken(key), *clock); ok {
+		t.Fatal("a share past its deadline must not resolve")
+	}
+	// …and the next change through the store sweeps it and writes it down.
+	if err := s.Mutate(func(*Data) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = s.Load()
+	for _, sh := range d.Shares {
+		if sh.PersonID == alice {
+			t.Error("the timed share should have been swept")
+		}
+		if sh.PersonID == bob && !sh.ExpiresAt.IsZero() {
+			t.Error("access with no deadline must not gain one")
+		}
+	}
+	if len(d.Shares) != 1 {
+		t.Errorf("shares left = %d, want Bob's only", len(d.Shares))
+	}
+	end := d.Activity[len(d.Activity)-1]
+	if end.Who != "clawdh" || end.What != "ended Alice's access to Work — the time Hassan gave it for ran out" {
+		t.Errorf("end line = %q by %q", end.What, end.Who)
+	}
+}

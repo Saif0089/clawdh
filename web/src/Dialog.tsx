@@ -12,6 +12,7 @@ export type Check = { value: string; label: string; checked?: boolean };
 export type Field =
   | { name: string; label: string; placeholder?: string; type?: string }
   | { name: string; label: string; checks: Check[] }
+  | { name: string; label: string; pick: { value: string; label: string }[]; value?: string } // one of a few, as a segmented control
   | { name: string; label: string; copy: string };
 
 export interface Spec {
@@ -26,6 +27,7 @@ export interface Spec {
 export type Answer = Record<string, string | string[]> | null;
 
 const isChecks = (f: Field): f is Extract<Field, { checks: Check[] }> => "checks" in f;
+const isPick = (f: Field): f is Extract<Field, { pick: unknown }> => "pick" in f;
 const isCopy = (f: Field): f is Extract<Field, { copy: string }> => "copy" in f;
 
 export function useDialog() {
@@ -55,7 +57,7 @@ function DialogView({ spec, onClose }: { spec: Spec; onClose: (a: Answer) => voi
   const fields = spec.fields || [];
   const [text, setText] = useState<Record<string, string>>(() => {
     const t: Record<string, string> = {};
-    for (const f of fields) if (!isChecks(f) && !isCopy(f)) t[f.name] = "";
+    for (const f of fields) if (isPick(f)) t[f.name] = f.value ?? f.pick[0]?.value ?? ""; else if (!isChecks(f) && !isCopy(f)) t[f.name] = "";
     return t;
   });
   const [checked, setChecked] = useState<Record<string, Set<string>>>(() => {
@@ -118,12 +120,25 @@ function DialogView({ spec, onClose }: { spec: Spec; onClose: (a: Answer) => voi
 
         <div className="mt-4 flex flex-col gap-4">
           {fields.map((f) => {
-            const bindFirst = !firstBound && !isChecks(f) && !isCopy(f) ? ((firstBound = true), true) : false;
+            const bindFirst = !firstBound && !isChecks(f) && !isCopy(f) && !isPick(f) ? ((firstBound = true), true) : false;
             return (
               <div key={f.name} className="flex flex-col gap-2">
                 <label className="text-[13px] text-faint">{f.label}</label>
                 {isCopy(f) ? (
                   <CopyBox text={f.copy} />
+                ) : isPick(f) ? (
+                  <div className="inline-flex flex-wrap rounded-xl border border-line bg-sunken p-1">
+                    {f.pick.map((o) => (
+                      <button
+                        type="button"
+                        key={o.value}
+                        onClick={() => setText((t) => ({ ...t, [f.name]: o.value }))}
+                        className={`rounded-lg px-3.5 py-1.5 text-[14px] font-medium transition-colors ${text[f.name] === o.value ? "bg-raised-2 text-ink" : "text-muted hover:text-ink"}`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
                 ) : isChecks(f) ? (
                   <div className="flex flex-col gap-1.5">
                     {f.checks.map((o) => {

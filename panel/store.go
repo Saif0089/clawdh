@@ -119,6 +119,7 @@ func (s *Store) Mutate(fn func(*Data) error) error {
 		if err != nil {
 			return err
 		}
+		d.expireShares(s.now())
 		if err := fn(&d); err != nil {
 			return err
 		}
@@ -247,12 +248,40 @@ func (d *Data) putShare(sh Share) {
 // resolve a member key to an account. A key with no live share is unknown, which
 // the gateway turns into a 401 — instant revocation.
 func (d *Data) ShareByKeyHash(keyHash string) (Share, bool) {
+	return d.ShareByKeyHashAt(keyHash, time.Now())
+}
+
+// ShareByKeyHashAt is ShareByKeyHash against a given clock: a share whose
+// deadline has passed is not found, so its key stops working at the deadline
+// itself, before any sweep.
+func (d *Data) ShareByKeyHashAt(keyHash string, now time.Time) (Share, bool) {
 	for _, sh := range d.Shares {
-		if sh.KeyHash == keyHash {
+		if sh.KeyHash == keyHash && sh.Live(now) {
 			return sh, true
 		}
 	}
 	return Share{}, false
+}
+
+// expireShares removes every share whose time has run out and writes a line
+// for each, so the history says access ended and why. Mutate runs it before
+// every change, and the panel's reads go through Mutate, so a deadline is
+// settled within seconds of passing (and the gateway stops honouring the
+// share at the deadline itself — see Share.Live).
+func (d *Data) expireShares(now time.Time) {
+	kept := d.Shares[:0]
+	for _, sh := range d.Shares {
+		if sh.Live(now) {
+			kept = append(kept, sh)
+			continue
+		}
+		by := "the time it was given for ran out"
+		if sh.GrantedBy != "" {
+			by = "the time " + sh.GrantedBy + " gave it for ran out"
+		}
+		d.log(now, "clawdh", fmt.Sprintf("ended %s's access to %s — %s", d.personName(sh.PersonID), d.accountName(sh.AccountID), by))
+	}
+	d.Shares = kept
 }
 
 // log appends one line of activity.
@@ -273,20 +302,33 @@ func (d *Data) Log(at time.Time, who, what string) { d.log(at, who, what) }
 // returns the gateway key. sealKey seals it for later delivery to the person's
 // device (the caller supplies it because only it holds the panel key).
 func (s *Store) IssueShare(accountID, personID, who string, sealKey func(string) []byte) (key string, err error) {
+	return s.IssueShareFor(accountID, personID, who, 0, sealKey)
+}
+
+// IssueShareFor is IssueShare with a deadline: after d the access ends on its
+// own and the history says so. A zero d is access until revoked.
+func (s *Store) IssueShareFor(accountID, personID, who string, d time.Duration, sealKey func(string) []byte) (key string, err error) {
 	key, hash, err := NewToken()
 	if err != nil {
 		return "", err
 	}
 	sealed := sealKey(key)
-	err = s.Mutate(func(d *Data) error {
-		if _, ok := d.Account(accountID); !ok {
+	err = s.Mutate(func(data *Data) error {
+		if _, ok := data.Account(accountID); !ok {
 			return fmt.Errorf("no account with id %q", accountID)
 		}
-		if _, ok := d.Person(personID); !ok {
+		if _, ok := data.Person(personID); !ok {
 			return fmt.Errorf("no person with id %q", personID)
 		}
-		d.putShare(Share{ID: newID(), AccountID: accountID, PersonID: personID, KeyHash: hash, SealedKey: sealed, CreatedAt: s.now()})
-		d.Log(s.now(), who, fmt.Sprintf("gave %s access to %s", d.personName(personID), d.accountName(accountID)))
+		now := s.now()
+		sh := Share{ID: newID(), AccountID: accountID, PersonID: personID, KeyHash: hash, SealedKey: sealed, CreatedAt: now, GrantedBy: who}
+		what := fmt.Sprintf("gave %s access to %s", data.personName(personID), data.accountName(accountID))
+		if d > 0 {
+			sh.ExpiresAt = now.Add(d)
+			what += " for " + humanDuration(d)
+		}
+		data.putShare(sh)
+		data.Log(now, who, what)
 		return nil
 	})
 	if err != nil {
@@ -331,3 +373,24 @@ func newID() string {
 
 // jsonMarshal is exposed to tests that need to build a raw backend blob.
 func jsonMarshal(d Data) ([]byte, error) { return json.MarshalIndent(d, "", "  ") }
+
+// humanDuration is a duration in the words a person would use: "8 hours",
+// "a day", "3 days", "a week".
+func humanDuration(d time.Duration) string {
+	switch h := int(d.Round(time.Hour).Hours()); {
+	case h < 1:
+		return fmt.Sprintf("%d minutes", int(d.Round(time.Minute).Minutes()))
+	case h == 1:
+		return "an hour"
+	case h < 24:
+		return fmt.Sprintf("%d hours", h)
+	case h == 24:
+		return "a day"
+	case h < 24*7:
+		return fmt.Sprintf("%d days", h/24)
+	case h == 24*7:
+		return "a week"
+	default:
+		return fmt.Sprintf("%d weeks", h/(24*7))
+	}
+}

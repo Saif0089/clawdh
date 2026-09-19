@@ -39,9 +39,10 @@ type accountView struct {
 // shareView is one person's gateway access to an account, with the share id
 // needed to take it away.
 type shareView struct {
-	ShareID    string `json:"shareId"`
-	PersonID   string `json:"personId"`
-	PersonName string `json:"personName"`
+	ShareID    string    `json:"shareId"`
+	PersonID   string    `json:"personId"`
+	PersonName string    `json:"personName"`
+	ExpiresAt  time.Time `json:"expiresAt,omitempty"` // zero: until revoked
 }
 
 type deviceView struct {
@@ -56,8 +57,10 @@ type personView struct {
 	Name  string `json:"name"`
 	Email string `json:"email,omitempty"`
 	// Can is the accounts this person may use through the gateway.
-	Can     []string     `json:"can,omitempty"`
-	Devices []deviceView `json:"devices,omitempty"`
+	Can []string `json:"can,omitempty"`
+	// CanUntil is, per Can entry, when that access ends ("" = until revoked).
+	CanUntil []string     `json:"canUntil,omitempty"`
+	Devices  []deviceView `json:"devices,omitempty"`
 }
 
 // handlePanel builds the whole interface in one read. Three tabs over one
@@ -76,7 +79,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 		v := accountView{ID: a.ID, Name: a.Name, Email: a.Email, Plan: a.Plan, HasLogin: a.HasLogin()}
 		for _, sh := range d.Shares {
 			if sh.AccountID == a.ID {
-				v.Shared = append(v.Shared, shareView{ShareID: sh.ID, PersonID: sh.PersonID, PersonName: d.personName(sh.PersonID)})
+				v.Shared = append(v.Shared, shareView{ShareID: sh.ID, PersonID: sh.PersonID, PersonName: d.personName(sh.PersonID), ExpiresAt: sh.ExpiresAt})
 			}
 		}
 		accounts = append(accounts, v)
@@ -100,6 +103,11 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 		for _, sh := range d.Shares {
 			if sh.PersonID == p.ID {
 				v.Can = append(v.Can, d.accountName(sh.AccountID))
+				until := ""
+				if !sh.ExpiresAt.IsZero() {
+					until = sh.ExpiresAt.UTC().Format(time.RFC3339)
+				}
+				v.CanUntil = append(v.CanUntil, until)
 			}
 		}
 		for _, dev := range d.Devices {
@@ -483,10 +491,15 @@ func (s *Server) handleRemoveDevice(w http.ResponseWriter, r *http.Request) {
 // one account — that is the gateway model.
 func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		PersonID string `json:"personId"`
+		PersonID string  `json:"personId"`
+		Hours    float64 `json:"hours"` // 0: until revoked
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, http.StatusBadRequest, "That request could not be read.")
+		return
+	}
+	if in.Hours < 0 || in.Hours > 24*90 {
+		fail(w, http.StatusBadRequest, "Access can be given for up to 90 days at a time, or until you take it back.")
 		return
 	}
 	id := r.PathValue("id")
@@ -496,7 +509,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	key, err := s.store.IssueShare(id, in.PersonID, s.actor(r), func(k string) []byte { sealed, _ := s.secret.Seal([]byte(k)); return sealed })
+	key, err := s.store.IssueShareFor(id, in.PersonID, s.actor(r), time.Duration(in.Hours*float64(time.Hour)), func(k string) []byte { sealed, _ := s.secret.Seal([]byte(k)); return sealed })
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
@@ -573,10 +586,11 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 // where to route (the gateway URL), and this person's key. The client turns each
 // into an alias that runs Claude Code in gateway mode.
 type clientShare struct {
-	Account string `json:"account"`
-	Slug    string `json:"slug"`
-	Gateway string `json:"gateway"`
-	Key     string `json:"key"`
+	Account   string    `json:"account"`
+	Slug      string    `json:"slug"`
+	Gateway   string    `json:"gateway"`
+	Key       string    `json:"key"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"` // when this access ends on its own; zero: until revoked
 }
 
 // handleCheckin is the whole of what a machine asks: what may I use?
@@ -619,7 +633,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 	if gw := gatewayURL(); gw != "" {
 		slugs := shareSlugs(d, dev.PersonID)
 		for _, sh := range d.Shares {
-			if sh.PersonID != dev.PersonID {
+			if sh.PersonID != dev.PersonID || !sh.Live(s.now()) {
 				continue
 			}
 			acct, ok := d.Account(sh.AccountID)
@@ -630,7 +644,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 			if err != nil {
 				continue
 			}
-			shares = append(shares, clientShare{Account: acct.Name, Slug: slugs[acct.ID], Gateway: gw, Key: string(plain)})
+			shares = append(shares, clientShare{Account: acct.Name, Slug: slugs[acct.ID], Gateway: gw, Key: string(plain), ExpiresAt: sh.ExpiresAt})
 		}
 	}
 

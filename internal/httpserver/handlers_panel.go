@@ -33,6 +33,8 @@ type panelStatus struct {
 type sharedView struct {
 	Account string `json:"account"`
 	Slug    string `json:"slug"`
+	// ExpiresAt is when this access ends on its own (zero: until revoked).
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 	// Window is the gateway's captured 5h/weekly utilisation for this account,
 	// when the panel has metering — the same bars a local card shows.
 	Window *panel.ShareWindow `json:"window,omitempty"`
@@ -51,7 +53,7 @@ func (s *Server) currentPanelStatus() panelStatus {
 	if sp, err := config.SharesFile(); err == nil {
 		if shares, err := panel.LoadShares(sp); err == nil {
 			for _, sh := range shares {
-				v := sharedView{Account: sh.Account, Slug: sh.Slug}
+				v := sharedView{Account: sh.Account, Slug: sh.Slug, ExpiresAt: sh.ExpiresAt}
 				if w, ok := windowForSlug(sh.Slug); ok {
 					v.Window = &w
 				}

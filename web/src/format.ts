@@ -92,3 +92,16 @@ export function untilExpiry(iso?: string): string {
   if (mins < 60) return `${mins} min left`;
   return `${Math.round(mins / 60)} hr left`;
 }
+
+// accessLeft is the short tail on an access chip with a deadline: "6h left",
+// "3d left", or "ended" once it has passed (the panel removes it seconds later).
+export function accessLeft(iso?: string): string {
+  if (!iso || iso.startsWith("0001")) return "";
+  const left = new Date(iso).getTime() - Date.now();
+  if (left <= 0) return "ended";
+  const mins = Math.round(left / 60000);
+  if (mins < 60) return `${mins}m left`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs}h left`;
+  return `${Math.round(hrs / 24)}d left`;
+}

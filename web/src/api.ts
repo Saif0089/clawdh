@@ -25,9 +25,9 @@ export interface AccountWindow {
   fiveHReset?: string; sevenDReset?: string; updatedAt: string;
 }
 export interface Limit { id: string; subjectType: string; subjectId: string; windowKind: string; maxWeighted?: number; maxCostUsd?: number }
-export interface Account { id: string; name: string; email?: string; plan?: string; hasLogin: boolean; warning?: string; shared?: { shareId: string; personId: string; personName: string }[] }
+export interface Account { id: string; name: string; email?: string; plan?: string; hasLogin: boolean; warning?: string; shared?: { shareId: string; personId: string; personName: string; expiresAt?: string }[] }
 export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean }
-export interface Person { id: string; name: string; email?: string; can?: string[]; devices?: Device[] }
+export interface Person { id: string; name: string; email?: string; can?: string[]; canUntil?: string[]; devices?: Device[] }
 export interface Job {
   id: string; kind: string; params?: string; status: string; result?: string;
   requestedBy?: string; createdAt: string; resolvedAt?: string;
