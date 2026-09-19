@@ -14,7 +14,7 @@ import (
 // does not share anything yet — each test decides that.
 func setupSharing(t *testing.T, h *harness) (cfg ClientConfig, accountID, personID string) {
 	t.Helper()
-	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, "")
+	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, "")
 	h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, "")
 	h.do("POST", "/api/people", map[string]string{"name": "Alice"}, "")
 

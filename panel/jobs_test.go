@@ -64,7 +64,7 @@ func (m *memJobs) RecentJobs(_ context.Context, deviceID string, _ int) ([]Job, 
 func TestRemoteJobRoundTripIsConsentGated(t *testing.T) {
 	h := newHarnessWith(t, &memJobs{})
 
-	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, ""); code != 200 {
+	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
 		t.Fatal("setup failed")
 	}
 	if code, _ := h.do("POST", "/api/people", map[string]string{"name": "Alice"}, ""); code != 201 {

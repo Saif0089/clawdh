@@ -55,7 +55,7 @@ func TestPanelRoundTripsThroughPostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.IssueShare(account, alice, seal); err != nil {
+	if _, err := store.IssueShare(account, alice, "tester", seal); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,7 +100,7 @@ func TestPostgresLandsConcurrentSharesWithoutLoss(t *testing.T) {
 	for i := range stores {
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = stores[i].IssueShare("acct", people[i], seal)
+			_, errs[i] = stores[i].IssueShare("acct", people[i], "tester", seal)
 		}(i)
 	}
 	wg.Wait()

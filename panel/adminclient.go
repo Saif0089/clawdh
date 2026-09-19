@@ -14,13 +14,15 @@ import (
 // here rather than in the CLI so the panel's wire format has exactly one
 // definition, on both ends of it.
 
-// AdminLogin signs in and leaves the session cookie in httpc's jar.
-func AdminLogin(ctx context.Context, httpc *http.Client, server, password string) error {
+// AdminLogin signs in as `name` — the name the panel records this session's
+// changes under (the pusher's member name, for a push) — and leaves the session
+// cookie in httpc's jar.
+func AdminLogin(ctx context.Context, httpc *http.Client, server, password, name string) error {
 	var out struct {
 		Error string `json:"error"`
 	}
 	code, err := adminCall(ctx, httpc, http.MethodPost, server+"/api/login",
-		map[string]string{"password": password}, &out)
+		map[string]string{"password": password, "name": name}, &out)
 	if err != nil {
 		return err
 	}

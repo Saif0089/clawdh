@@ -69,7 +69,7 @@ func TestConcurrentShareIssueDuringAWriteStillLands(t *testing.T) {
 		back.commit(mustMarshal(t, d))
 	}
 
-	if _, err := s.IssueShare(account, alice, seal); err != nil {
+	if _, err := s.IssueShare(account, alice, "tester", seal); err != nil {
 		t.Fatalf("Alice's share was lost to a concurrent write: %v", err)
 	}
 

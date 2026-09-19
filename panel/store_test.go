@@ -82,7 +82,7 @@ func TestEveryDecisionIsLogged(t *testing.T) {
 	account, alice, _ := seed(t, s)
 	seal := func(k string) []byte { return []byte(k) }
 
-	if _, err := s.IssueShare(account, alice, seal); err != nil {
+	if _, err := s.IssueShare(account, alice, "tester", seal); err != nil {
 		t.Fatal(err)
 	}
 	d, _ := s.Load()
@@ -90,7 +90,7 @@ func TestEveryDecisionIsLogged(t *testing.T) {
 	for _, sh := range d.Shares {
 		shareID = sh.ID
 	}
-	if err := s.RevokeShare(shareID); err != nil {
+	if err := s.RevokeShare(shareID, "tester"); err != nil {
 		t.Fatal(err)
 	}
 	d, _ = s.Load()
@@ -115,11 +115,11 @@ func TestSharesAreManyPerAccountAndResolveByKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	aliceKey, err := s.IssueShare(account, alice, func(k string) []byte { return []byte(k) })
+	aliceKey, err := s.IssueShare(account, alice, "tester", func(k string) []byte { return []byte(k) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobKey, err := s.IssueShare(account, bob, func(k string) []byte { return []byte(k) })
+	bobKey, err := s.IssueShare(account, bob, "tester", func(k string) []byte { return []byte(k) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestSharesAreManyPerAccountAndResolveByKey(t *testing.T) {
 			aliceShareID = x.ID
 		}
 	}
-	if err := s.RevokeShare(aliceShareID); err != nil {
+	if err := s.RevokeShare(aliceShareID, "tester"); err != nil {
 		t.Fatal(err)
 	}
 	d, _ = s.Load()
@@ -167,11 +167,11 @@ func TestReissuingAShareRotatesTheKey(t *testing.T) {
 	account, alice, _ := seed(t, s)
 	seal := func(k string) []byte { return []byte(k) }
 
-	first, err := s.IssueShare(account, alice, seal)
+	first, err := s.IssueShare(account, alice, "tester", seal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.IssueShare(account, alice, seal)
+	second, err := s.IssueShare(account, alice, "tester", seal)
 	if err != nil {
 		t.Fatal(err)
 	}

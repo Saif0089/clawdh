@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -130,6 +131,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"needsSetup":   d.Admin == nil,
 		"signedIn":     s.sessionValid(r),
+		"actor":        s.actorOrEmpty(r),
 		"canonicalUrl": strings.TrimRight(config.Env("PANEL_URL"), "/"),
 		"gatewayUrl":   gatewayURL(),
 	})
@@ -138,9 +140,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Password string `json:"password"`
+		Name     string `json:"name"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, 400, "That request could not be read.")
+		return
+	}
+	who, err := cleanActor(in.Name)
+	if err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	if len(in.Password) < 10 {
@@ -157,23 +165,49 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return errors.New("This panel already has an administrator.")
 		}
 		d.Admin = &admin
-		d.Log(s.now(), "You", "set this panel up")
+		d.Log(s.now(), who, "set this panel up")
 		return nil
 	})
 	if err != nil {
 		fail(w, 409, err.Error())
 		return
 	}
-	s.startSession(w)
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	s.startSession(w, who)
+	writeJSON(w, 200, map[string]any{"ok": true, "name": who})
+}
+
+// actorNameMax bounds the name a signer gives, so the activity log stays legible.
+const actorNameMax = 40
+
+// cleanActor normalises the name someone signs in with. The panel is deliberately
+// flat — one password, no accounts, no roles — but several team leads share
+// that password, and "You did this" in the log tells the next reader nothing.
+// So a signer says who they are, and every change they make is recorded under
+// that name. It is an honest name, not an identity check; that is the level of
+// trust a shared password already implies.
+func cleanActor(name string) (string, error) {
+	name = strings.Join(strings.Fields(name), " ") // collapse whitespace, strip newlines
+	if name == "" {
+		return "", errors.New("Say who you are — your name goes on the changes you make.")
+	}
+	if len(name) > actorNameMax {
+		return "", fmt.Errorf("Keep your name under %d characters.", actorNameMax)
+	}
+	return name, nil
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Password string `json:"password"`
+		Name     string `json:"name"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, 400, "That request could not be read.")
+		return
+	}
+	who, err := cleanActor(in.Name)
+	if err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	d, err := s.store.Load()
@@ -185,8 +219,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "That password is not right.")
 		return
 	}
-	s.startSession(w)
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	s.startSession(w, who)
+	writeJSON(w, 200, map[string]any{"ok": true, "name": who})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -197,15 +231,23 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-// startSession seals an expiry into the cookie itself, so nothing about who is
-// signed in is kept on the server. That is what lets a panel run as several
-// processes at once — a serverless deployment — without an admin signed in on
-// one instance being a stranger to the next. The cookie is sealed with the
-// panel's own key, so it cannot be forged, and it simply stops working once its
-// sealed expiry passes.
-func (s *Server) startSession(w http.ResponseWriter) {
+// sessionClaims is what a session cookie carries, sealed: when it expires and
+// who signed in. Nothing about a session is kept on the server.
+type sessionClaims struct {
+	Exp  time.Time `json:"exp"`
+	Name string    `json:"name"`
+}
+
+// startSession seals the expiry and the signer's name into the cookie itself,
+// so nothing about who is signed in is kept on the server. That is what lets a
+// panel run as several processes at once — a serverless deployment — without an
+// admin signed in on one instance being a stranger to the next. The cookie is
+// sealed with the panel's own key, so neither the expiry nor the name can be
+// forged, and it simply stops working once its sealed expiry passes.
+func (s *Server) startSession(w http.ResponseWriter, who string) {
 	expiry := s.now().Add(sessionLife)
-	sealed, err := s.secret.Seal([]byte(expiry.UTC().Format(time.RFC3339)))
+	raw, _ := json.Marshal(sessionClaims{Exp: expiry.UTC(), Name: who})
+	sealed, err := s.secret.Seal(raw)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -216,24 +258,56 @@ func (s *Server) startSession(w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) sessionValid(r *http.Request) bool {
+// session opens the cookie and returns its claims, or ok=false when there is no
+// valid, unexpired session. A cookie from before names were sealed in (a bare
+// RFC 3339 expiry) is still honoured, with an empty name.
+func (s *Server) session(r *http.Request) (sessionClaims, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return false
+		return sessionClaims{}, false
 	}
 	sealed, err := base64.RawURLEncoding.DecodeString(c.Value)
 	if err != nil {
-		return false
+		return sessionClaims{}, false
 	}
 	plain, err := s.secret.Open(sealed)
 	if err != nil {
-		return false // not sealed by this panel's key
+		return sessionClaims{}, false // not sealed by this panel's key
 	}
-	exp, err := time.Parse(time.RFC3339, string(plain))
-	if err != nil {
-		return false
+	var cl sessionClaims
+	if err := json.Unmarshal(plain, &cl); err != nil {
+		exp, err := time.Parse(time.RFC3339, string(plain))
+		if err != nil {
+			return sessionClaims{}, false
+		}
+		cl = sessionClaims{Exp: exp}
 	}
-	return s.now().Before(exp)
+	if !s.now().Before(cl.Exp) {
+		return sessionClaims{}, false
+	}
+	return cl, true
+}
+
+func (s *Server) sessionValid(r *http.Request) bool {
+	_, ok := s.session(r)
+	return ok
+}
+
+// actorOrEmpty is the signed-in name for the UI to show, "" when signed out.
+func (s *Server) actorOrEmpty(r *http.Request) string {
+	if cl, ok := s.session(r); ok {
+		return cl.Name
+	}
+	return ""
+}
+
+// actor is the name the signed-in admin gave — what their changes are logged
+// under. "an admin" only for a session from before names were recorded.
+func (s *Server) actor(r *http.Request) string {
+	if cl, ok := s.session(r); ok && cl.Name != "" {
+		return cl.Name
+	}
+	return "an admin"
 }
 
 // admin guards everything only the administrator may do.

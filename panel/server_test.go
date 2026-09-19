@@ -81,7 +81,7 @@ func TestAMachineIsToldWhatItCanUseAndWhenItStops(t *testing.T) {
 	t.Setenv("CLAWDH_GATEWAY_URL", "https://gw.example")
 	h := newHarness(t)
 
-	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, ""); code != 200 {
+	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
 		t.Fatalf("setup = %d %v", code, body)
 	}
 
@@ -162,7 +162,7 @@ func TestAMachineIsToldWhatItCanUseAndWhenItStops(t *testing.T) {
 func TestPushingALoginRecordsThePusherAsAMember(t *testing.T) {
 	h := newHarness(t)
 
-	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, ""); code != 200 {
+	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
 		t.Fatal("setup failed")
 	}
 	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, ""); code != 201 {
@@ -239,7 +239,7 @@ func TestPushingALoginRecordsThePusherAsAMember(t *testing.T) {
 // page explaining what to do with it — the no-terminal way to set someone up.
 func TestInviteLinkOpensAWelcomePage(t *testing.T) {
 	h := newHarness(t)
-	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, "")
+	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, "")
 	h.do("POST", "/api/people", map[string]string{"name": "Ehtisham"}, "")
 	_, pb := h.do("GET", "/api/panel", nil, "")
 	personID := pb["people"].([]any)[0].(map[string]any)["id"].(string)
@@ -274,7 +274,7 @@ func TestInviteLinkOpensAWelcomePage(t *testing.T) {
 
 func TestThePanelIsClosedToStrangers(t *testing.T) {
 	h := newHarness(t)
-	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, ""); code != 200 {
+	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
 		t.Fatal("setup failed")
 	}
 	// A fresh client: signed in nowhere.
@@ -288,10 +288,10 @@ func TestThePanelIsClosedToStrangers(t *testing.T) {
 	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Sneaky"}, ""); code != 401 {
 		t.Errorf("adding an account without signing in = %d, want 401", code)
 	}
-	if code, _ := h.do("POST", "/api/login", map[string]string{"password": "wrong"}, ""); code != 401 {
+	if code, _ := h.do("POST", "/api/login", map[string]string{"password": "wrong", "name": "Tester"}, ""); code != 401 {
 		t.Errorf("signing in with the wrong password = %d, want 401", code)
 	}
-	if code, _ := h.do("POST", "/api/login", map[string]string{"password": "a-long-enough-one"}, ""); code != 200 {
+	if code, _ := h.do("POST", "/api/login", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
 		t.Errorf("signing in with the right password = %d, want 200", code)
 	}
 	if code, _ := h.do("GET", "/api/panel", nil, ""); code != 200 {
@@ -302,7 +302,7 @@ func TestThePanelIsClosedToStrangers(t *testing.T) {
 // Cutting off a machine has to be immediate and total, whatever it still holds.
 func TestACutOffMachineIsTurnedAway(t *testing.T) {
 	h := newHarness(t)
-	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, "")
+	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, "")
 	h.do("POST", "/api/people", map[string]string{"name": "Bob"}, "")
 	_, panelBody := h.do("GET", "/api/panel", nil, "")
 	personID := panelBody["people"].([]any)[0].(map[string]any)["id"].(string)
@@ -335,7 +335,7 @@ func (j *cookieJar) Cookies(_ *neturl.URL) []*http.Cookie             { return j
 // state that would hand a member an empty account.
 func TestCannotShareAnAccountWithNoLogin(t *testing.T) {
 	h := newHarness(t)
-	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one"}, "")
+	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, "")
 	h.do("POST", "/api/accounts", map[string]string{"name": "Empty"}, "")
 	h.do("POST", "/api/people", map[string]string{"name": "Alice"}, "")
 	_, pb := h.do("GET", "/api/panel", nil, "")
@@ -348,5 +348,51 @@ func TestCannotShareAnAccountWithNoLogin(t *testing.T) {
 	}
 	if body["error"] == nil {
 		t.Error("expected an explanation of why it was refused")
+	}
+}
+
+// The panel is flat — one shared password — but every change is recorded under
+// the name the signer gave, so two team leads on the same password are told
+// apart in the log. A sign-in without a name is refused, the name rides in the
+// sealed cookie, and a second signer's changes carry their own name.
+func TestChangesAreRecordedUnderTheSignersName(t *testing.T) {
+	h := newHarness(t)
+	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Hassan"}, ""); code != 200 {
+		t.Fatalf("setup = %d %v", code, body)
+	}
+	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, ""); code != 201 {
+		t.Fatal("adding an account failed")
+	}
+	_, st := h.do("GET", "/api/status", nil, "")
+	if st["actor"] != "Hassan" {
+		t.Errorf("status actor = %v, want Hassan (the sealed session name)", st["actor"])
+	}
+
+	// A second team lead signs in on the same password under their own name.
+	h.do("POST", "/api/logout", nil, "")
+	if code, body := h.do("POST", "/api/login", map[string]string{"password": "a-long-enough-one"}, ""); code != 400 {
+		t.Errorf("a nameless sign-in = %d %v, want 400 (say who you are)", code, body)
+	}
+	if code, _ := h.do("POST", "/api/login", map[string]string{"password": "a-long-enough-one", "name": "  Ibrahim  "}, ""); code != 200 {
+		t.Fatal("named sign-in failed")
+	}
+	if code, _ := h.do("POST", "/api/people", map[string]string{"name": "Alice"}, ""); code != 201 {
+		t.Fatal("adding a person failed")
+	}
+
+	_, panelBody := h.do("GET", "/api/panel", nil, "")
+	var whos []string
+	for _, e := range panelBody["activity"].([]any) {
+		ev := e.(map[string]any)
+		whos = append(whos, ev["who"].(string)+" "+ev["what"].(string))
+	}
+	joined := strings.Join(whos, " | ")
+	for _, want := range []string{"Hassan set this panel up", "Hassan added Work", "Ibrahim added Alice"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("activity lacks %q; got: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "You ") {
+		t.Errorf("activity still attributes a change to \"You\": %s", joined)
 	}
 }

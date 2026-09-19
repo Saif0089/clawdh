@@ -357,7 +357,7 @@ func panelPush(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if err := panel.AdminLogin(ctx, httpc, server, strings.TrimSpace(pw)); err != nil {
+	if err := panel.AdminLogin(ctx, httpc, server, strings.TrimSpace(pw), member); err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
 	}

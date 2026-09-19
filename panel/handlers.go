@@ -128,6 +128,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- accounts
 
 func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	var in struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
@@ -146,7 +147,7 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 		d.Accounts = append(d.Accounts, Account{
 			ID: newID(), Name: in.Name, Email: in.Email, Plan: in.Plan, CreatedAt: s.now(),
 		})
-		d.Log(s.now(), "You", "added "+in.Name)
+		d.Log(s.now(), who, "added "+in.Name)
 		return nil
 	})
 	if err != nil {
@@ -163,6 +164,7 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 // `clawdh panel push <account>` on the machine where that account is linked. It
 // is sealed before it touches disk.
 func (s *Server) handleStoreLogin(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	var in struct {
 		Credential string `json:"credential"` // base64 of the credentials JSON
 		Email      string `json:"email"`
@@ -218,7 +220,7 @@ func (s *Server) handleStoreLogin(w http.ResponseWriter, r *http.Request) {
 		if in.Plan != "" {
 			a.Plan = in.Plan
 		}
-		d.Log(s.now(), "You", "stored the login for "+a.Name)
+		d.Log(s.now(), who, "stored the login for "+a.Name)
 
 		// Record the pusher as a member with access. Skip if they already have a
 		// share on this account, so re-pushing keeps their key instead of
@@ -243,6 +245,7 @@ func (s *Server) handleStoreLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemoveAccount(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	id := r.PathValue("id")
 	err := s.store.Mutate(func(d *Data) error {
 		a, ok := d.Account(id)
@@ -266,7 +269,7 @@ func (s *Server) handleRemoveAccount(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		d.Accounts = out
-		d.Log(s.now(), "You", "removed "+name)
+		d.Log(s.now(), who, "removed "+name)
 		return nil
 	})
 	if err != nil {
@@ -279,6 +282,7 @@ func (s *Server) handleRemoveAccount(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- people
 
 func (s *Server) handleAddPerson(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	var in struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
@@ -289,7 +293,7 @@ func (s *Server) handleAddPerson(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.store.Mutate(func(d *Data) error {
 		d.People = append(d.People, Person{ID: newID(), Name: in.Name, Email: in.Email, CreatedAt: s.now()})
-		d.Log(s.now(), "You", "added "+in.Name)
+		d.Log(s.now(), who, "added "+in.Name)
 		return nil
 	})
 	if err != nil {
@@ -300,6 +304,7 @@ func (s *Server) handleAddPerson(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemovePerson(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	id := r.PathValue("id")
 	err := s.store.Mutate(func(d *Data) error {
 		p, ok := d.Person(id)
@@ -329,7 +334,7 @@ func (s *Server) handleRemovePerson(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		d.People = people
-		d.Log(s.now(), "You", "removed "+name+", and their access ended")
+		d.Log(s.now(), who, "removed "+name+", and their access ended")
 		return nil
 	})
 	if err != nil {
@@ -340,6 +345,7 @@ func (s *Server) handleRemovePerson(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJoinCode(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	id := r.PathValue("id")
 	code, hash, err := NewJoinCode()
 	if err != nil {
@@ -353,7 +359,7 @@ func (s *Server) handleJoinCode(w http.ResponseWriter, r *http.Request) {
 			return errors.New("There is no such person.")
 		}
 		d.JoinCodes = append(d.JoinCodes, JoinCode{CodeHash: hash, PersonID: id, ExpiresAt: expires})
-		d.Log(s.now(), "You", "made a join code for "+p.Name)
+		d.Log(s.now(), who, "made a join code for "+p.Name)
 		return nil
 	})
 	if err != nil {
@@ -368,6 +374,7 @@ func (s *Server) handleJoinCode(w http.ResponseWriter, r *http.Request) {
 // rather than "read this code down the phone". The link lands on the panel's own
 // /i/<code> page, which tells them what to do with it.
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	id := r.PathValue("id")
 	code, hash, err := NewInviteCode()
 	if err != nil {
@@ -375,15 +382,15 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := s.now().Add(inviteLife)
-	var who string
+	var invitee string
 	err = s.store.Mutate(func(d *Data) error {
 		p, ok := d.Person(id)
 		if !ok {
 			return errors.New("There is no such person.")
 		}
-		who = p.Name
+		invitee = p.Name
 		d.JoinCodes = append(d.JoinCodes, JoinCode{CodeHash: hash, PersonID: id, ExpiresAt: expires})
-		d.Log(s.now(), "You", "made an invite link for "+p.Name)
+		d.Log(s.now(), who, "made an invite link for "+p.Name)
 		return nil
 	})
 	if err != nil {
@@ -393,7 +400,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"url":       s.baseURL(r) + "/i/" + code,
 		"code":      code,
-		"person":    who,
+		"person":    invitee,
 		"expiresAt": expires,
 	})
 }
@@ -444,6 +451,7 @@ func (s *Server) baseURL(r *http.Request) string {
 }
 
 func (s *Server) handleRemoveDevice(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
 	id := r.PathValue("id")
 	err := s.store.Mutate(func(d *Data) error {
 		dev, ok := d.Device(id)
@@ -458,7 +466,7 @@ func (s *Server) handleRemoveDevice(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		d.Devices = out
-		d.Log(s.now(), "You", fmt.Sprintf("cut off %s, %s's machine", name, person))
+		d.Log(s.now(), who, fmt.Sprintf("cut off %s, %s's machine", name, person))
 		return nil
 	})
 	if err != nil {
@@ -488,7 +496,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	key, err := s.store.IssueShare(id, in.PersonID, func(k string) []byte { sealed, _ := s.secret.Seal([]byte(k)); return sealed })
+	key, err := s.store.IssueShare(id, in.PersonID, s.actor(r), func(k string) []byte { sealed, _ := s.secret.Seal([]byte(k)); return sealed })
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
@@ -497,7 +505,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRevokeShare(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.RevokeShare(r.PathValue("id")); err != nil {
+	if err := s.store.RevokeShare(r.PathValue("id"), s.actor(r)); err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -18,13 +18,17 @@ export default function App() {
   const [intro, setIntro] = useState(true);
   const [status, setStatus] = useState<Status>("loading");
   const [tab, setTab] = useState<Tab>("accounts");
+  const [actor, setActor] = useState("");
   const [tour, setTour] = useState(false);
   const reduce = useReducedMotion();
   const seen = useRef(introSeen());
 
   useEffect(() => {
-    api<{ needsSetup: boolean; signedIn: boolean }>("GET", "/api/status")
-      .then((s) => setStatus(s.signedIn ? "in" : s.needsSetup ? "setup" : "gate"))
+    api<{ needsSetup: boolean; signedIn: boolean; actor?: string }>("GET", "/api/status")
+      .then((s) => {
+        setActor(s.actor || "");
+        setStatus(s.signedIn ? "in" : s.needsSetup ? "setup" : "gate");
+      })
       .catch(() => setStatus("gate"));
   }, []);
 
@@ -50,9 +54,15 @@ export default function App() {
       <Backdrop />
       <AnimatePresence>{intro && <ClawIntro onDone={() => setIntro(false)} />}</AnimatePresence>
       {status === "loading" ? null : status === "in" ? (
-        <Shell tab={tab} setTab={setTab} onSignOut={() => setStatus("gate")} />
+        <Shell tab={tab} setTab={setTab} actor={actor} onSignOut={() => setStatus("gate")} />
       ) : (
-        <Gate setup={status === "setup"} onIn={() => setStatus("in")} />
+        <Gate
+          setup={status === "setup"}
+          onIn={(name) => {
+            setActor(name);
+            setStatus("in");
+          }}
+        />
       )}
       {status !== "loading" && !intro && <HelpFab onClick={() => setTour(true)} />}
       {tour && <Tour steps={status === "in" ? adminSteps : gateSteps} onClose={closeTour} onTab={(t) => setTab(t as Tab)} />}
@@ -90,15 +100,31 @@ function Backdrop() {
   );
 }
 
-function Gate({ setup, onIn }: { setup: boolean; onIn: () => void }) {
+// actorKey remembers the name this browser last signed in with — a convenience,
+// never an identity: the panel records changes under whatever name is given.
+const actorKey = "clawdh:actor";
+
+function Gate({ setup, onIn }: { setup: boolean; onIn: (name: string) => void }) {
+  const [name, setName] = useState(() => {
+    try {
+      return localStorage.getItem(actorKey) || "";
+    } catch {
+      return "";
+    }
+  });
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
     try {
-      await api("POST", setup ? "/api/setup" : "/api/login", { password: pw });
-      onIn();
+      const r = await api<{ name: string }>("POST", setup ? "/api/setup" : "/api/login", { password: pw, name });
+      try {
+        localStorage.setItem(actorKey, r.name || name);
+      } catch {
+        /* private mode */
+      }
+      onIn(r.name || name);
     } catch (e: any) {
       setErr(e.message);
     }
@@ -117,17 +143,30 @@ function Gate({ setup, onIn }: { setup: boolean; onIn: () => void }) {
           <span className="text-2xl font-bold tracking-tight">clawdh</span>
         </div>
         <div className="mt-2 text-[15px] text-muted">
-          {setup ? "Set an admin password to run this panel." : "Sign in to the panel."}
+          {setup ? "Set the panel's password — everyone who runs it will share this one." : "Sign in to the team panel."}
         </div>
+        <label className="mt-5 block text-[12.5px] font-medium uppercase tracking-[0.06em] text-faint">Your name</label>
+        <input
+          autoFocus={!name}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Hassan"
+          maxLength={40}
+          autoComplete="name"
+          className="mt-1.5 w-full rounded-xl border border-line bg-sunken px-4 py-3 text-[16px] outline-none focus:border-primary/60"
+        />
+        <div className="mt-1.5 text-[12.5px] leading-snug text-faint">Every change you make is recorded under this name, so the team can see who did what.</div>
+        <label className="mt-4 block text-[12.5px] font-medium uppercase tracking-[0.06em] text-faint">{setup ? "New password" : "Password"}</label>
         <input
           type="password"
-          autoFocus
+          autoFocus={!!name}
           value={pw}
           onChange={(e) => setPw(e.target.value)}
-          placeholder="Password"
-          className="mt-5 w-full rounded-xl border border-line bg-sunken px-4 py-3 text-[16px] outline-none focus:border-primary/60"
+          placeholder={setup ? "At least 10 characters" : "Password"}
+          autoComplete={setup ? "new-password" : "current-password"}
+          className="mt-1.5 w-full rounded-xl border border-line bg-sunken px-4 py-3 text-[16px] outline-none focus:border-primary/60"
         />
-        <button className="mt-4 w-full rounded-xl bg-primary py-3 font-semibold text-sunken transition-transform active:scale-[0.98]">
+        <button className="mt-5 w-full rounded-xl bg-primary py-3 font-semibold text-sunken transition-transform active:scale-[0.98]">
           {setup ? "Create panel" : "Sign in"}
         </button>
         <div className="mt-3 min-h-[1.2em] text-sm text-crit">{err}</div>
@@ -136,7 +175,7 @@ function Gate({ setup, onIn }: { setup: boolean; onIn: () => void }) {
   );
 }
 
-function Shell({ tab, setTab, onSignOut }: { tab: Tab; setTab: (t: Tab) => void; onSignOut: () => void }) {
+function Shell({ tab, setTab, actor, onSignOut }: { tab: Tab; setTab: (t: Tab) => void; actor: string; onSignOut: () => void }) {
   const signOut = async () => {
     try {
       await api("POST", "/api/logout");
@@ -152,7 +191,15 @@ function Shell({ tab, setTab, onSignOut }: { tab: Tab; setTab: (t: Tab) => void;
         <Logo />
         <span className="text-[22px] font-bold tracking-tight">clawdh</span>
         <span className="rounded-full border border-line bg-raised px-2.5 py-0.5 text-[12px] font-medium text-muted">Team panel</span>
-        <button onClick={signOut} className="ml-auto text-[14px] text-faint transition-colors hover:text-ink">Sign out</button>
+        <div className="ml-auto flex min-w-0 items-center gap-3">
+          {actor && (
+            <span className="hidden min-w-0 items-center gap-1.5 text-[13.5px] text-muted sm:flex" title="Your changes are recorded under this name">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11.5px] font-semibold text-primary">{actor.slice(0, 1).toUpperCase()}</span>
+              <span className="truncate">{actor}</span>
+            </span>
+          )}
+          <button onClick={signOut} className="shrink-0 text-[14px] text-faint transition-colors hover:text-ink">Sign out</button>
+        </div>
       </header>
       <nav className="flex gap-1 border-b border-line">
         {tabs.map(([t, label]) => (

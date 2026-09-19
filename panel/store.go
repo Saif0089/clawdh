@@ -272,7 +272,7 @@ func (d *Data) Log(at time.Time, who, what string) { d.log(at, who, what) }
 // IssueShare makes an account available to a person through the gateway and
 // returns the gateway key. sealKey seals it for later delivery to the person's
 // device (the caller supplies it because only it holds the panel key).
-func (s *Store) IssueShare(accountID, personID string, sealKey func(string) []byte) (key string, err error) {
+func (s *Store) IssueShare(accountID, personID, who string, sealKey func(string) []byte) (key string, err error) {
 	key, hash, err := NewToken()
 	if err != nil {
 		return "", err
@@ -286,7 +286,7 @@ func (s *Store) IssueShare(accountID, personID string, sealKey func(string) []by
 			return fmt.Errorf("no person with id %q", personID)
 		}
 		d.putShare(Share{ID: newID(), AccountID: accountID, PersonID: personID, KeyHash: hash, SealedKey: sealed, CreatedAt: s.now()})
-		d.Log(s.now(), "You", fmt.Sprintf("gave %s access to %s", d.personName(personID), d.accountName(accountID)))
+		d.Log(s.now(), who, fmt.Sprintf("gave %s access to %s", d.personName(personID), d.accountName(accountID)))
 		return nil
 	})
 	if err != nil {
@@ -297,7 +297,7 @@ func (s *Store) IssueShare(accountID, personID string, sealKey func(string) []by
 
 // RevokeShare withdraws a person's gateway access to an account; their key stops
 // working at the gateway on the next request.
-func (s *Store) RevokeShare(shareID string) error {
+func (s *Store) RevokeShare(shareID, who string) error {
 	return s.Mutate(func(d *Data) error {
 		out := d.Shares[:0]
 		var removed *Share
@@ -312,7 +312,7 @@ func (s *Store) RevokeShare(shareID string) error {
 			return nil
 		}
 		d.Shares = out
-		d.Log(s.now(), "You", fmt.Sprintf("took %s's access to %s away", d.personName(removed.PersonID), d.accountName(removed.AccountID)))
+		d.Log(s.now(), who, fmt.Sprintf("took %s's access to %s away", d.personName(removed.PersonID), d.accountName(removed.AccountID)))
 		return nil
 	})
 }

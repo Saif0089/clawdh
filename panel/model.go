@@ -58,9 +58,11 @@ func (a Account) HasLogin() bool { return len(a.Credential) > 0 }
 
 // Event is one line of the activity log.
 //
-// Who is written from the reader's point of view — the admin is "You" — because
-// with a single admin the log is something one person reads about their own
-// decisions, and "usama@example.com took Work back" is a stilted way to say it.
+// Who is the name the person signed in with. The panel is flat — one shared
+// password, no accounts or roles — but several team leads share it, so every
+// change is recorded under the name its author gave at sign-in: "Hassan gave
+// Ibrahim access to Work", never an ambiguous "You". A machine pushing a login
+// is recorded under its member name.
 type Event struct {
 	At   time.Time `json:"at"`
 	Who  string    `json:"who"`

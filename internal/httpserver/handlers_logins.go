@@ -58,7 +58,8 @@ func (s *Server) handleAddLoginToPanel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 
-	if err := panel.AdminLogin(ctx, httpc, in.Panel, in.Password); err != nil {
+	pusher := panel.PusherName(in.Panel)
+	if err := panel.AdminLogin(ctx, httpc, in.Panel, in.Password, pusher); err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -67,7 +68,7 @@ func (s *Server) handleAddLoginToPanel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	if err := panel.PushLogin(ctx, httpc, in.Panel, id, base64.StdEncoding.EncodeToString(login), panel.PusherName(in.Panel)); err != nil {
+	if err := panel.PushLogin(ctx, httpc, in.Panel, id, base64.StdEncoding.EncodeToString(login), pusher); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
