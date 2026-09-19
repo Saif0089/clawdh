@@ -56,6 +56,30 @@
     <div id="shared-list"></div>
   </section>
 
+  <!-- Remote help: what the panel may ask of this machine, and your say over it.
+       Only shown once this machine is connected to a panel. -->
+  <section id="remote-block" class="block" hidden>
+    <div class="block-head remote-head">
+      <div class="remote-head-text">
+        <h2>Remote help</h2>
+        <p class="block-sub">Let the panel ask this machine to look at itself. It can only ever see sessions that ran on a <b>shared</b> account — your own sessions are never visible — and anything it wants <em>sent</em> waits for your OK first.</p>
+      </div>
+      <label class="switch" title="Turn remote help on or off">
+        <input type="checkbox" id="remote-toggle" role="switch" aria-label="Remote help">
+        <span class="slider" aria-hidden="true"></span>
+        <span class="switch-text" id="remote-toggle-text">Off</span>
+      </label>
+    </div>
+    <div id="remote-body" hidden>
+      <div id="remote-mode" class="remote-mode"></div>
+      <div id="remote-pending" class="req-list"></div>
+      <div id="remote-history-wrap" hidden>
+        <h3 class="remote-h3">Recent</h3>
+        <div id="remote-history" class="remote-history"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- Connect this machine to use shared accounts (only when not connected). -->
   <section id="connect-block" class="block subtle" hidden>
     <div class="block-head">
@@ -207,6 +231,7 @@
 </template>
 
 <script src="app.js"></script>
+<script src="remote.js"></script>
 <script src="tour.js"></script>
 </body>
 </html>

@@ -14,6 +14,7 @@ import (
 	"clawdh/internal/buildinfo"
 	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
+	"clawdh/internal/remotejobs"
 	"clawdh/internal/service"
 	"clawdh/internal/switching"
 	"clawdh/panel"
@@ -81,19 +82,59 @@ func cmdRemote(args []string) int {
 	}
 }
 
-// runRemoteJobs executes the consented jobs a check-in handed back and posts
-// each answer to the panel. Every job is announced as it runs, so remote help
-// is visible on the machine it acts on — the person sees exactly what was asked.
+// wireRemoteQueue points the service's approval queue at its state file and
+// gives it the two things it needs from here: how to run a request on this
+// machine, and how to post the outcome back to the panel.
+func wireRemoteQueue() {
+	if path, err := config.RemoteRequestsFile(); err == nil {
+		remotejobs.Default.SetPath(path)
+	}
+	remotejobs.Default.Run = func(kind, params string) (string, string) {
+		return executeJob(panel.RemoteJob{Kind: kind, Params: params})
+	}
+	remotejobs.Default.Report = func(ctx context.Context, id, status, result string) error {
+		c, err := panelClient()
+		if err != nil {
+			return err
+		}
+		return c.ReportResult(ctx, id, status, result)
+	}
+}
+
+// needsApproval is whether a job ships something off this machine and so waits
+// for the owner's decision. A health check reveals nothing personal — service
+// state, the claude binary's path, how many accounts are shared — and runs at
+// once; anything about sessions is the owner's call.
+func needsApproval(kind string) bool { return kind != "diagnose" }
+
+// runRemoteJobs takes the jobs a check-in handed back. A health check runs and
+// answers at once. A request for sessions or a transcript is handed to the
+// approval queue: inside an allow window it runs now, otherwise it is held —
+// the panel sees "waiting for approval" — until the owner allows or denies it on
+// their clawdh page. Either way the person is told, so nothing is silent.
 func runRemoteJobs(ctx context.Context, c *panel.Client, jobs []panel.RemoteJob) {
 	for _, j := range jobs {
-		fmt.Printf("clawdh: the panel asked this machine to %s — running it.\n", describeJob(j))
-		notifyBrief("This machine was asked to " + describeJob(j))
-		result, status := executeJob(j)
-		if err := c.ReportResult(ctx, j.ID, status, result); err != nil {
-			fmt.Fprintf(os.Stderr, "clawdh: could not send the result of %q back to the panel: %v\n", j.Kind, err)
+		who := j.RequestedBy
+		if who == "" {
+			who = "the panel"
+		}
+		if !needsApproval(j.Kind) {
+			fmt.Printf("clawdh: %s asked this machine to %s — running it.\n", who, describeJob(j))
+			notifyBrief(who + " ran a health check on this machine")
+			result, status := executeJob(j)
+			if err := c.ReportResult(ctx, j.ID, status, result); err != nil {
+				fmt.Fprintf(os.Stderr, "clawdh: could not send the result of %q back to the panel: %v\n", j.Kind, err)
+			}
 			continue
 		}
-		fmt.Printf("clawdh: sent the %s result to the panel.\n", j.Kind)
+		req := remotejobs.Request{ID: j.ID, Kind: j.Kind, Params: j.Params, RequestedBy: who, Describe: describeJob(j)}
+		if remotejobs.Default.Receive(ctx, req) {
+			fmt.Printf("clawdh: %s asked this machine to %s — waiting for you to allow or deny it on the clawdh page (http://127.0.0.1:%d).\n", who, describeJob(j), config.DefaultPort)
+			notifyBrief(who + " asked to " + describeJob(j) + " — allow or deny it on your clawdh page")
+		} else {
+			fmt.Printf("clawdh: %s asked this machine to %s — ran it (you're allowing requests for now).\n", who, describeJob(j))
+			notifyBrief(who + "'s request to " + describeJob(j) + " ran (you're allowing requests for now)")
+		}
 	}
 }
 
@@ -102,8 +143,11 @@ func describeJob(j panel.RemoteJob) string {
 	case "diagnose":
 		return "check its own health"
 	case "sessions":
-		return "list its shared-account sessions"
+		return "list the sessions that ran on a shared account"
 	case "transcript":
+		if j.Params != "" {
+			return "send the transcript of shared-account session " + j.Params
+		}
 		return "send a shared-account session transcript"
 	default:
 		return j.Kind

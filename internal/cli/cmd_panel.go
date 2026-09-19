@@ -16,6 +16,7 @@ import (
 
 	"clawdh/internal/accounts"
 	"clawdh/internal/config"
+	"clawdh/internal/remotejobs"
 	"clawdh/internal/shellrc"
 	"clawdh/panel"
 )
@@ -427,6 +428,8 @@ func watchPanel(ctx context.Context) {
 		if len(change.Jobs) > 0 {
 			runRemoteJobs(ctx, c, change.Jobs)
 		}
+		// A held request nobody answered within the hour is declined for them.
+		remotejobs.Default.Expire(ctx)
 		if errors.Is(err, panel.ErrNotEnrolled) {
 			fmt.Fprintln(os.Stderr, "clawdh: this machine is no longer connected to the panel; its shared accounts have been removed.")
 			return

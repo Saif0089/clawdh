@@ -10,9 +10,9 @@ import (
 // real utilisation, summed — and nothing until utilisation data is present.
 func TestWindowShareOf(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
+		name              string
 		mine, total, util map[string]float64
-		want             float64
+		want              float64
 	}{
 		{
 			// One account at 80% weekly; the person did half of it -> 40% of the window.

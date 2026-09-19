@@ -49,6 +49,7 @@ export function DeviceJobs({ deviceId, deviceName, onClose }: { deviceId: string
   };
 
   const pending = jobs.some((j) => j.status === "pending");
+  const awaiting = jobs.some((j) => j.status === "awaiting");
 
   return (
     <motion.div
@@ -113,6 +114,11 @@ export function DeviceJobs({ deviceId, deviceName, onClose }: { deviceId: string
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warn" /> waiting for {deviceName} to check in…
               </span>
             )}
+            {!pending && awaiting && (
+              <span className="flex items-center gap-1.5 text-[12px] font-normal normal-case text-faint">
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-warn" /> waiting for its owner to approve…
+              </span>
+            )}
           </div>
           {jobs.length === 0 && (
             <div className="rounded-xl border border-dashed border-line px-4 py-6 text-center text-[14px] text-faint">
@@ -151,6 +157,12 @@ function JobCard({ job: j, deviceName, onTranscript }: { job: Job; deviceName: s
         <span className="ml-auto shrink-0 text-[12.5px] text-faint">{when(j.createdAt)}</span>
       </div>
       {j.status === "pending" && <div className="mt-2 text-[13px] text-faint">Waiting for {deviceName} to check in (up to ~30s)…</div>}
+      {j.status === "awaiting" && (
+        <div className="mt-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+          Held on {deviceName} until its owner allows it. They've been notified; this stays here until they decide (or an hour passes).
+        </div>
+      )}
+      {j.status === "denied" && <div className="mt-2 text-[13.5px] text-muted">{j.result || "The owner declined this request."}</div>}
       {j.status === "error" && <div className="mt-2 text-[13.5px] text-crit">{j.result || "That did not work."}</div>}
       {j.status === "done" && j.result && j.kind === "diagnose" && <DiagnoseView raw={j.result} />}
       {j.status === "done" && j.result && j.kind === "sessions" && <SessionsView raw={j.result} onTranscript={onTranscript} />}
@@ -318,10 +330,13 @@ function humanBytes(n: number): string {
 }
 
 function JobBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    pending: "text-warn border-warn/40",
-    done: "text-ok border-ok/40",
-    error: "text-crit border-crit/40",
+  const map: Record<string, [string, string]> = {
+    pending: ["text-warn border-warn/40", "sent"],
+    awaiting: ["text-warn border-warn/40", "waiting for approval"],
+    done: ["text-ok border-ok/40", "answered"],
+    error: ["text-crit border-crit/40", "failed"],
+    denied: ["text-muted border-line", "declined"],
   };
-  return <span className={`shrink-0 rounded-full border px-2 py-[1px] text-[11px] ${map[status] || "text-faint border-line"}`}>{status}</span>;
+  const [cls, label] = map[status] || ["text-faint border-line", status];
+  return <span className={`shrink-0 rounded-full border px-2 py-[1px] text-[11px] ${cls}`}>{label}</span>;
 }

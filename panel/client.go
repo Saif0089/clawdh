@@ -184,9 +184,10 @@ func (c Change) Empty() bool { return len(c.Gained) == 0 && len(c.Lost) == 0 }
 // report back. Kind is diagnose | sessions | transcript; Params is the argument
 // (a session id, for a transcript).
 type RemoteJob struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	Params string `json:"params"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Params      string `json:"params"`
+	RequestedBy string `json:"requestedBy"` // the panel signer who asked, so the owner knows who
 }
 
 // CheckIn asks the panel which accounts are shared with this machine and makes

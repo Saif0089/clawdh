@@ -54,7 +54,7 @@ func (b *Backend) EnqueueJob(ctx context.Context, j panel.Job) (panel.Job, error
 // never gets to (offline, remote help off) simply stays queued.
 func (b *Backend) PendingJobs(ctx context.Context, deviceID string) ([]panel.Job, error) {
 	rows, err := b.db.QueryContext(ctx, `
-		SELECT id, kind, params FROM jobs
+		SELECT id, kind, params, requested_by FROM jobs
 		 WHERE device_id = $1 AND status = 'pending' ORDER BY created_at`, deviceID)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (b *Backend) PendingJobs(ctx context.Context, deviceID string) ([]panel.Job
 	var out []panel.Job
 	for rows.Next() {
 		var j panel.Job
-		if err := rows.Scan(&j.ID, &j.Kind, &j.Params); err != nil {
+		if err := rows.Scan(&j.ID, &j.Kind, &j.Params, &j.RequestedBy); err != nil {
 			return nil, err
 		}
 		j.DeviceID, j.Status = deviceID, "pending"
@@ -76,12 +76,20 @@ func (b *Backend) PendingJobs(ctx context.Context, deviceID string) ([]panel.Job
 // the update to the device id means a machine can only ever resolve jobs that
 // were addressed to it.
 func (b *Backend) CompleteJob(ctx context.Context, deviceID, jobID, status, result string) error {
-	if status != "done" && status != "error" {
+	// "awaiting" is the one intermediate state: the machine has the request and is
+	// holding it for its owner's approval. Everything else resolves the job.
+	if status == "awaiting" {
+		_, err := b.db.ExecContext(ctx, `
+			UPDATE jobs SET status = 'awaiting'
+			 WHERE id = $1 AND device_id = $2 AND status = 'pending'`, jobID, deviceID)
+		return err
+	}
+	if status != "done" && status != "error" && status != "denied" {
 		status = "done"
 	}
 	_, err := b.db.ExecContext(ctx, `
 		UPDATE jobs SET status = $1, result = $2, resolved_at = now()
-		 WHERE id = $3 AND device_id = $4 AND status = 'pending'`,
+		 WHERE id = $3 AND device_id = $4 AND status IN ('pending', 'awaiting')`,
 		status, result, jobID, deviceID)
 	return err
 }

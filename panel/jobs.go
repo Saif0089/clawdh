@@ -19,7 +19,7 @@ type Job struct {
 	PersonID    string     `json:"personId,omitempty"`
 	Kind        string     `json:"kind"`             // diagnose | sessions | transcript
 	Params      string     `json:"params,omitempty"` // e.g. the session id a transcript wants
-	Status      string     `json:"status"`           // pending | done | error
+	Status      string     `json:"status"`           // pending | awaiting (held for the owner's approval) | done | error | denied
 	Result      string     `json:"result,omitempty"`
 	RequestedBy string     `json:"requestedBy,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
@@ -79,7 +79,7 @@ func (s *Server) handleRequestJob(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.jobs.EnqueueJob(r.Context(), Job{
 		DeviceID: deviceID, PersonID: dev.PersonID, Kind: in.Kind,
-		Params: strings.TrimSpace(in.Params), RequestedBy: "admin",
+		Params: strings.TrimSpace(in.Params), RequestedBy: s.actor(r),
 	})
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "The request could not be queued: "+err.Error())

@@ -194,6 +194,17 @@ func SharedSessionsFile() (string, error) {
 	return filepath.Join(base, "shared-sessions.tsv"), nil
 }
 
+// RemoteRequestsFile is where the service keeps remote-help requests that are
+// waiting for this machine's owner to allow or deny them, plus the current
+// allow window and recent decisions — so a restart forgets nothing unanswered.
+func RemoteRequestsFile() (string, error) {
+	base, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "remote-requests.json"), nil
+}
+
 // NoticesSeenFile is where the running service remembers which per-person
 // notices (a quota warning, a broken login) it has already shown, keyed by the
 // event's ID, so a standing condition riding every check-in is announced once

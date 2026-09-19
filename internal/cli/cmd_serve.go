@@ -103,6 +103,10 @@ func cmdServe(args []string) int {
 
 	startAutoUpdate(ctx, srv)
 
+	// Remote-help requests that ship data off this machine wait in a queue for
+	// the owner's decision (on the clawdh page); wire what runs and reports them.
+	wireRemoteQueue()
+
 	// If this machine answers to a panel, keep asking it what it is entitled
 	// to. This is what makes taking an account back work without the panel
 	// having to reach the machine: nothing is pushed, the machine asks.
