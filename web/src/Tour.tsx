@@ -198,7 +198,7 @@ export function HelpFab({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       title="Show the intro"
       aria-label="Show the intro"
-      className="fixed bottom-5 right-5 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-raised text-[19px] font-semibold text-muted shadow-lg transition-colors hover:border-primary/60 hover:text-ink"
+      className="fixed bottom-3.5 right-3.5 z-40 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-raised text-[17px] font-semibold text-muted opacity-85 shadow-lg transition-colors hover:border-primary/60 hover:text-ink sm:bottom-5 sm:right-5 sm:h-11 sm:w-11 sm:text-[19px] sm:opacity-100"
     >
       ?
     </button>
