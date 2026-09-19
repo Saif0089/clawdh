@@ -34,13 +34,113 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* One orchestrated entrance for the page's sections — a single reveal on load,
-   not a per-element effect on every render. */
+/* ---- the claw-slash opening ---------------------------------------- */
+/* Three slashes rake across the dark (glow, core, hot white line — each drawn
+   tip to tail), sparks fly off each tip as it lands (intro.js), the third
+   strike jolts the stage with a flash and a ring, and the wordmark sharpens out
+   of the blur with this surface's badge under it. Then the overlay lifts.
+   Timeline: slash i draws .10+.11i → .52+.11i; word .72; lift 1.42 → 1.84.
+   The team panel plays the same show in its own accent. */
+:root { --intro-lift: 1.42s; }
+.intro {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ground); pointer-events: none;
+  animation: intro-lift .42s ease-in-out var(--intro-lift) both;
+}
+@keyframes intro-lift { to { opacity: 0; transform: scale(1.03); } }
+.intro-stage { position: relative; width: 70vmin; max-width: 460px; animation: intro-jolt .18s linear .72s; }
+@keyframes intro-jolt {
+  0% { transform: none; } 25% { transform: translate(-2px, 1px); } 50% { transform: translate(2px, -1px); }
+  75% { transform: translate(-1px, 0); } 100% { transform: none; }
+}
+.intro-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.intro-stop-a { stop-color: var(--primary); }
+.intro-stop-b { stop-color: var(--primary-2); }
+.intro-slash path {
+  fill: none; stroke-linecap: round;
+  stroke-dasharray: 1 1.1; stroke-dashoffset: 1.04; /* the .04 hides the round cap before the draw starts */
+  animation: intro-draw .42s cubic-bezier(.75, 0, .25, 1) both;
+}
+@keyframes intro-draw { to { stroke-dashoffset: 0; } }
+.intro-slash .glow { stroke: url(#intrograd); stroke-width: 20; opacity: .55; filter: url(#introglow); }
+.intro-slash .core { stroke: url(#intrograd); stroke-width: 7.5; }
+.intro-slash .hot { stroke: #fff; stroke-width: 2.2; animation-name: intro-draw-hot; }
+@keyframes intro-draw-hot { 0% { stroke-dashoffset: 1.04; opacity: 0; } 30% { opacity: .95; } 100% { stroke-dashoffset: 0; opacity: .95; } }
+.intro-slash.s0 path { animation-delay: .10s; } .intro-slash.s0 .hot { animation-delay: .15s; }
+.intro-slash.s1 path { animation-delay: .21s; } .intro-slash.s1 .hot { animation-delay: .26s; }
+.intro-slash.s2 path { animation-delay: .32s; } .intro-slash.s2 .hot { animation-delay: .37s; }
+/* Once the word is up, the slashes settle to an afterimage behind it. */
+.intro-slash { animation: intro-settle .5s ease-out .82s both; }
+@keyframes intro-settle { to { opacity: .22; } }
+.intro-spark {
+  opacity: 0; transform-box: fill-box; transform-origin: center;
+  animation: intro-spark .5s ease-out both;
+}
+@keyframes intro-spark {
+  0% { opacity: 0; transform: none; } 15% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(.2); }
+}
+.intro-flash, .intro-ring { transform-box: fill-box; transform-origin: center; opacity: 0; }
+.intro-flash { animation: intro-flash .6s ease-out .69s both; }
+@keyframes intro-flash { 0% { opacity: 0; transform: scale(.5); } 40% { opacity: .9; } 100% { opacity: 0; transform: scale(1.35); } }
+.intro-ring { fill: none; stroke: url(#intrograd); stroke-width: 1.5; animation: intro-ring .75s cubic-bezier(.2, .7, .3, 1) .74s both; }
+@keyframes intro-ring { 0% { opacity: 0; transform: scale(.1); } 35% { opacity: .7; } 100% { opacity: 0; transform: scale(1.3); } }
+.intro-word {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  font-size: 48px; font-weight: 650; color: var(--ink);
+  opacity: 0; filter: blur(12px); letter-spacing: .22em; transform: scale(.97);
+  animation: intro-word .55s cubic-bezier(.2, .7, .2, 1) .72s both;
+}
+@keyframes intro-word { to { opacity: 1; filter: blur(0); letter-spacing: -.03em; transform: none; } }
+.intro-pill {
+  font-size: 12.5px; font-weight: 500; letter-spacing: 0; color: var(--muted);
+  border: 1px solid var(--line); background: rgba(23, 27, 33, .8); border-radius: 999px; padding: 3px 10px;
+  opacity: 0; transform: translateY(6px);
+  animation: intro-pill .35s ease-out 1.04s both;
+}
+@keyframes intro-pill { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .intro { display: none; } }
+
+/* ---- live backdrop --------------------------------------------------- */
+/* Slow-drifting aurora blobs behind everything plus a faint grid, the same
+   wallpaper as the panel in this surface's teal. Fixed, non-interactive,
+   low-opacity: alive but never distracting, on the same ground colour so
+   contrast holds. */
+.backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--ground); }
+.backdrop::after {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(45, 212, 191, .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 212, 191, .05) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+.blob { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .5; will-change: transform; }
+.blob.a { width: 46vw; height: 46vw; left: -8vw; top: -10vw; background: radial-gradient(circle, rgba(45, 212, 191, .5), transparent 70%); animation: drift-a 26s ease-in-out infinite; }
+.blob.b { width: 40vw; height: 40vw; right: -6vw; top: 8vh; background: radial-gradient(circle, rgba(34, 211, 238, .38), transparent 70%); animation: drift-b 32s ease-in-out infinite; }
+.blob.c { width: 38vw; height: 38vw; left: 18vw; bottom: -14vw; background: radial-gradient(circle, rgba(70, 192, 138, .28), transparent 70%); animation: drift-c 38s ease-in-out infinite; }
+@keyframes drift-a { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(10vw, 7vh) scale(1.12); } }
+@keyframes drift-b { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-8vw, 10vh) scale(.9); } }
+@keyframes drift-c { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(9vw, -8vh) scale(1.1); } }
+@media (prefers-reduced-motion: reduce) { .blob { animation: none; } }
+
+/* One orchestrated entrance for the page's sections — a single reveal timed to
+   the opening's lift, not a per-element effect on every render. */
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-.block { animation: rise .5s var(--ease) both; }
-.block:nth-of-type(2) { animation-delay: .06s; }
-.block:nth-of-type(3) { animation-delay: .12s; }
-@media (prefers-reduced-motion: reduce) { .block { animation: none; } }
+header { animation: rise .5s var(--ease) both; animation-delay: calc(var(--intro-lift) - .1s); }
+.block { animation: rise .5s var(--ease) both; animation-delay: var(--intro-lift); }
+.block:nth-of-type(2) { animation-delay: calc(var(--intro-lift) + .07s); }
+.block:nth-of-type(n+3) { animation-delay: calc(var(--intro-lift) + .14s); }
+@media (prefers-reduced-motion: reduce) { header, .block { animation: none; } }
+
+/* The header mark re-rakes its slashes on hover: a small sign the thing is alive. */
+.wordmark:hover .claw-logo path { animation: logo-rake .55s var(--ease) both; }
+.wordmark:hover .claw-logo path:nth-child(2) { animation-delay: .07s; }
+.wordmark:hover .claw-logo path:nth-child(3) { animation-delay: .14s; }
+@keyframes logo-rake { from { stroke-dasharray: 1 1.1; stroke-dashoffset: 1.04; } to { stroke-dasharray: 1 1.1; stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) { .wordmark:hover .claw-logo path { animation: none; } }
 
 header, main {
   max-width: 780px;

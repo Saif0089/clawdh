@@ -32,16 +32,16 @@ export default function App() {
       .catch(() => setStatus("gate"));
   }, []);
 
-  // First run, once the claw-slash has cleared: open the guided tour on its own —
+  // First run, once the claw-slash has lifted: open the guided tour on its own —
   // the admin track when signed in, a short "what is this" welcome otherwise (so
   // even a first, not-yet-signed-in visit, e.g. incognito, sees the intro). The
   // "?" replays it any time.
   useEffect(() => {
-    if (status !== "loading" && !seen.current) {
-      const t = setTimeout(() => setTour(true), reduce ? 200 : 1600);
+    if (status !== "loading" && !intro && !seen.current) {
+      const t = setTimeout(() => setTour(true), reduce ? 200 : 350);
       return () => clearTimeout(t);
     }
-  }, [status, reduce]);
+  }, [status, intro, reduce]);
 
   const closeTour = () => {
     setTour(false);
@@ -74,16 +74,16 @@ export default function App() {
 // gradient — the same motif the intro animates.
 function Logo({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden className="shrink-0">
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden className="logo-mark shrink-0">
       <defs>
         <linearGradient id="clawgrad" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
           <stop stopColor="#6E8BFF" />
           <stop offset="1" stopColor="#C77DFF" />
         </linearGradient>
       </defs>
-      <path d="M8 4C12.5 9 14.5 17 13.5 28" stroke="url(#clawgrad)" strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M16 3C20.5 9 22.5 18 21.5 29" stroke="url(#clawgrad)" strokeWidth="3.4" strokeLinecap="round" />
-      <path d="M24 5C27 10 28 16.5 27 25" stroke="url(#clawgrad)" strokeWidth="3.4" strokeLinecap="round" opacity="0.9" />
+      <path pathLength={1} d="M8 4C12.5 9 14.5 17 13.5 28" stroke="url(#clawgrad)" strokeWidth="3.4" strokeLinecap="round" />
+      <path pathLength={1} d="M16 3C20.5 9 22.5 18 21.5 29" stroke="url(#clawgrad)" strokeWidth="3.4" strokeLinecap="round" />
+      <path pathLength={1} d="M24 5C27 10 28 16.5 27 25" stroke="url(#clawgrad)" strokeWidth="3.4" strokeLinecap="round" opacity="0.9" />
     </svg>
   );
 }
@@ -138,7 +138,7 @@ function Gate({ setup, onIn }: { setup: boolean; onIn: (name: string) => void })
         transition={{ delay: 1.4, duration: 0.4 }}
         className="w-full max-w-sm rounded-2xl border border-line bg-raised p-8"
       >
-        <div className="flex items-center gap-2.5">
+        <div className="wordmark flex items-center gap-2.5">
           <Logo size={30} />
           <span className="text-2xl font-bold tracking-tight">clawdh</span>
         </div>
@@ -187,7 +187,7 @@ function Shell({ tab, setTab, actor, onSignOut }: { tab: Tab; setTab: (t: Tab) =
   const tabs: [Tab, string][] = [["accounts", "Accounts"], ["people", "People"], ["usage", "Usage"], ["quotas", "Quotas"], ["activity", "Activity"]];
   return (
     <div className="mx-auto max-w-5xl px-5 py-6 sm:px-8">
-      <header className="flex items-center gap-2.5 pb-4">
+      <header className="wordmark flex items-center gap-2.5 pb-4">
         <Logo />
         <span className="text-[22px] font-bold tracking-tight">clawdh</span>
         <span className="rounded-full border border-line bg-raised px-2.5 py-0.5 text-[12px] font-medium text-muted">Team panel</span>

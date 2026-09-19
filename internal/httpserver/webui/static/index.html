@@ -8,6 +8,51 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- The claw-slash opening: three slashes rake across the dark, sparks fly off
+     each tip, the third lands with a flash, and the wordmark sharpens out of
+     the blur. The same show the team panel opens with, in this surface's teal.
+     Static markup so it paints before anything else; intro.js adds the sparks
+     and removes the overlay once it has lifted (at once under reduced motion). -->
+<div id="intro" class="intro" aria-hidden="true">
+  <div class="intro-stage">
+    <svg class="intro-svg" viewBox="0 0 420 300">
+      <defs>
+        <linearGradient id="intrograd" x1="0" y1="0" x2="420" y2="300" gradientUnits="userSpaceOnUse">
+          <stop offset="0" class="intro-stop-a"/><stop offset="1" class="intro-stop-b"/>
+        </linearGradient>
+        <radialGradient id="introflash">
+          <stop offset="0" class="intro-stop-a" stop-opacity="0.75"/>
+          <stop offset="0.55" class="intro-stop-b" stop-opacity="0.18"/>
+          <stop offset="1" class="intro-stop-b" stop-opacity="0"/>
+        </radialGradient>
+        <filter id="introglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7"/></filter>
+      </defs>
+      <circle class="intro-flash" cx="210" cy="150" r="190" fill="url(#introflash)"/>
+      <circle class="intro-ring" cx="210" cy="150" r="200"/>
+      <g class="intro-slash s0">
+        <path class="glow" pathLength="1" d="M 70 34 C 150 120, 168 176, 196 262"/>
+        <path class="core" pathLength="1" d="M 70 34 C 150 120, 168 176, 196 262"/>
+        <path class="hot" pathLength="1" d="M 70 34 C 150 120, 168 176, 196 262"/>
+      </g>
+      <g class="intro-slash s1">
+        <path class="glow" pathLength="1" d="M 130 34 C 210 120, 228 176, 256 262"/>
+        <path class="core" pathLength="1" d="M 130 34 C 210 120, 228 176, 256 262"/>
+        <path class="hot" pathLength="1" d="M 130 34 C 210 120, 228 176, 256 262"/>
+      </g>
+      <g class="intro-slash s2">
+        <path class="glow" pathLength="1" d="M 190 34 C 270 120, 288 176, 316 262"/>
+        <path class="core" pathLength="1" d="M 190 34 C 270 120, 288 176, 316 262"/>
+        <path class="hot" pathLength="1" d="M 190 34 C 270 120, 288 176, 316 262"/>
+      </g>
+      <g id="intro-sparks"></g>
+    </svg>
+    <div class="intro-word">clawdh<span class="intro-pill">This machine</span></div>
+  </div>
+</div>
+
+<!-- Live backdrop: slow-drifting aurora blobs behind everything, as on the panel. -->
+<div class="backdrop" aria-hidden="true"><span class="blob a"></span><span class="blob b"></span><span class="blob c"></span></div>
+
 <header>
   <div class="wordmark">
     <svg class="claw-logo" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -17,9 +62,9 @@
         </linearGradient>
       </defs>
       <g fill="none" stroke="url(#clawgrad)" stroke-width="3.4" stroke-linecap="round">
-        <path d="M8 4C12.5 9 14.5 17 13.5 28"/>
-        <path d="M16 3C20.5 9 22.5 18 21.5 29"/>
-        <path d="M24 5C27 10 28 16.5 27 25"/>
+        <path pathLength="1" d="M8 4C12.5 9 14.5 17 13.5 28"/>
+        <path pathLength="1" d="M16 3C20.5 9 22.5 18 21.5 29"/>
+        <path pathLength="1" d="M24 5C27 10 28 16.5 27 25"/>
       </g>
     </svg>
     <span class="logo">clawdh</span>
@@ -232,6 +277,7 @@
   </div>
 </template>
 
+<script src="intro.js"></script>
 <script src="app.js"></script>
 <script src="remote.js"></script>
 <script src="tour.js"></script>

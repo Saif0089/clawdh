@@ -150,7 +150,12 @@
   }
   function start() {
     addFab();
-    if (!seen()) setTimeout(open, reduce ? 200 : 600);
+    if (seen()) return;
+    // First run: open once the claw-slash opening has lifted (intro.js says so),
+    // or right away if it already has / never played.
+    var go = function () { setTimeout(open, reduce ? 200 : 350); };
+    if (document.getElementById("intro")) document.addEventListener("clawdh:introdone", go, { once: true });
+    else go();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();
