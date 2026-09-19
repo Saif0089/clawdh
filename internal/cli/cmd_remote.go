@@ -2,9 +2,7 @@ package cli
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,12 +10,12 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"clawdh/internal/buildinfo"
 	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
 	"clawdh/internal/service"
+	"clawdh/internal/switching"
 	"clawdh/panel"
 )
 
@@ -55,8 +53,10 @@ func cmdRemote(args []string) int {
 			return 1
 		}
 		if cfg.Remote {
-			fmt.Println("Remote help is on. The panel can now ask this machine to diagnose itself,")
-			fmt.Println("list its sessions, or send a transcript — and every request is printed here.")
+			fmt.Println("Remote help is on. The panel can now ask this machine to diagnose itself, list")
+			fmt.Println("the sessions that ran through a shared account, or send one of their transcripts.")
+			fmt.Println("Your own sessions (your personal login) are never visible to it. Every request is")
+			fmt.Println("printed here and raises a notification.")
 			fmt.Println("Turn it off any time with `clawdh remote off`.")
 		} else {
 			fmt.Println("Remote help is off. The panel can no longer ask this machine for anything.")
@@ -68,11 +68,11 @@ func cmdRemote(args []string) int {
 			return 0
 		}
 		if cfg.Remote {
-			fmt.Println("Remote help is ON — the panel may ask this machine to diagnose itself, list its")
-			fmt.Println("sessions, or send a transcript. Each request is printed. Turn off: `clawdh remote off`.")
+			fmt.Println("Remote help is ON — the panel may ask this machine to diagnose itself, or list/send")
+			fmt.Println("shared-account sessions only (never your own). Each request is printed. Turn off: `clawdh remote off`.")
 		} else {
 			fmt.Println("Remote help is OFF. Turn on with `clawdh remote on` to let the panel ask this")
-			fmt.Println("machine to look at itself (diagnose / list sessions / send a transcript).")
+			fmt.Println("machine to look at itself (diagnose, or list/send shared-account sessions only).")
 		}
 		return 0
 	default:
@@ -102,23 +102,12 @@ func describeJob(j panel.RemoteJob) string {
 	case "diagnose":
 		return "check its own health"
 	case "sessions":
-		return "list its sessions"
+		return "list its shared-account sessions"
 	case "transcript":
-		return "send a session transcript"
-	case "ls":
-		return "list " + niceParams(j.Params)
-	case "get":
-		return "send " + niceParams(j.Params)
+		return "send a shared-account session transcript"
 	default:
 		return j.Kind
 	}
-}
-
-func niceParams(p string) string {
-	if t := strings.TrimSpace(p); t == "" || t == "~" || t == "." {
-		return "the Claude folder"
-	}
-	return p
 }
 
 // executeJob runs one read-only job and returns its result text and a status
@@ -135,23 +124,18 @@ func executeJob(j panel.RemoteJob) (result, status string) {
 			return err.Error(), "error"
 		}
 		return out, "done"
-	case "ls":
-		return jobLs(j.Params)
-	case "get":
-		return jobGet(j.Params)
 	default:
 		return "This machine doesn't know how to " + j.Kind + ".", "error"
 	}
 }
 
-// claudeRootOverride lets tests point the browsable root somewhere other than a
-// real ~/.claude. Empty in normal use.
+// claudeRootOverride lets tests point the Claude data dir at a temp dir. Empty
+// in normal use.
 var claudeRootOverride string
 
-// claudeRoot is the only tree remote browsing may touch: this machine's Claude
-// Code data (~/.claude — projects, sessions, transcripts). Remote help exists to
-// look at Claude sessions, not to roam someone's whole disk, so everything else
-// on the filesystem stays off limits no matter what path is asked for.
+// claudeRoot is this machine's Claude Code data dir (~/.claude), where the
+// session transcripts live. Remote help never browses it: it only reads the
+// specific sessions the shared-session ledger says ran on a shared account.
 func claudeRoot() (string, error) {
 	if claudeRootOverride != "" {
 		return claudeRootOverride, nil
@@ -161,145 +145,6 @@ func claudeRoot() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".claude"), nil
-}
-
-var errOutsideClaude = errors.New("outside the Claude folder — remote browsing is limited to ~/.claude")
-
-// resolveClaudePath maps a requested browse path to an absolute path confined to
-// the Claude data tree. Empty, "~" or "." is the root itself; "~/x" and a plain
-// relative path are taken under the root; an absolute path is honoured only if it
-// already lies within the root. Anything that escapes — via "..", an absolute
-// path elsewhere, or a symlink pointing out — is refused, so remote browsing can
-// never leave ~/.claude.
-func resolveClaudePath(p string) (string, error) {
-	root, err := claudeRoot()
-	if err != nil {
-		return "", err
-	}
-	p = strings.TrimSpace(p)
-	var abs string
-	switch {
-	case p == "" || p == "~" || p == "~/" || p == ".":
-		abs = root
-	case strings.HasPrefix(p, "~/"):
-		abs = filepath.Join(root, p[2:])
-	case filepath.IsAbs(p):
-		abs = filepath.Clean(p)
-	default:
-		abs = filepath.Join(root, p)
-	}
-	if !within(root, abs) {
-		return "", errOutsideClaude
-	}
-	// Follow symlinks and re-check against the resolved root, so a link inside
-	// ~/.claude can't reach out. Resolving the root too keeps a symlinked root
-	// (e.g. macOS's /var → /private/var) from failing every in-bounds path.
-	realRoot := root
-	if r, err := filepath.EvalSymlinks(root); err == nil {
-		realRoot = r
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil && !within(realRoot, real) {
-		return "", errOutsideClaude
-	}
-	return abs, nil
-}
-
-// within reports whether path is root or sits inside it, comparing whole path
-// segments so "/a/.claude-x" is not mistaken for being inside "/a/.claude".
-func within(root, path string) bool {
-	if path == root {
-		return true
-	}
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// jobLs lists a folder's entries — the file browser's navigation. Names, sizes,
-// mod times and dir/file only; never any contents. Result is JSON the panel
-// renders. Bounded so an enormous folder can't be dragged through whole.
-func jobLs(p string) (string, string) {
-	dir, err := resolveClaudePath(p)
-	if err != nil {
-		return err.Error(), "error"
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err.Error(), "error"
-	}
-	type ent struct {
-		Name string `json:"name"`
-		Dir  bool   `json:"dir"`
-		Size int64  `json:"size"`
-		Mod  string `json:"mod"`
-	}
-	// The parent is offered for navigating up, but never above the Claude root —
-	// at the root there is nowhere higher to go.
-	parent := filepath.Dir(dir)
-	if root, _ := claudeRoot(); !within(root, parent) {
-		parent = ""
-	}
-	out := struct {
-		Path    string `json:"path"`
-		Parent  string `json:"parent"`
-		Entries []ent  `json:"entries"`
-	}{Path: dir, Parent: parent}
-	for i, e := range entries {
-		if i >= 2000 {
-			break
-		}
-		var size int64
-		var mod string
-		if info, err := e.Info(); err == nil {
-			size, mod = info.Size(), info.ModTime().Format("2006-01-02 15:04")
-		}
-		out.Entries = append(out.Entries, ent{Name: e.Name(), Dir: e.IsDir(), Size: size, Mod: mod})
-	}
-	b, _ := json.Marshal(out)
-	return string(b), "done"
-}
-
-// maxGetBytes caps a fetched file, so a huge one can't be dragged whole through
-// the panel.
-const maxGetBytes = 4 << 20
-
-// jobGet reads one file and ships it back. Text is sent as-is; anything not
-// valid UTF-8 is base64'd, so any file survives the JSON round-trip.
-func jobGet(p string) (string, string) {
-	path, err := resolveClaudePath(p)
-	if err != nil {
-		return err.Error(), "error"
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err.Error(), "error"
-	}
-	if info.IsDir() {
-		return "that is a folder, not a file", "error"
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err.Error(), "error"
-	}
-	truncated := false
-	if len(data) > maxGetBytes {
-		data, truncated = data[:maxGetBytes], true
-	}
-	enc, content := "utf8", string(data)
-	if !utf8.Valid(data) {
-		enc, content = "base64", base64.StdEncoding.EncodeToString(data)
-	}
-	out := struct {
-		Path      string `json:"path"`
-		Size      int64  `json:"size"`
-		Encoding  string `json:"encoding"`
-		Content   string `json:"content"`
-		Truncated bool   `json:"truncated"`
-	}{path, info.Size(), enc, content, truncated}
-	b, _ := json.Marshal(out)
-	return string(b), "done"
 }
 
 // jobDiagnose reports whether clawdh is healthy here and can reach the gateway —
@@ -331,24 +176,56 @@ func jobDiagnose() string {
 	return b.String()
 }
 
-// jobSessions lists this machine's Claude Code sessions — ids, project and size
-// only, never their content — so an admin can point a transcript request at one.
+// sharedLedgerOverride lets tests point the shared-session ledger at a temp
+// file. Empty in normal use.
+var sharedLedgerOverride string
+
+func sharedLedgerPath() string {
+	if sharedLedgerOverride != "" {
+		return sharedLedgerOverride
+	}
+	p, _ := config.SharedSessionsFile()
+	return p
+}
+
+// sharedSessionOut is one row of a sessions answer: what the panel is allowed
+// to know about a session — its id, which shared account it ran on, the project
+// folder name, size and time. Never its content.
+type sharedSessionOut struct {
+	ID      string `json:"id"`
+	Share   string `json:"share"`
+	Project string `json:"project"`
+	Size    int64  `json:"size"`
+	Mod     string `json:"mod"`
+}
+
+// jobSessions lists the sessions on this machine that ran through a shared
+// account — and only those, read off clawdh's shared-session ledger. A person's
+// own sessions (their personal login, or a local account they manage
+// themselves) are not the panel's concern and are never listed, whatever else
+// is on the disk. The answer is JSON the panel renders.
 func jobSessions() string {
-	files := sessionFiles()
-	if len(files) == 0 {
-		return "No Claude Code sessions on this machine."
+	shared := switching.SharedSessions(sharedLedgerPath())
+	var files []sessionFile
+	for _, f := range sessionFiles() {
+		if slug, ok := shared[f.id]; ok {
+			f.share = slug
+			files = append(files, f)
+		}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
 	if len(files) > 50 {
 		files = files[:50]
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d recent session(s):\n", len(files))
+	out := struct {
+		Sessions []sharedSessionOut `json:"sessions"`
+		Note     string             `json:"note"`
+	}{Note: "Only sessions that ran through a shared account are listed; a person's own sessions are never shown."}
 	for _, f := range files {
-		fmt.Fprintf(&b, "  %s  %6s  %s  (%s)\n", f.id, humanSize(f.size), f.project, f.mod.Format("2006-01-02 15:04"))
+		out.Sessions = append(out.Sessions, sharedSessionOut{ID: f.id, Share: f.share, Project: f.project, Size: f.size, Mod: f.mod.Format("2006-01-02 15:04")})
 	}
-	b.WriteString("\nAsk for one with a transcript request, using its id.")
-	return b.String()
+	b, _ := json.Marshal(out)
+	return string(b)
 }
 
 // maxTranscriptBytes caps a returned transcript, so a giant session can't be
@@ -365,6 +242,11 @@ func jobTranscript(sessionID string) (string, error) {
 	// the projects tree.
 	if strings.ContainsAny(sessionID, "/\\") || strings.Contains(sessionID, "..") {
 		return "", fmt.Errorf("that is not a valid session id")
+	}
+	// Only a session that ran through a shared account is the panel's to see —
+	// the ledger, not the disk, decides. Everything else stays private.
+	if _, ok := switching.SharedSessions(sharedLedgerPath())[sessionID]; !ok {
+		return "", fmt.Errorf("session %q did not run through a shared account, so it isn't the panel's to see", sessionID)
 	}
 	matches, _ := filepath.Glob(filepath.Join(claudeProjectsDir(), "*", sessionID+".jsonl"))
 	if len(matches) == 0 {
@@ -384,6 +266,7 @@ func jobTranscript(sessionID string) (string, error) {
 
 type sessionFile struct {
 	id, project string
+	share       string // the shared account it ran on, from the ledger
 	size        int64
 	mod         time.Time
 }

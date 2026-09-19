@@ -180,6 +180,20 @@ func SharesFile() (string, error) {
 	return filepath.Join(base, "shares.json"), nil
 }
 
+// SharedSessionsFile is clawdh's own record of which conversations on this
+// machine ran through a shared account, and which one: an append-only TSV of
+// session id, share slug, epoch seconds. It is the whole basis for what the
+// panel's remote help may see — only sessions in it are ever listed or sent —
+// so a person's own sessions (their personal login, or a local account they
+// manage themselves) stay invisible to the panel. No secrets.
+func SharedSessionsFile() (string, error) {
+	base, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "shared-sessions.tsv"), nil
+}
+
 // NoticesSeenFile is where the running service remembers which per-person
 // notices (a quota warning, a broken login) it has already shown, keyed by the
 // event's ID, so a standing condition riding every check-in is announced once

@@ -232,6 +232,10 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		}
 	}
 
+	// A session on a shared account is recorded in clawdh's shared-session ledger:
+	// the one thing remote help may ever look at. Personal sessions never enter it.
+	recordSharedSession(target, sessionID)
+
 	sessionArgs := launchArgs
 	for {
 		if target.applyID != nil {
@@ -299,6 +303,7 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		}
 		target = next
 		sessionID = h.SessionID
+		recordSharedSession(target, sessionID)
 		// The conversation keeps its id across the switch; the monitor resolves
 		// ownership by interval, so work done before it stays with the account
 		// that did it. A share's usage is metered by the gateway, so only a local
@@ -344,6 +349,19 @@ func watchShareKey(sharesPath, slug, launchedKey, sessionID, handoff string, sto
 				}
 			}
 		}
+	}
+}
+
+// recordSharedSession notes a shared-account session in clawdh's ledger — the
+// privacy boundary for remote help (see switching.RecordSharedSession). Local
+// accounts are the person's own business and are never recorded. Best-effort:
+// a failed write must never stop a session from launching.
+func recordSharedSession(target sessionTarget, sessionID string) {
+	if target.local || sessionID == "" {
+		return
+	}
+	if path, err := config.SharedSessionsFile(); err == nil {
+		_ = switching.RecordSharedSession(path, sessionID, target.display)
 	}
 }
 

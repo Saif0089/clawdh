@@ -4,114 +4,91 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"clawdh/internal/switching"
+	"clawdh/panel"
 )
 
-// Remote browsing is confined to ~/.claude: a path under it resolves, and any
-// attempt to escape — an absolute path elsewhere, a "..", or the home folder
-// itself — is refused. resolveClaudePath is the whole of that boundary.
-func TestResolveClaudePath(t *testing.T) {
-	root := filepath.Join(t.TempDir(), ".claude")
-	if err := os.MkdirAll(filepath.Join(root, "projects"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	claudeRootOverride = root
-	t.Cleanup(func() { claudeRootOverride = "" })
-
-	// outside is a sibling dir — absolute on every OS. A literal like "/etc" is a
-	// relative path on Windows, so it can't stand in for "somewhere off the root".
-	outside := t.TempDir()
-	ok := map[string]string{
-		"":                              root,
-		"~":                             root,
-		".":                             root,
-		"projects":                      filepath.Join(root, "projects"),
-		"~/projects":                    filepath.Join(root, "projects"),
-		filepath.Join(root, "projects"): filepath.Join(root, "projects"), // absolute, already inside
-	}
-	for in, want := range ok {
-		got, err := resolveClaudePath(in)
-		if err != nil || got != want {
-			t.Errorf("resolveClaudePath(%q) = %q, %v; want %q, nil", in, got, err, want)
-		}
-	}
-	for _, bad := range []string{outside, filepath.Join(outside, "hosts"), "..", "~/../secrets", filepath.Join("..", "elsewhere"), filepath.Dir(root)} {
-		if got, err := resolveClaudePath(bad); err == nil {
-			t.Errorf("resolveClaudePath(%q) = %q, nil; want an out-of-bounds error", bad, got)
-		}
-	}
-}
-
-// jobLs lists a folder (names/dir/size, no contents) and jobGet ships one file;
-// together they are the file browser's navigate + fetch — confined to ~/.claude.
-func TestJobLsAndGet(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), ".claude")
+// plantSession writes a fake transcript for a session id under the (overridden)
+// Claude data dir, in the given project folder.
+func plantSession(t *testing.T, root, project, id, body string) {
+	t.Helper()
+	dir := filepath.Join(root, "projects", project)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	claudeRootOverride = dir
-	t.Cleanup(func() { claudeRootOverride = "" })
-	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hi there"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+}
+
+// Remote help may only ever see sessions that ran through a shared account —
+// the ones in clawdh's shared-session ledger. A person's own sessions on the
+// same machine (their personal login, a local account they manage themselves)
+// are never listed and never sent, no matter what the panel asks for.
+func TestRemoteJobsOnlyExposeSharedSessions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".claude")
+	claudeRootOverride = root
+	t.Cleanup(func() { claudeRootOverride = "" })
+	ledger := filepath.Join(t.TempDir(), "shared-sessions.tsv")
+	sharedLedgerOverride = ledger
+	t.Cleanup(func() { sharedLedgerOverride = "" })
+
+	// Two sessions on disk: one ran through a shared account, one is personal.
+	plantSession(t, root, "proj-a", "shared-1", `{"type":"user","text":"work on the shared account"}`)
+	plantSession(t, root, "proj-b", "personal-1", `{"type":"user","text":"ahmed's private session"}`)
+	if err := switching.RecordSharedSession(ledger, "shared-1", "ehtisham"); err != nil {
 		t.Fatal(err)
 	}
 
-	res, status := jobLs(dir)
-	if status != "done" {
-		t.Fatalf("ls status = %q (%s)", status, res)
+	// sessions: only the shared one, tagged with the account it ran on.
+	var out struct {
+		Sessions []struct{ ID, Share, Project string }
+		Note     string
 	}
-	var ls struct {
-		Path    string
-		Entries []struct {
-			Name string
-			Dir  bool
+	if err := json.Unmarshal([]byte(jobSessions()), &out); err != nil {
+		t.Fatalf("sessions answer is not JSON: %v", err)
+	}
+	if len(out.Sessions) != 1 || out.Sessions[0].ID != "shared-1" || out.Sessions[0].Share != "ehtisham" || out.Sessions[0].Project != "proj-a" {
+		t.Errorf("sessions = %+v, want exactly the shared session on ehtisham", out.Sessions)
+	}
+	for _, s := range out.Sessions {
+		if s.ID == "personal-1" {
+			t.Fatal("a personal session was listed — privacy boundary broken")
 		}
 	}
-	if err := json.Unmarshal([]byte(res), &ls); err != nil {
+	if !strings.Contains(out.Note, "never shown") {
+		t.Errorf("the answer should say personal sessions are never shown, got note %q", out.Note)
+	}
+
+	// transcript: the shared one is served; the personal one is refused even
+	// though it exists on disk.
+	if got, err := jobTranscript("shared-1"); err != nil || !strings.Contains(got, "work on the shared account") {
+		t.Errorf("shared transcript = %q, %v; want its content", got, err)
+	}
+	if got, err := jobTranscript("personal-1"); err == nil {
+		t.Errorf("personal transcript was served (%q) — privacy boundary broken", got)
+	} else if !strings.Contains(err.Error(), "shared account") {
+		t.Errorf("refusal should explain the shared-account rule, got %v", err)
+	}
+
+	// A ledger entry for a session that no longer exists on disk is simply
+	// absent from the list, not an error.
+	if err := switching.RecordSharedSession(ledger, "gone-1", "ehtisham"); err != nil {
 		t.Fatal(err)
 	}
-	dirs := map[string]bool{}
-	for _, e := range ls.Entries {
-		dirs[e.Name] = e.Dir
+	if err := json.Unmarshal([]byte(jobSessions()), &out); err != nil || len(out.Sessions) != 1 {
+		t.Errorf("a ledger entry with no transcript should not appear: %+v (%v)", out.Sessions, err)
 	}
-	if _, ok := dirs["hello.txt"]; !ok {
-		t.Error("ls did not list hello.txt")
-	}
-	if !dirs["sub"] {
-		t.Error("ls should mark sub as a directory")
-	}
+}
 
-	res, status = jobGet(filepath.Join(dir, "hello.txt"))
-	if status != "done" {
-		t.Fatalf("get status = %q", status)
-	}
-	var g struct {
-		Encoding, Content string
-		Size              int64
-	}
-	if err := json.Unmarshal([]byte(res), &g); err != nil {
-		t.Fatal(err)
-	}
-	if g.Encoding != "utf8" || g.Content != "hi there" || g.Size != 8 {
-		t.Errorf("get = %+v, want utf8 'hi there' size 8", g)
-	}
-
-	if _, status := jobGet(dir); status != "error" {
-		t.Error("get on a folder should be an error")
-	}
-	if _, status := jobGet(filepath.Join(dir, "nope")); status != "error" {
-		t.Error("get on a missing file should be an error")
-	}
-
-	// Out of scope: neither ls nor get may reach outside ~/.claude. A real dir
-	// outside the root — "/etc" is a relative path on Windows, so it won't do.
-	outside := t.TempDir()
-	if _, status := jobLs(outside); status != "error" {
-		t.Error("ls outside ~/.claude must be refused")
-	}
-	if _, status := jobGet(filepath.Join(outside, "x")); status != "error" {
-		t.Error("get outside ~/.claude must be refused")
+// Only the three read-only, shared-scoped jobs exist; there is no file access.
+func TestExecuteJobRefusesUnknownKinds(t *testing.T) {
+	for _, kind := range []string{"ls", "get", "cat", "exec"} {
+		if out, status := executeJob(panel.RemoteJob{Kind: kind, Params: "~"}); status != "error" || !strings.Contains(out, "doesn't know how to") {
+			t.Errorf("kind %q -> %q / %q, want a refusal", kind, out, status)
+		}
 	}
 }

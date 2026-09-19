@@ -36,18 +36,18 @@ type Jobs interface {
 	RecentJobs(ctx context.Context, deviceID string, limit int) ([]Job, error)
 }
 
-// jobKinds are the only things a machine can be asked to do — all read-only.
-// diagnose: is clawdh healthy here and can it reach the gateway. sessions: the
-// Claude Code sessions on this machine (ids and sizes, not content).
-// transcript: one named session's transcript. ls: the entries in a folder (the
-// file browser's navigation). get: one file's contents (bounded). ls/get take a
-// path in params and only ever read — nothing here can change a machine.
+// jobKinds are the only things a machine can be asked to do — all read-only,
+// and all scoped to what is the panel's business. diagnose: is clawdh healthy
+// there and can it reach the gateway. sessions: the sessions that ran through a
+// *shared* account (ids, sizes, which account — not content). transcript: one
+// such session's transcript. The machine decides scope from its own
+// shared-session ledger, so a person's own sessions — their personal login, or a
+// local account they manage themselves — are never listed or sent, whatever the
+// panel asks for. There is deliberately no general file access.
 var jobKinds = map[string]string{
 	"diagnose":   "check its own health",
-	"sessions":   "list its sessions",
-	"transcript": "send a session transcript",
-	"ls":         "list a folder",
-	"get":        "send a file",
+	"sessions":   "list its shared-account sessions",
+	"transcript": "send a shared-account session transcript",
 }
 
 // handleRequestJob queues a job for a machine. Admin-only. The request is logged
