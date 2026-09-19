@@ -258,9 +258,11 @@ test("shows plan usage and reset countdowns", async ({ page }) => {
   await expect(meters.nth(2)).toHaveClass(/level-warn/);
 
   // The bar has to actually move; a fill left at zero width would look
-  // identical for every account.
-  const width = await meters.nth(1).locator(".bar-fill").evaluate((el) => el.getBoundingClientRect().width);
-  expect(width).toBeGreaterThan(0);
+  // identical for every account. It grows over a few frames, and a renderer
+  // with no GPU (CI) can take a moment to produce the first one — so poll.
+  await expect
+    .poll(() => meters.nth(1).locator(".bar-fill").evaluate((el) => el.getBoundingClientRect().width), { timeout: 5000 })
+    .toBeGreaterThan(0);
 
   await expect(meters.nth(0).locator(".meter-reset")).toHaveText(/resets in \d+h \d+m \(.+\)/);
   await expect(meters.nth(1).locator(".meter-reset")).toHaveText(/resets in 2d \d+h \(.+\)/);

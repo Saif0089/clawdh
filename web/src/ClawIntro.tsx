@@ -82,7 +82,7 @@ export function ClawIntro({ onDone, badge = "Team panel" }: { onDone: () => void
               <stop offset="0.55" className="intro-stop-b" stopOpacity="0.18" />
               <stop offset="1" className="intro-stop-b" stopOpacity="0" />
             </radialGradient>
-            <filter id="introglow" x="-50%" y="-50%" width="200%" height="200%">
+            <filter id="introglow" x="-25%" y="-12%" width="150%" height="124%" colorInterpolationFilters="sRGB">
               <feGaussianBlur stdDeviation="7" />
             </filter>
           </defs>
