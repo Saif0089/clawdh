@@ -201,9 +201,11 @@ function Shell({ tab, setTab, actor, onSignOut }: { tab: Tab; setTab: (t: Tab) =
           <button onClick={signOut} className="shrink-0 text-[14px] text-faint transition-colors hover:text-ink">Sign out</button>
         </div>
       </header>
-      <nav className="flex gap-1 border-b border-line">
+      {/* On a phone the strip scrolls sideways under the finger (no page overflow); the
+          page's side gutter is kept so the first tab lines up with the content. */}
+      <nav className="scrollbar-none -mx-5 flex gap-1 overflow-x-auto border-b border-line px-5 sm:mx-0 sm:px-0">
         {tabs.map(([t, label]) => (
-          <button key={t} onClick={() => setTab(t)} className="relative px-3.5 pb-3 pt-1 text-[16px] font-medium transition-colors">
+          <button key={t} onClick={() => setTab(t)} className="relative shrink-0 px-3.5 pb-3 pt-1 text-[16px] font-medium transition-colors">
             <span className={t === tab ? "text-ink" : "text-muted hover:text-ink"}>{label}</span>
             {t === tab && <motion.span layoutId="tab-underline" className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-primary" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
           </button>
@@ -485,7 +487,7 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                           {d.remote && <span title="Remote help is on" className="rounded-full bg-primary/12 px-1.5 py-px text-[11px] font-medium text-primary">remote</span>}
                           <span className="text-faint">{when(d.lastSeen)}</span>
                           <div className="ml-auto flex gap-1">
-                            {d.remote && <button onClick={() => setJobsFor(d)} className="rounded px-1.5 py-0.5 text-[13px] text-primary transition-colors hover:bg-primary/12">Ask…</button>}
+                            {d.remote && <button onClick={() => setJobsFor(d)} className="rounded px-1.5 py-0.5 text-[13px] text-primary transition-colors hover:bg-primary/12">Remote help</button>}
                             <button onClick={() => cutOff(p, d)} title="Unlink this machine" className="rounded px-1.5 py-0.5 text-[13px] text-faint transition-colors hover:text-crit">Forget</button>
                           </div>
                         </div>

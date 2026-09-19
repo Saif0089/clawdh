@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { api } from "./api";
-import { fmtNum } from "./format";
+import { fmtNum, untilReset } from "./format";
 
 interface LimitRow {
   limit: { id: string; subjectType: string; subjectId: string; windowKind: string; maxWeighted?: number; maxCostUsd?: number; maxPercent?: number };
@@ -18,14 +18,32 @@ function capLabel(l: LimitRow["limit"]): string {
   return caps.join(" / ") + " · per " + l.windowKind;
 }
 
-// usageTone maps a limit's utilisation to a colour and a word: green under 75%,
+const periodWord: Record<string, string> = { day: "today", week: "this week", month: "this month" };
+
+// usedLabel spells out what the bar means, in the cap's own unit — "17% of the
+// weekly window used · cap 25%" — so a quota's fill is never confused with the
+// window's fill. Two percentages live on this board (how full the quota is,
+// how full the account's window is) and both are named.
+function usedLabel(l: LimitRow["limit"], frac: number, resetAt?: string): string {
+  const parts: string[] = [];
+  const period = periodWord[l.windowKind] || "per " + l.windowKind;
+  if (l.maxPercent) parts.push(`${Math.round(frac * l.maxPercent * 100)}% of the weekly window used · cap ${Math.round(l.maxPercent * 100)}%`);
+  if (l.maxWeighted) parts.push(`${fmtNum(frac * l.maxWeighted)} of ${fmtNum(l.maxWeighted)} tokens ${period}`);
+  if (l.maxCostUsd) parts.push(`$${(frac * l.maxCostUsd).toFixed(2)} of $${l.maxCostUsd} ${period}`);
+  const reset = untilReset(resetAt);
+  if (reset) parts.push(reset);
+  return parts.join(" · ");
+}
+
+// usageTone maps how full a quota is to a colour and a word: green under 75%,
 // amber approaching (75–95%), red near or over the cap — the 75/95 marks the
-// gateway warns and blocks at.
+// gateway warns and blocks at. The word always says "of quota", because the
+// board also shows how full the underlying window is.
 function usageTone(frac: number): { color: string; label: string } {
   if (frac >= 1) return { color: "#E05C53", label: "over the cap" };
-  if (frac >= 0.95) return { color: "#E05C53", label: `${Math.round(frac * 100)}% — at the cap` };
-  if (frac >= 0.75) return { color: "#E0A83E", label: `${Math.round(frac * 100)}% — approaching` };
-  return { color: "#46C08A", label: `${Math.round(frac * 100)}% used` };
+  if (frac >= 0.95) return { color: "#E05C53", label: `${Math.round(frac * 100)}% of quota — at the cap` };
+  if (frac >= 0.75) return { color: "#E0A83E", label: `${Math.round(frac * 100)}% of quota — approaching` };
+  return { color: "#46C08A", label: `${Math.round(frac * 100)}% of quota` };
 }
 
 type Mode = "percent" | "weighted" | "cost";
@@ -129,19 +147,20 @@ export function Quotas() {
           const tone = usageTone(frac);
           return (
             <div key={r.limit.id} className="rounded-2xl border border-line bg-raised p-4">
-              <div className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                <div className="min-w-0 flex-1 basis-[200px]">
                   <div className="truncate text-[16px] font-semibold">{r.name}</div>
                   <div className="text-[14px] text-muted">{capLabel(r.limit)}</div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[15px] font-semibold" style={{ color: tone.color }}>{tone.label}</div>
+                <div className="flex items-center gap-3">
+                  <div className="text-[15px] font-semibold tabular-nums" style={{ color: tone.color }}>{tone.label}</div>
+                  <button onClick={() => remove(r.limit.id)} className="rounded-lg border border-line px-3 py-1.5 text-[13px] text-faint transition-colors hover:border-crit/50 hover:text-crit">Remove</button>
                 </div>
-                <button onClick={() => remove(r.limit.id)} className="rounded-lg border border-line px-3 py-1.5 text-[13px] text-faint transition-colors hover:border-crit/50 hover:text-crit">Remove</button>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-sunken">
                 <motion.div className="h-full rounded-full" style={{ background: tone.color }} initial={{ width: 0 }} animate={{ width: `${Math.min(frac, 1) * 100}%` }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }} />
               </div>
+              <div className="mt-1.5 text-[13px] tabular-nums text-faint">{usedLabel(r.limit, frac, r.resetAt)}</div>
             </div>
           );
         })}

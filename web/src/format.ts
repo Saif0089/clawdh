@@ -37,10 +37,14 @@ export function pct(frac: number): string {
   return Math.round(p) + "%";
 }
 
+// agoFrom is the freshness line on a board: how old its newest reading is, and
+// whether that is old enough to call stale (over two minutes — a board polls
+// every 12 s, so anything older means the gateway has seen no traffic or the
+// panel can't reach it).
 export function agoFrom(iso: string): { text: string; stale: boolean } {
   if (!iso || iso.startsWith("0001")) return { text: "no usage recorded yet", stale: false };
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  return { text: "as of " + (mins < 1 ? "just now" : mins + "m ago"), stale: mins > 2 };
+  return { text: "as of " + when(iso), stale: mins > 2 };
 }
 
 // when renders a past instant in plain words ("3 min ago", "2 days ago"), the

@@ -144,6 +144,7 @@ func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []
 		byAccount[w.AccountID] = w
 	}
 	var out []ShareWindow
+	slugs := shareSlugs(d, personID)
 	for _, sh := range d.Shares {
 		if sh.PersonID != personID {
 			continue
@@ -154,7 +155,7 @@ func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []
 		}
 		acct, _ := d.Account(sh.AccountID)
 		out = append(out, ShareWindow{
-			Slug: slugify(acct.Name), Email: acct.Email,
+			Slug: slugs[acct.ID], Email: acct.Email,
 			FiveH: w.FiveH, SevenD: w.SevenD, FiveHReset: w.FiveHReset, SevenDReset: w.SevenDReset, UpdatedAt: w.UpdatedAt,
 		})
 	}

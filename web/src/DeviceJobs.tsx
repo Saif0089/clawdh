@@ -52,29 +52,33 @@ export function DeviceJobs({ deviceId, deviceName, onClose }: { deviceId: string
   const awaiting = jobs.some((j) => j.status === "awaiting");
 
   return (
+    // A full-height sheet from the right: a workspace beside the People list,
+    // not a popup over it — the answers can be long, and one stays open while
+    // the machine's owner decides.
     <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center px-3 sm:px-4"
+      className="fixed inset-0 z-50 flex justify-end"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" />
+      <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.98 }}
-        transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+        initial={{ x: 40, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: 40, opacity: 0 }}
+        transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
         role="dialog"
-        aria-label={`Ask ${deviceName}`}
-        className="relative flex max-h-[88vh] w-full max-w-2xl flex-col rounded-2xl border border-line bg-raised p-5 shadow-2xl sm:p-7"
+        aria-label={`Remote help — ${deviceName}`}
+        className="relative flex h-full w-full max-w-3xl flex-col border-l border-line bg-raised p-5 shadow-2xl sm:p-7"
       >
         <div className="flex items-start gap-3">
           <div className="min-w-0">
-            <h2 className="truncate text-xl font-semibold tracking-tight">Ask {deviceName}</h2>
+            <div className="text-[12.5px] font-semibold uppercase tracking-[0.06em] text-primary">Remote help</div>
+            <h2 className="mt-0.5 truncate text-xl font-semibold tracking-tight">{deviceName}</h2>
             <p className="mt-1 text-[13.5px] leading-snug text-muted">
-              Remote help is on for this machine. It only ever shares what ran on a <span className="text-ink">shared</span> account — its owner's own sessions stay private.
+              Its owner turned remote help on. It only ever shares what ran on a <span className="text-ink">shared</span> account — the owner's own sessions stay private — and anything sent here waits for their OK first.
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="ml-auto shrink-0 rounded-lg px-2 py-1 text-[15px] text-faint hover:bg-raised-2 hover:text-ink">

@@ -617,6 +617,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 
 	var shares []clientShare
 	if gw := gatewayURL(); gw != "" {
+		slugs := shareSlugs(d, dev.PersonID)
 		for _, sh := range d.Shares {
 			if sh.PersonID != dev.PersonID {
 				continue
@@ -629,7 +630,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 			if err != nil {
 				continue
 			}
-			shares = append(shares, clientShare{Account: acct.Name, Slug: slugify(acct.Name), Gateway: gw, Key: string(plain)})
+			shares = append(shares, clientShare{Account: acct.Name, Slug: slugs[acct.ID], Gateway: gw, Key: string(plain)})
 		}
 	}
 
@@ -650,6 +651,49 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 }
 
 // slugify makes a shell-safe short name for an account's alias.
+// shareSlug is the short name a person types for a shared account: `clawdh
+// shared <slug>`. A login is usually named by its email, and nobody wants to
+// type "ehtishamdevhouseco" — so an email-shaped name shortens to the part
+// before the @. Anything else slugifies whole.
+func shareSlug(name string) string {
+	if at := strings.IndexByte(name, '@'); at > 0 {
+		if s := slugify(name[:at]); s != "account" {
+			return s
+		}
+	}
+	return slugify(name)
+}
+
+// shareSlugs gives every account shared with a person a slug unique among
+// their shares, stable across check-ins: accounts are visited in id order and
+// a repeat gets a -2, -3 suffix. Both the check-in's share list and its usage
+// windows are named through this, so the two always agree.
+func shareSlugs(d Data, personID string) map[string]string {
+	var ids []string
+	for _, sh := range d.Shares {
+		if sh.PersonID == personID {
+			ids = append(ids, sh.AccountID)
+		}
+	}
+	sort.Strings(ids)
+	out := make(map[string]string, len(ids))
+	taken := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		acct, ok := d.Account(id)
+		if !ok {
+			continue
+		}
+		base := shareSlug(acct.Name)
+		slug := base
+		for n := 2; taken[slug]; n++ {
+			slug = fmt.Sprintf("%s-%d", base, n)
+		}
+		taken[slug] = true
+		out[id] = slug
+	}
+	return out
+}
+
 func slugify(name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(name) {

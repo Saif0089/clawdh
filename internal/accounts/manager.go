@@ -265,8 +265,17 @@ func (m *Manager) Remove(id string) (Account, error) {
 
 var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
 
+// slugify is the short name typed at the terminal for an account (`clawdh
+// <slug>`). A login is often named by its email, and nobody wants to type
+// "ehtisham-devhouse-co" — so an email-shaped name shortens to the part before
+// the @ (the domain adds nothing once the name is unique here).
 func slugify(name string) string {
 	s := strings.ToLower(strings.TrimSpace(name))
+	if at := strings.IndexByte(s, '@'); at > 0 && !strings.ContainsAny(s[:at], " ") {
+		if local := strings.Trim(nonSlugChars.ReplaceAllString(s[:at], "-"), "-"); local != "" {
+			s = local
+		}
+	}
 	s = nonSlugChars.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	if s == "" {

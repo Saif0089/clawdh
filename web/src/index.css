@@ -8,6 +8,8 @@ body { margin: 0; background: #0F1216; color: #E7EBF0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased; }
 ::selection { background: #6E8BFF; color: #0B0E12; }
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
 
 /* Live backdrop — slow-drifting aurora blobs behind everything, plus a faint
    grid. Fixed, non-interactive, low-opacity: alive but never distracting, and
