@@ -70,6 +70,29 @@ func runDiagnose(ctx context.Context, dsn, keyB64 string) error {
 		fmt.Println()
 	}
 
+	// Metering: is usage actually being recorded? The question an owner asks
+	// when a board looks empty — and the box has no psql to answer it with.
+	fmt.Println("metering:")
+	if last, err := u.pg.LatestEventAt(ctx); err != nil {
+		fmt.Printf("  usage_events: cannot read: %v\n", err)
+	} else if last.IsZero() {
+		fmt.Println("  usage_events: none yet — no shared session has completed a request through this gateway")
+	} else {
+		fmt.Printf("  usage_events: newest %s (%s ago)\n", last.Format(time.RFC3339), now.Sub(last).Round(time.Second))
+	}
+	if people, err := u.pg.UsageBySubject(ctx, "person", now.Add(-7*24*time.Hour)); err == nil {
+		for _, p := range people {
+			fmt.Printf("  this week %-20s %10.0f weighted tokens  $%.2f\n", nameOf(d.People, p.SubjectID), p.Weighted, p.CostUSD)
+		}
+	}
+	if ws, err := u.pg.AccountWindows(ctx); err == nil {
+		for _, w := range ws {
+			fmt.Printf("  windows   %-20s 5h %3.0f%%  weekly %3.0f%%  (read %s ago)\n",
+				nameOfAccount(d.Accounts, w.AccountID), w.FiveH*100, w.SevenD*100, now.Sub(w.UpdatedAt).Round(time.Second))
+		}
+	}
+	fmt.Println()
+
 	fmt.Println("shares:")
 	for _, sh := range d.Shares {
 		fmt.Printf("  person %q -> account %q  (keyHash %s…, sealedKey %s)\n",

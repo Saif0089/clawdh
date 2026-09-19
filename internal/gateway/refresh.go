@@ -105,6 +105,14 @@ func NewManager(access, refreshTok string, expiresAt time.Time, onRefresh func(C
 // Token returns a currently-valid access token, refreshing first if needed.
 func (m *Manager) Token(ctx context.Context) (string, error) { return m.get(ctx) }
 
+// Reload gives the manager a way to re-read the stored credential before it
+// refreshes. A refresh token is single-use: if anything else rotated this
+// credential since the manager loaded it — the panel re-adding the login, or
+// `clawdh-server diagnose` testing the refresh — refreshing with the cached
+// token would fail and read as a collision. With a reload, the manager adopts
+// the stored credential first and only refreshes if that one is stale too.
+func (m *Manager) Reload(fn func() (Credential, bool)) { m.reload = fn }
+
 // tokenManager keeps one account's credential fresh. Get returns a usable access
 // token, refreshing first if it is close to expiry, and persists a refreshed
 // credential through onRefresh so a restart does not lose the rotation.
@@ -113,11 +121,43 @@ type tokenManager struct {
 	cred      Credential
 	httpc     *http.Client
 	now       func() time.Time
-	onRefresh func(Credential) // persist the rotated credential (e.g. back to the DB)
+	onRefresh func(Credential)          // persist the rotated credential (e.g. back to the DB)
+	reload    func() (Credential, bool) // re-read the stored credential before refreshing (see Reload)
 }
 
 func newTokenManager(cred Credential, onRefresh func(Credential)) *tokenManager {
 	return &tokenManager{cred: cred, httpc: &http.Client{Timeout: 30 * time.Second}, now: time.Now, onRefresh: onRefresh}
+}
+
+// Renew is called when Anthropic just refused the access token `bad` (a 401
+// on a token the clock still calls valid): it answers with a different one.
+// Anthropic revokes the previous access token whenever the login's credential
+// rotates — a refresh by the panel re-adding the login, by `clawdh-server
+// diagnose`, or by the same account being used first-party — so the manager
+// first adopts whatever the store holds now, and only if that is the same
+// revoked token does it spend the refresh token. A caller whose token is
+// already not the current one simply gets the current one.
+func (m *Manager) Renew(ctx context.Context, bad string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cred.AccessToken != bad {
+		return m.cred.AccessToken, nil // someone renewed it already
+	}
+	if m.reload != nil {
+		if c, ok := m.reload(); ok && c.AccessToken != "" && c.AccessToken != bad {
+			m.cred = c
+			return m.cred.AccessToken, nil
+		}
+	}
+	fresh, err := refresh(ctx, m.httpc, m.cred.RefreshToken)
+	if err != nil {
+		return "", err
+	}
+	m.cred = fresh
+	if m.onRefresh != nil {
+		m.onRefresh(fresh)
+	}
+	return fresh.AccessToken, nil
 }
 
 func (m *tokenManager) get(ctx context.Context) (string, error) {
@@ -125,6 +165,15 @@ func (m *tokenManager) get(ctx context.Context) (string, error) {
 	defer m.mu.Unlock()
 	if !m.cred.stale(m.now()) {
 		return m.cred.AccessToken, nil
+	}
+	// Adopt a credential someone else rotated before spending ours (see Reload).
+	if m.reload != nil {
+		if c, ok := m.reload(); ok && c.RefreshToken != "" && (c.RefreshToken != m.cred.RefreshToken || c.AccessToken != m.cred.AccessToken) {
+			m.cred = c
+			if !m.cred.stale(m.now()) {
+				return m.cred.AccessToken, nil
+			}
+		}
 	}
 	fresh, err := refresh(ctx, m.httpc, m.cred.RefreshToken)
 	if err != nil {

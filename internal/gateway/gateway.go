@@ -11,9 +11,13 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"strconv"
@@ -56,6 +60,31 @@ type Upstream interface {
 	Resolve(memberKey string) (Resolution, error)
 }
 
+// Renewer is an Upstream that can replace an access token Anthropic has just
+// refused. Anthropic revokes a login's previous access token whenever its
+// credential rotates — the panel re-adding the login, `clawdh-server
+// diagnose` testing the refresh, the same account used first-party — so a
+// token the clock still calls valid can come back 401. A gateway whose
+// upstream renews replays the request once with the new token instead of
+// handing the member the 401; an upstream that can't renew makes it a
+// collision (502 with the "add the login again" message).
+type Renewer interface {
+	// Renew returns an access token for the account other than bad, or an error
+	// if the login can't produce one.
+	Renew(accountID, bad string) (string, error)
+}
+
+// maxRequestBody is the most the gateway buffers of a request so it can be
+// replayed after a token renewal. Claude Code requests are JSON — large
+// contexts run to a few MB — never streams.
+const maxRequestBody = 64 << 20
+
+// retryWithToken is how ModifyResponse hands a renewed token to the
+// ErrorHandler, which replays the request with it.
+type retryWithToken struct{ token string }
+
+func (e *retryWithToken) Error() string { return "retry with a renewed token" }
+
 // Limiter reports a member's standing against their tightest clawdh quota, so
 // the gateway can answer 429 before forwarding when they are over — the same
 // shape a real spend limit uses — and warn them as they approach. Optional; nil
@@ -95,6 +124,24 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 		FlushInterval: -1,
 		ModifyResponse: func(resp *http.Response) error {
 			ctx := resp.Request.Context()
+			// A 401 on a resolved share means Anthropic refused the login's
+			// access token, not the member's key. Renew it and replay once;
+			// if that can't be done, it is the collision the 502 describes.
+			if resp.StatusCode == http.StatusUnauthorized {
+				if ident, _ := ctx.Value(identKey).(Event); ident.AccountID != "" {
+					bad, _ := ctx.Value(tokenKey).(string)
+					retried, _ := ctx.Value(retriedKey).(bool)
+					if ren, ok := up.(Renewer); ok && !retried {
+						if fresh, err := ren.Renew(ident.AccountID, bad); err == nil && fresh != bad {
+							resp.Body.Close()
+							return &retryWithToken{token: fresh}
+						}
+					}
+					resp.Body.Close()
+					replaceWithDenial(resp, http.StatusBadGateway, "api_error", collisionMessage)
+					return nil
+				}
+			}
 			// Capture the subscription's real window utilisation from Anthropic's
 			// own unified rate-limit headers (the authoritative "% of the 5h /
 			// weekly window") before those headers are replaced below. Per account
@@ -168,6 +215,23 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 			r.Header.Del("Accept-Encoding")
 		},
 	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		var retry *retryWithToken
+		if errors.As(err, &retry) && r.GetBody != nil {
+			if body, err := r.GetBody(); err == nil {
+				r.Body = body
+				ctx := withToken(r.Context(), retry.token)
+				ctx = context.WithValue(ctx, retriedKey, true)
+				proxy.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		// The stock behaviour: a plain 502 for a transport failure.
+		if !errors.Is(err, context.Canceled) {
+			log.Printf("gateway: upstream error: %v", err)
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := memberKey(r)
 		if key == "" {
@@ -187,10 +251,19 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 			// use first-party somewhere, which rotates the login's refresh token
 			// out from under the gateway. Nothing the member does will fix it, so
 			// say what will, and don't have the client retry into it.
-			deny(w, http.StatusBadGateway, "api_error",
-				"The shared login for this account stopped working — usually because the same account is also being used directly on another machine, which invalidates the copy the gateway holds. The account's owner needs to add its login to the panel again.")
+			deny(w, http.StatusBadGateway, "api_error", collisionMessage)
 			return
 		}
+		// Buffer the body so the request can be replayed if the login's token
+		// turns out to have been revoked (see Renewer).
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody+1))
+		if err != nil || len(body) > maxRequestBody {
+			deny(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "That request is too large for the gateway to forward.")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+		r.ContentLength = int64(len(body))
 		// Quota gate: an over-cap member is turned away here, before their request
 		// reaches Anthropic, with a definitive 429 pointing at the window reset. A
 		// member under the cap is forwarded, and their standing rides along on the
@@ -208,6 +281,28 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 		ctx = context.WithValue(ctx, quotaKey, quota)
 		proxy.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// collisionMessage is what a member sees when the shared login can't serve —
+// the one thing that fixes it is the owner adding the login to the panel again.
+const collisionMessage = "The shared login for this account stopped working — usually because the same account is also being used directly on another machine, which invalidates the copy the gateway holds. The account's owner needs to add its login to the panel again."
+
+// replaceWithDenial rewrites an upstream response, in place, into the same
+// definitive error envelope deny writes — for the case where the upstream's
+// answer would mislead the member (a 401 that is the login's, not theirs).
+func replaceWithDenial(resp *http.Response, status int, errType, message string) {
+	body, _ := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]string{"type": errType, "message": message},
+	})
+	resp.StatusCode = status
+	resp.Status = fmt.Sprintf("%d %s", status, http.StatusText(status))
+	resp.Header = http.Header{}
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Set("x-should-retry", "false")
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	resp.ContentLength = int64(len(body))
+	resp.Body = io.NopCloser(bytes.NewReader(body))
 }
 
 // denyQuota answers an over-quota member with the shape a real spend limit uses:
@@ -273,9 +368,10 @@ var testTargetHost string
 type ctxKey int
 
 const (
-	tokenKey ctxKey = iota
-	identKey        // carries the resolved Event{AccountID,PersonID} for metering
-	quotaKey        // carries the member's QuotaStatus for the response warning
+	tokenKey   ctxKey = iota
+	identKey          // carries the resolved Event{AccountID,PersonID} for metering
+	quotaKey          // carries the member's QuotaStatus for the response warning
+	retriedKey        // set on the one replay after a token renewal, so a second 401 is final
 )
 
 // resetSeconds is how many whole seconds until a window reset, at least 1 (a

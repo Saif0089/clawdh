@@ -425,3 +425,106 @@ func rewriteHost(h http.Handler, host string) http.Handler {
 		h.ServeHTTP(w, r)
 	})
 }
+
+// renewingUpstream resolves one key to an account whose token can be renewed
+// once: "old" → "new". It records what Renew was told was bad.
+type renewingUpstream struct {
+	token   string
+	renewed []string
+	fail    bool
+}
+
+func (u *renewingUpstream) Resolve(k string) (Resolution, error) {
+	if k != "member-key" {
+		return Resolution{}, ErrUnknownKey
+	}
+	return Resolution{AccessToken: u.token, AccountID: "acct-1", PersonID: "p-1"}, nil
+}
+
+func (u *renewingUpstream) Renew(accountID, bad string) (string, error) {
+	u.renewed = append(u.renewed, bad)
+	if u.fail {
+		return "", errors.New("refresh token is dead")
+	}
+	u.token = "new"
+	return "new", nil
+}
+
+// Anthropic revokes a login's previous access token when its credential
+// rotates, so a token the clock still calls valid can come back 401. The
+// gateway renews it and replays the request — same body — once, and the
+// member sees the 200, never the 401.
+func TestGatewayRenewsARevokedTokenAndReplays(t *testing.T) {
+	var bodies []string
+	var auths []string
+	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		auths = append(auths, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer new" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}`)
+			return
+		}
+		io.WriteString(w, `{"type":"message","content":[{"type":"text","text":"ok"}]}`)
+	}))
+	defer anthropic.Close()
+
+	up := &renewingUpstream{token: "old"}
+	srv := httptest.NewServer(rewriteHost(New(up, nil, nil), anthropic.Listener.Addr().String()))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer member-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"ok"`) {
+		t.Fatalf("member got %d %s, want the replayed 200", resp.StatusCode, body)
+	}
+	if len(auths) != 2 || auths[0] != "Bearer old" || auths[1] != "Bearer new" {
+		t.Errorf("upstream saw %v, want old then new", auths)
+	}
+	if len(bodies) != 2 || bodies[0] != bodies[1] {
+		t.Errorf("the replay must carry the same body: %q", bodies)
+	}
+	if len(up.renewed) != 1 || up.renewed[0] != "old" {
+		t.Errorf("Renew was told bad=%v, want [old]", up.renewed)
+	}
+}
+
+// When the login can't be renewed, the member gets clawdh's definitive 502 —
+// what to do and no retry — never Anthropic's bare 401.
+func TestGatewayTurnsAnUnrenewableTokenIntoACollision(t *testing.T) {
+	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked."}}`)
+	}))
+	defer anthropic.Close()
+
+	up := &renewingUpstream{token: "old", fail: true}
+	srv := httptest.NewServer(rewriteHost(New(up, nil, nil), anthropic.Listener.Addr().String()))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer member-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d %s, want 502", resp.StatusCode, body)
+	}
+	if resp.Header.Get("x-should-retry") != "false" {
+		t.Error("a dead login must not be retried into")
+	}
+	if !strings.Contains(string(body), "add its login to the panel again") {
+		t.Errorf("body = %s, want the owner-facing fix", body)
+	}
+}

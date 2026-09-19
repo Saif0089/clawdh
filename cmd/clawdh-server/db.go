@@ -127,6 +127,30 @@ func (u *dbUpstream) Resolve(memberKey string) (gateway.Resolution, error) {
 	}, nil
 }
 
+// Renew replaces an access token Anthropic just refused (gateway.Renewer): the
+// manager adopts what the database holds now, or spends the refresh token. If
+// neither works the login is dead — drop the cached manager so a re-added
+// login is picked up, and record the collision for the panel to show.
+func (u *dbUpstream) Renew(accountID, bad string) (string, error) {
+	u.mu.Lock()
+	m := u.managers[accountID]
+	u.mu.Unlock()
+	if m == nil {
+		return "", fmt.Errorf("no login is open for account %s", accountID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tok, err := m.Renew(ctx, bad)
+	if err != nil {
+		log.Printf("gateway: renewing the login for account %s after a 401: %v", accountID, err)
+		u.forget(accountID)
+		u.recordCollision(accountID)
+		return "", err
+	}
+	log.Printf("gateway: renewed the login for account %s after Anthropic refused its token", accountID)
+	return tok, nil
+}
+
 // Record meters one forwarded response. It prices the raw token counts here
 // (weighted tokens + USD, via the model-weight table) so the gateway data plane
 // stays free of pricing, then stores it. An unknown model is recorded under a
@@ -228,6 +252,25 @@ func (u *dbUpstream) managerFor(acct panel.Account) (*gateway.Manager, error) {
 	accountID := acct.ID
 	m := gateway.NewManager(access, refreshTok, expires, func(fresh gateway.Credential) {
 		u.persist(accountID, fresh)
+	})
+	// Before spending its refresh token, the manager re-reads what the database
+	// holds now — so a credential rotated out of process (a re-added login,
+	// `clawdh-server diagnose` testing the refresh) is adopted, not fought.
+	m.Reload(func() (gateway.Credential, bool) {
+		d, err := u.store.Load()
+		if err != nil {
+			return gateway.Credential{}, false
+		}
+		acct, ok := d.Account(accountID)
+		if !ok {
+			return gateway.Credential{}, false
+		}
+		raw, err := u.secret.Open(acct.Credential)
+		if err != nil {
+			return gateway.Credential{}, false
+		}
+		access, refreshTok, expires := parseCredential(raw)
+		return gateway.Credential{AccessToken: access, RefreshToken: refreshTok, ExpiresAt: expires}, true
 	})
 	u.managers[acct.ID] = m
 	return m, nil

@@ -67,3 +67,29 @@ func TestTokenManagerRefreshesWhenStale(t *testing.T) {
 		t.Error("the rotated credential was not persisted")
 	}
 }
+
+// A credential rotated by another process (diagnose, a re-added login) is
+// adopted from the store instead of refreshing with our now-spent token.
+func TestTokenManagerAdoptsAReloadedCredentialBeforeRefreshing(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("refresh was called although the store held a fresh credential")
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer ts.Close()
+	old := testTokenEndpoint
+	testTokenEndpoint = ts.URL
+	defer func() { testTokenEndpoint = old }()
+
+	m := newTokenManager(Credential{AccessToken: "expired", RefreshToken: "r1", ExpiresAt: time.Now().Add(-time.Minute)}, nil)
+	m.httpc = ts.Client()
+	m.Reload(func() (Credential, bool) {
+		return Credential{AccessToken: "rotated-elsewhere", RefreshToken: "r2", ExpiresAt: time.Now().Add(time.Hour)}, true
+	})
+	tok, err := m.get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok != "rotated-elsewhere" {
+		t.Errorf("got %q, want the credential the store now holds", tok)
+	}
+}
