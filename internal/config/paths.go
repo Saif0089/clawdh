@@ -194,6 +194,18 @@ func SharedSessionsFile() (string, error) {
 	return filepath.Join(base, "shared-sessions.tsv"), nil
 }
 
+// WindowsFile is where a machine caches the gateway's captured 5h/weekly
+// utilisation for the accounts shared with it (from each check-in), so the page
+// can show usage for a login the gateway holds without touching that login's
+// stale local token. Numbers only, no secrets.
+func WindowsFile() (string, error) {
+	base, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "windows.json"), nil
+}
+
 // RemoteRequestsFile is where the service keeps remote-help requests that are
 // waiting for this machine's owner to allow or deny them, plus the current
 // allow window and recent decisions — so a restart forgets nothing unanswered.

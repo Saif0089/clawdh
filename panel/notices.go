@@ -126,3 +126,37 @@ func windowWord(kind string) string {
 	}
 	return ""
 }
+
+// checkinWindows is the gateway's captured utilisation for each account the
+// person can use — keyed by the share's slug and the account's email, so the
+// machine can pair a reading with either a shared card or a local login the
+// gateway now holds. Nothing without metering.
+func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []ShareWindow {
+	if s.usage == nil || personID == "" {
+		return nil
+	}
+	rows, err := s.usage.AccountWindows(ctx)
+	if err != nil {
+		return nil
+	}
+	byAccount := map[string]AccountWindow{}
+	for _, w := range rows {
+		byAccount[w.AccountID] = w
+	}
+	var out []ShareWindow
+	for _, sh := range d.Shares {
+		if sh.PersonID != personID {
+			continue
+		}
+		w, ok := byAccount[sh.AccountID]
+		if !ok {
+			continue
+		}
+		acct, _ := d.Account(sh.AccountID)
+		out = append(out, ShareWindow{
+			Slug: slugify(acct.Name), Email: acct.Email,
+			FiveH: w.FiveH, SevenD: w.SevenD, FiveHReset: w.FiveHReset, SevenDReset: w.SevenDReset, UpdatedAt: w.UpdatedAt,
+		})
+	}
+	return out
+}

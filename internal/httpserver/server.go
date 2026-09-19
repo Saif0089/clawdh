@@ -63,11 +63,13 @@ type Server struct {
 // New builds a Server. claudeBinary is the executable to spawn for
 // logins and probes (normally "claude", overridable for tests).
 func New(manager *accounts.Manager, syncer *shellrc.Syncer, claudeBinary string) *Server {
+	svc := usage.NewService()
+	svc.Gateway = gatewayUsageFor // a login the gateway holds shows the gateway's reading
 	return &Server{
 		manager:        manager,
 		syncer:         syncer,
 		claudeBinary:   claudeBinary,
-		usage:          usage.NewService(),
+		usage:          svc,
 		launchTerminal: termlauncher.Launch,
 		logins:         map[string]*loginBroadcast{},
 		restart:        make(chan struct{}),

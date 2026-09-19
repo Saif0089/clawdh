@@ -423,6 +423,10 @@ func watchPanel(ctx context.Context) {
 		// Short per-person notices (a quota warning, a broken login) the panel
 		// worked out for this machine's owner, each shown at most once.
 		showNotices(change.Notices)
+		// The gateway's usage reading for each shared account, for the page.
+		if err == nil {
+			panel.SaveWindows(change.Windows)
+		}
 		// Any consented remote jobs the panel handed back run here, each announced
 		// as it goes. Only ever non-empty when the owner turned remote help on.
 		if len(change.Jobs) > 0 {

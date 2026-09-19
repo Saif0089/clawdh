@@ -33,6 +33,9 @@ type panelStatus struct {
 type sharedView struct {
 	Account string `json:"account"`
 	Slug    string `json:"slug"`
+	// Window is the gateway's captured 5h/weekly utilisation for this account,
+	// when the panel has metering — the same bars a local card shows.
+	Window *panel.ShareWindow `json:"window,omitempty"`
 }
 
 func (s *Server) currentPanelStatus() panelStatus {
@@ -48,7 +51,11 @@ func (s *Server) currentPanelStatus() panelStatus {
 	if sp, err := config.SharesFile(); err == nil {
 		if shares, err := panel.LoadShares(sp); err == nil {
 			for _, sh := range shares {
-				st.Shared = append(st.Shared, sharedView{Account: sh.Account, Slug: sh.Slug})
+				v := sharedView{Account: sh.Account, Slug: sh.Slug}
+				if w, ok := windowForSlug(sh.Slug); ok {
+					v.Window = &w
+				}
+				st.Shared = append(st.Shared, v)
 			}
 		}
 	}

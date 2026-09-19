@@ -165,6 +165,25 @@ type Change struct {
 	// Shown as desktop notifications, deduplicated by ID so a standing condition
 	// isn't re-shown on every check-in.
 	Notices []Notice
+	// Windows is the gateway's captured 5h/weekly utilisation for each shared
+	// account, for the page's usage bars. Present whenever the panel has metering.
+	Windows []ShareWindow
+}
+
+// ShareWindow is a shared account's real 5h / weekly utilisation as the gateway
+// captured it from Anthropic's own rate-limit headers — the same numbers /usage
+// shows. A machine uses it to show usage for an account whose login the gateway
+// now refreshes: that login's local token goes stale by design (refreshing it
+// here would rotate the token out from under the gateway), so the gateway's
+// reading is the only honest one.
+type ShareWindow struct {
+	Slug        string    `json:"slug"`
+	Email       string    `json:"email,omitempty"`
+	FiveH       float64   `json:"fiveH"`
+	SevenD      float64   `json:"sevenD"`
+	FiveHReset  time.Time `json:"fiveHReset,omitempty"`
+	SevenDReset time.Time `json:"sevenDReset,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // Notice is one short, self-contained thing to tell the person at a machine.
@@ -213,6 +232,7 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 		Gateway []GatewayShare `json:"gateway"`
 		Jobs    []RemoteJob    `json:"jobs"`
 		Notices []Notice       `json:"notices"`
+		Windows []ShareWindow  `json:"windows"`
 		Error   string         `json:"error"`
 	}
 	// Report this machine's remote-help consent every check-in; the panel only
@@ -345,4 +365,39 @@ func post(ctx context.Context, httpc *http.Client, url, bearer string, body, out
 		return fmt.Errorf("the panel answered %s", resp.Status)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// SaveWindows caches the gateway's usage readings for the page (numbers only).
+// Written every check-in so a reading is never older than one interval.
+func SaveWindows(ws []ShareWindow) {
+	path, err := config.WindowsFile()
+	if err != nil {
+		return
+	}
+	if ws == nil {
+		ws = []ShareWindow{}
+	}
+	raw, err := json.MarshalIndent(ws, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, raw, 0o600)
+}
+
+// LoadWindows reads the cached readings; none on any error.
+func LoadWindows() []ShareWindow {
+	path, err := config.WindowsFile()
+	if err != nil {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []ShareWindow
+	if json.Unmarshal(raw, &out) != nil {
+		return nil
+	}
+	return out
 }

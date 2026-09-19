@@ -24,6 +24,9 @@ type Snapshot struct {
 	// why, in words meant for the person reading the page.
 	Usage *Report `json:"usage,omitempty"`
 	Error string  `json:"error,omitempty"`
+	// Note is a quiet remark about where the numbers came from — "read through
+	// the gateway" — for a login whose usage isn't probed locally.
+	Note string `json:"note,omitempty"`
 
 	// Session describes the login rather than the plan.
 	Session *SessionInfo `json:"session,omitempty"`
@@ -129,6 +132,13 @@ type Service struct {
 	// CachePath overrides where the last good numbers are kept, for
 	// tests. Empty means ~/.clawdh/usage.json.
 	CachePath string
+
+	// Gateway, when set, answers for a login the gateway holds: the panel
+	// refreshes that login now, so its local token is stale by design and must
+	// not be used or refreshed here. Given the account's config dir it returns
+	// the gateway's own reading and a note for the page, or ok=false when this
+	// login isn't one the gateway knows.
+	Gateway func(configDir string) (report *Report, note string, ok bool)
 
 	mu       sync.Mutex
 	entries  map[string]cacheEntry
@@ -386,6 +396,16 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 	// stale are still the best answer there is, so they stay on the card
 	// with their age beside them.
 	if !creds.ExpiresAt.IsZero() && !s.now().Before(creds.ExpiresAt) {
+		// A login the gateway holds: its token going stale here is expected, and
+		// the gateway's reading is the real one. Never tell someone to "run it
+		// once" — that refreshes the token locally and invalidates the gateway's.
+		if s.Gateway != nil {
+			if report, note, ok := s.Gateway(configDir); ok && report != nil {
+				snapshot.Usage = report
+				snapshot.Note = note
+				return snapshot, shortTTL
+			}
+		}
 		snapshot.Error = "Plan usage will show again once Claude Code refreshes this account's token — run it once."
 		if last := s.lastGood(accountID); last != nil {
 			snapshot.Usage = last

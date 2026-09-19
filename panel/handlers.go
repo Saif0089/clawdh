@@ -643,7 +643,10 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 	// Short notices for the person at this machine (quota, a broken login) ride
 	// back too, so the machine can surface them without polling anything else.
 	notices := s.checkinNotices(r.Context(), dev.PersonID, d)
-	writeJSON(w, 200, map[string]any{"gateway": shares, "jobs": jobs, "notices": notices})
+	// The gateway's real 5h/weekly utilisation for each account this person can
+	// use, so their machine shows usage for a shared login without probing it.
+	windows := s.checkinWindows(r.Context(), dev.PersonID, d)
+	writeJSON(w, 200, map[string]any{"gateway": shares, "jobs": jobs, "notices": notices, "windows": windows})
 }
 
 // slugify makes a shell-safe short name for an account's alias.

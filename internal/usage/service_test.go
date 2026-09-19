@@ -1009,3 +1009,46 @@ func TestForgetDropsTheSavedNumbers(t *testing.T) {
 		t.Error("the removed account's numbers were still on disk")
 	}
 }
+
+// A login the gateway holds: its stale local token is expected (the gateway
+// refreshes it now), so the gateway's own reading is shown instead of "run it
+// once" — advice that would rotate the token out from under the gateway.
+func TestStaleTokenUsesTheGatewayReading(t *testing.T) {
+	dir := t.TempDir()
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(30*24*time.Hour)
+	writeCredsFile(t, dir, past, future)
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	svc := NewServiceWithClient(&Client{Endpoint: srv.URL, HTTPClient: srv.Client()})
+	svc.Gateway = func(configDir string) (*Report, string, bool) {
+		if configDir != dir {
+			return nil, "", false
+		}
+		return &Report{Limits: []Limit{{Kind: "session", Label: "Current session", Percent: 28}}, FetchedAt: time.Now()}, "Read through the gateway.", true
+	}
+	got := svc.Get(context.Background(), "shared", dir)
+	if called {
+		t.Error("a stale token must not be sent even when the gateway answers")
+	}
+	if got.Usage == nil || len(got.Usage.Limits) != 1 || got.Usage.Limits[0].Percent != 28 {
+		t.Fatalf("Usage = %+v, want the gateway's reading", got.Usage)
+	}
+	if got.Error != "" || got.Note == "" {
+		t.Errorf("Error = %q, Note = %q; want no error and the gateway note", got.Error, got.Note)
+	}
+	if got.State != StateLinked {
+		t.Errorf("State = %q, want linked", got.State)
+	}
+
+	// A login the gateway doesn't know keeps the honest local explanation.
+	svc2 := NewServiceWithClient(&Client{Endpoint: srv.URL, HTTPClient: srv.Client()})
+	svc2.Gateway = func(string) (*Report, string, bool) { return nil, "", false }
+	if got := svc2.Get(context.Background(), "local", dir); got.Error == "" || got.Usage != nil {
+		t.Errorf("without a gateway reading the stale-token note should remain, got %+v", got)
+	}
+}

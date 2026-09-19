@@ -266,7 +266,7 @@ const drawnFrom = new WeakMap();
 
 function renderUsage(card, account, snapshot) {
   noteReadAt(card, snapshot);
-  showNote(card, snapshot.error);
+  showNote(card, snapshot.error || snapshot.note);
   const signature = usageSignature(account, snapshot);
   if (drawnFrom.get(card) === signature) return;
   const firstPaint = !drawnFrom.has(card);
@@ -383,6 +383,19 @@ function renderShared(shares) {
     node.querySelector(".run-cmd").textContent = cmd;
     const copyBtn = node.querySelector(".copy-cmd");
     copyBtn.addEventListener("click", () => copyToClipboard(cmd, copyBtn));
+    // The gateway's own reading of this account's windows — the same bars a
+    // local card draws, so every account shows usage the same way.
+    const meters = node.querySelector(".meters");
+    if (meters && sh.window) {
+      const w = sh.window;
+      const limits = [
+        { label: "Current session", percent: (w.fiveH || 0) * 100, resetsAt: w.fiveHReset },
+        { label: "This week, all models", percent: (w.sevenD || 0) * 100, resetsAt: w.sevenDReset },
+      ];
+      for (const limit of limits) meters.appendChild(buildMeter(limit, false));
+      const note = node.querySelector(".usage-note");
+      if (note) { note.hidden = false; note.textContent = "Read through the gateway."; }
+    }
     sharedList.appendChild(node);
   }
 }
