@@ -351,10 +351,17 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
                     <span className="truncate text-[17px] font-semibold">{a.name}</span>
                     {a.warning && <span title={a.warning} className="cursor-help text-warn">⚠</span>}
                   </div>
-                  <div className="mt-0.5 text-[14px] text-faint">{a.email || (a.plan ? a.plan + " plan" : "no sign-in on file")}</div>
+                  {/* The second line is what the name doesn't already say: the email
+                      (unless the account is named by it), else the plan. */}
+                  <div className="mt-0.5 text-[14px] text-faint">
+                    {a.email && a.email.toLowerCase() !== a.name.toLowerCase() ? a.email : a.plan ? a.plan + " plan" : a.email ? "" : "no sign-in on file"}
+                  </div>
                 </div>
                 {a.hasLogin ? <Pill kind="ok">Ready</Pill> : <Pill kind="need">Needs a login</Pill>}
               </div>
+              {a.warning && (
+                <div className="mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] leading-snug text-warn">{a.warning}</div>
+              )}
 
               <div className="mt-4 min-h-[28px]">
                 {(a.shared || []).length ? (

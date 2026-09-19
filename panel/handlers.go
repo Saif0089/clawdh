@@ -88,7 +88,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 		if col, err := s.usage.RecentCollisions(r.Context(), s.now().Add(-24*time.Hour)); err == nil {
 			for i := range accounts {
 				if _, hit := col[accounts[i].ID]; hit {
-					accounts[i].Warning = "This account's shared login recently failed to refresh — it's likely being used directly (a raw login) on a machine outside the gateway, which invalidates the copy the gateway holds. Close that session and re-add the login to the panel."
+					accounts[i].Warning = "Its shared login stopped working in the last day — most likely the same account was used directly on another machine, which kills the copy the gateway holds. Re-add the login from that machine's clawdh page."
 				}
 			}
 		}
