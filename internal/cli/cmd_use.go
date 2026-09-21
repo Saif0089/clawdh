@@ -11,6 +11,7 @@ import (
 	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
 	"clawdh/internal/service"
+	"clawdh/internal/statusline"
 	"clawdh/internal/switching"
 	"clawdh/panel"
 )
@@ -146,6 +147,7 @@ func launchSharedSupervised(gatewayURL, key, label string, rest []string) int {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
 		}
 	}
+	ensureStatusLine(filepath.Join(claudeDir, "settings.json"))
 
 	handoff := filepath.Join(accountsDir, fmt.Sprintf(".handoff-%d.json", os.Getpid()))
 	ledger := switching.LedgerPath(home)
@@ -165,7 +167,8 @@ func launchSharedSupervised(gatewayURL, key, label string, rest []string) int {
 // bypass the gateway and the shared subscription it holds. Any inherited
 // supervisor handoff is dropped; superviseSession adds this session's own.
 func sharedTarget(gatewayURL, key, label string) sessionTarget {
-	strip := append([]string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", switching.HandoffEnvVar, sharedSessionEnvVar},
+	strip := append([]string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", switching.HandoffEnvVar, sharedSessionEnvVar,
+		statusline.VersionEnvVar, statusline.AccountEnvVar},
 		accounts.ProviderOverrideVars()...)
 	env := append(accountsEnvWithout(os.Environ(), strip...),
 		"ANTHROPIC_BASE_URL="+strings.TrimRight(gatewayURL, "/"),

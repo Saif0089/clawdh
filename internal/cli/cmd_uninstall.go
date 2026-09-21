@@ -10,6 +10,7 @@ import (
 	"clawdh/internal/editors"
 	"clawdh/internal/service"
 	"clawdh/internal/shellrc"
+	"clawdh/internal/statusline"
 	"clawdh/internal/switching"
 )
 
@@ -45,6 +46,10 @@ func cmdUninstall(args []string) int {
 		settings := filepath.Join(home, ".claude", "settings.json")
 		if err := switching.RemoveUserPromptSubmitHook(settings); err != nil {
 			fmt.Fprintln(os.Stderr, "clawdh: warning: removing the switch hook failed:", err)
+		}
+		// And give the person their own status line back.
+		if err := statusline.Restore(settings, statusLineSavePath()); err != nil {
+			fmt.Fprintln(os.Stderr, "clawdh: warning: restoring your status line failed:", err)
 		}
 		// Take clawdh back out of every editor's launch path. That setting names
 		// this binary by absolute path, so leaving it behind would have the

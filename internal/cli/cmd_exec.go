@@ -95,6 +95,7 @@ func cmdExec(args []string) int {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
 		}
 	}
+	ensureStatusLine(filepath.Join(claudeDir, "settings.json"))
 
 	handoff := filepath.Join(accountsDir, fmt.Sprintf(".handoff-%d.json", os.Getpid()))
 	ledger := switching.LedgerPath(home)

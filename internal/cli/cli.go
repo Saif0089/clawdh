@@ -42,6 +42,8 @@ func Run(args []string) int {
 		return cmdRun(args[1:])
 	case "hook":
 		return cmdHook(args[1:])
+	case "statusline":
+		return cmdStatusLine(args[1:])
 	case "use":
 		return cmdUse(args[1:])
 	case "shared":
@@ -124,8 +126,9 @@ SHARING one account with other people (needs a panel + gateway):
   clawdh panel <command>       Run or manage the panel — see `+"`clawdh panel help`"+`
 
 OTHER
-  clawdh uninstall             Remove the service, autostart, and shell aliases
+  clawdh uninstall             Remove the service, autostart, shell aliases, and the status-line badge
   clawdh serve [--port N]      Run the server in the foreground (what the service runs)
+  clawdh statusline            What Claude Code's status line runs in a clawdh session (your line + the badge)
   clawdh version               Print the version
 
 The web page is where accounts are managed; the commands above are the shortcuts.

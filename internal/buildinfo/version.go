@@ -75,3 +75,13 @@ var vcsRevision = sync.OnceValues(func() (string, bool) {
 	}
 	return revision, modified
 })
+
+// Compact is Tag in one word, for places that separate fields with " · "
+// themselves (the status line): "main@7b506ea", "v1.2.0", "dev@7b506ea+", "dev".
+func Compact() string {
+	version, commit := Version, shortCommit()
+	if commit == "" {
+		return version
+	}
+	return version + "@" + commit
+}

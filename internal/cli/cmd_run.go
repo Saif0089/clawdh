@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"clawdh/internal/accounts"
+	"clawdh/internal/buildinfo"
 	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
 	"clawdh/internal/service"
+	"clawdh/internal/statusline"
 	"clawdh/internal/switching"
 	"clawdh/panel"
 )
@@ -102,6 +104,7 @@ func cmdRun(args []string) int {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
 		}
 	}
+	ensureStatusLine(settings)
 
 	list, err := store.Load()
 	if err != nil {
@@ -291,9 +294,13 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		assertIdentity = !hostedByEditor
 		switching.ClearHandoff(handoff)
 
+		// The badge on Claude Code's status line reads these: the build that
+		// launched this session and the account it runs as (see statusline).
 		env := append(append([]string(nil), target.env...),
 			switching.HandoffEnvVar+"="+handoff,
-			fmt.Sprintf("%s=%d", switching.SupervisorEnvVar, os.Getpid()))
+			fmt.Sprintf("%s=%d", switching.SupervisorEnvVar, os.Getpid()),
+			statusline.VersionEnvVar+"="+buildinfo.Compact(),
+			statusline.AccountEnvVar+"="+target.display)
 
 		// A shared session's gateway key can change under it — a revoke then a
 		// re-grant mints a new one — and the frozen key would 401 forever. Watch
