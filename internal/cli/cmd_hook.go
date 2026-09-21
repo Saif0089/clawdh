@@ -70,7 +70,10 @@ func hookUserPromptSubmit() int {
 		// the answer to this one.
 		switching.ClearOutcome(handoff)
 		if err := switching.WriteHandoff(handoff, switching.Handoff{Account: name, SessionID: in.SessionID, Shared: shared}); err != nil {
-			return 0
+			// Never let a switch command through to the model: it would answer
+			// `clawdh work` as a question and the user would not know why nothing
+			// switched. Say what actually failed instead.
+			return block(fmt.Sprintf("clawdh could not stage the switch to %s: %v", label, err))
 		}
 		// Wait for the supervisor to say what it actually did, and report that —
 		// it cannot say so itself without writing over the screen Claude Code is

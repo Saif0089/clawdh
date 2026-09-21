@@ -22,11 +22,12 @@ hash, so moving to the narrower one keeps every existing login working. clawdh:
   `CLAUDE_CONFIG_DIR=... claude` typing),
 - runs any account with one command — `clawdh <name>` — on every OS, with no shell
   aliases to install, keep in sync, or get wrong (`clawdh list` shows them all),
-- switches the account a running session is on: type `clawdh <name>` at the
-  prompt, or run `!clawdh <name>` as a shell command, and the session comes back
-  on the other account **with the conversation resumed**. It is a genuine
-  relaunch, so the conversation survives but anything running inside the old
-  process — subagents, workflows, background tasks — does not.
+- switches the account a running session is on: type `clawdh <name>` (or
+  `clawdh shared <name>` for an account shared with you) at the prompt, or run
+  `!clawdh <name>` as a shell command, and the session comes back on the other
+  account **with the conversation resumed**. It is a genuine relaunch, so the
+  conversation survives but anything running inside the old process —
+  subagents, workflows, background tasks — does not.
 
   This used to happen in place, with nothing restarted: clawdh gave each session a
   private copy of the login and a switch rewrote it. Keeping those copies meant
@@ -153,12 +154,16 @@ configures it by setting the extension's `claudeCode.claudeProcessWrapper` to
 clawdh, so clawdh launches Claude on the extension's behalf. You open the editor as
 usual and start a chat as usual.
 
-What that buys is the same thing the terminal gets: **each conversation has a
-credential store of its own**, so typing `clawdh <name>` in one chat moves that
-chat to another account and leaves every other chat — and every terminal —
-where it was. Conversations already open keep the account they started with; new
-ones start on the account `clawdh editor <account>` last set, or your default
-login if it was never set.
+What that buys is the same thing the terminal gets: **every chat is a
+supervised session of its own**, so typing `clawdh <name>` — or `clawdh shared
+<name>` — in one chat restarts that chat on the other account with the
+conversation resumed, and leaves every other chat and every terminal where it
+was. As in a terminal, anything running inside the chat at that moment does not
+survive the restart. New chats start on the account `clawdh editor <name>` last
+set — one of your logins, or a share (`clawdh editor shared <name>` when a login
+and a share go by the same name) — or your default login if it was never set;
+`clawdh editor` on its own says what each editor is set to. Chats already open
+keep the account they started with until you switch or restart them.
 
 Editors without the extension are left alone, `settings.json` keeps its comments
 and formatting (one value is edited in place), and `CLAWDH_MANAGE_EDITORS=0` in the

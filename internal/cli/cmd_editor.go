@@ -1,27 +1,33 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 
 	"clawdh/internal/accounts"
 	"clawdh/internal/config"
 	"clawdh/internal/editors"
 	"clawdh/internal/service"
 	"clawdh/internal/switching"
+	"clawdh/panel"
 )
 
 // cmdEditor points VS Code and its relatives at a clawdh account.
 //
 // The Claude Code extension never sees the user's shell — it spawns Claude
 // itself — so aliases and clawdh's `claude` function do nothing for it. What it
-// does read is its own `claudeCode.environmentVariables` setting, applied over
-// the environment of every Claude process it starts. clawdh puts one entry there,
-// pointing at a credential store it owns, and from then on switching that
-// editor's account is a write to that store: conversations already open pick it
-// up the same way a terminal session does, because it is the same mechanism.
+// does read is its own `claudeCode.claudeProcessWrapper` setting: the
+// executable it launches Claude through. clawdh puts itself there (cmdExec),
+// and this command records which account that wrapper starts new
+// conversations as — one of your own logins, or an account shared with you
+// through the gateway:
+//
+//	clawdh editor                  what each editor is set to
+//	clawdh editor <name>           a local account, or a share when no local account has that name
+//	clawdh editor shared <name>    a share, explicitly
+//
+// Names are the ones `clawdh list` prints and the run commands take.
 func cmdEditor(args []string) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -43,6 +49,7 @@ func cmdEditor(args []string) int {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
 	}
+	shares := sharedAccounts()
 
 	installed := editors.Installed(home)
 	var withExt []editors.Editor
@@ -61,13 +68,16 @@ func cmdEditor(args []string) int {
 	}
 
 	if len(args) == 0 {
-		reportEditors(installed, list, accountsDir)
+		reportEditors(installed, readEditorDefault(accountsDir), list, shares)
 		return 0
 	}
 
-	acct, ok := switching.ResolveAccount(list, args[0])
+	rec, label, ok := resolveEditorChoice(args, list, shares)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "clawdh: no account %q\n", args[0])
+		name := strings.Join(args, " ")
+		fmt.Fprintf(os.Stderr, "clawdh: no account called %q.\n", name)
+		fmt.Fprintf(os.Stderr, "      Your accounts: %s. Shared with you: %s.\n", accountNames(list), shareNames(shares))
+		fmt.Fprintln(os.Stderr, "      `clawdh list` shows them all with the name each one goes by.")
 		return 1
 	}
 	self, err := service.SelfPath()
@@ -76,10 +86,9 @@ func cmdEditor(args []string) int {
 		return 1
 	}
 
-	// The account every new conversation starts as. The wrapper reads this when
-	// the editor launches Claude; from there, `clawdh <name>` typed in one chat
-	// moves that chat alone.
-	if err := writeEditorDefault(accountsDir, acct); err != nil {
+	// The account every new conversation starts as. The wrapper reads this
+	// each time the editor launches Claude.
+	if err := writeEditorDefault(accountsDir, rec); err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
 	}
@@ -91,7 +100,7 @@ func cmdEditor(args []string) int {
 			failed = true
 			continue
 		}
-		fmt.Printf("  %s → %s\n", ed.Name, displayName(acct))
+		fmt.Printf("  %s → %s\n", ed.Name, label)
 	}
 	for _, ed := range installed {
 		if !ed.HasExtension {
@@ -101,38 +110,39 @@ func cmdEditor(args []string) int {
 	if failed {
 		return 1
 	}
-	fmt.Println("\nNew conversations start on this account. In any of them, type `clawdh <name>`")
-	fmt.Println("to move that conversation — and only that one — to another account.")
-	fmt.Println("Conversations already open keep the account they started with.")
+	fmt.Println("\nNew conversations start on this account; ones already open keep the account they")
+	fmt.Println("started with. In any conversation, type `clawdh <name>` (or `clawdh shared <name>`)")
+	fmt.Println("to move that conversation — and only that one — to another account. It restarts")
+	fmt.Println("there with the conversation resumed; anything running inside it does not survive.")
 	return 0
 }
 
-// writeEditorDefault records the account an editor's conversations start as.
-func writeEditorDefault(accountsDir string, acct accounts.Account) error {
-	dir := filepath.Join(filepath.Dir(accountsDir), "editors")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+// resolveEditorChoice turns the words after `clawdh editor` into a recorded
+// default and the label to confirm it by. A local account wins a bare name;
+// `shared <name>` asks for the share outright.
+func resolveEditorChoice(args []string, list []accounts.Account, shares []panel.GatewayShare) (editorDefault, string, bool) {
+	name, sharedOnly := args[0], false
+	if len(args) >= 2 && args[0] == "shared" {
+		name, sharedOnly = args[1], true
 	}
-	data, err := json.MarshalIndent(storeOwner{
-		AccountID: acct.ID,
-		Name:      displayName(acct),
-		ConfigDir: acct.ConfigDir,
-	}, "", "  ")
-	if err != nil {
-		return err
+	if !sharedOnly {
+		if acct, ok := switching.ResolveAccount(list, name); ok {
+			return editorDefault{AccountID: acct.ID, Name: displayName(acct), ConfigDir: acct.ConfigDir},
+				fmt.Sprintf("%s (clawdh %s)", displayName(acct), acct.Slug), true
+		}
 	}
-	return os.WriteFile(filepath.Join(dir, "default.json"), data, 0o600)
+	for _, sh := range shares {
+		if strings.EqualFold(sh.Slug, name) {
+			return editorDefault{Shared: sh.Slug, Name: sh.Account},
+				fmt.Sprintf("%s (clawdh shared %s)", sh.Account, sh.Slug), true
+		}
+	}
+	return editorDefault{}, "", false
 }
 
 // reportEditors says what each editor is set to.
-func reportEditors(installed []editors.Editor, list []accounts.Account, accountsDir string) {
-	def := "not set"
-	if data, err := os.ReadFile(filepath.Join(filepath.Dir(accountsDir), "editors", "default.json")); err == nil {
-		var rec storeOwner
-		if json.Unmarshal(data, &rec) == nil && rec.Name != "" {
-			def = rec.Name
-		}
-	}
+func reportEditors(installed []editors.Editor, rec editorDefault, list []accounts.Account, shares []panel.GatewayShare) {
+	def := editorDefaultLabel(rec, list, shares)
 	for _, ed := range installed {
 		switch {
 		case !ed.HasExtension:
@@ -145,35 +155,14 @@ func reportEditors(installed []editors.Editor, list []accounts.Account, accounts
 	}
 }
 
-// storeOwner records which account a store was last filled from, for the
-// benefit of anything that finds the directory later — clawdh's own reporting,
-// and the usage monitor, which otherwise sees a directory it cannot place.
-type storeOwner struct {
-	AccountID string `json:"accountId"`
-	Name      string `json:"name"`
-	ConfigDir string `json:"configDir"`
-}
-
-func writeStoreOwner(storeDir string, acct accounts.Account) {
-	data, err := json.MarshalIndent(storeOwner{
-		AccountID: acct.ID,
-		Name:      displayName(acct),
-		ConfigDir: acct.ConfigDir,
-	}, "", "  ")
-	if err != nil {
-		return
+// shareNames lists the shares this machine can run, for an error message.
+func shareNames(shares []panel.GatewayShare) string {
+	if len(shares) == 0 {
+		return "none yet"
 	}
-	_ = os.WriteFile(filepath.Join(storeDir, "owner.json"), data, 0o600)
-}
-
-func readStoreOwner(storeDir string) string {
-	data, err := os.ReadFile(filepath.Join(storeDir, "owner.json"))
-	if err != nil {
-		return ""
+	names := make([]string, 0, len(shares))
+	for _, sh := range shares {
+		names = append(names, sh.Slug)
 	}
-	var o storeOwner
-	if err := json.Unmarshal(data, &o); err != nil {
-		return ""
-	}
-	return o.Name
+	return strings.Join(names, ", ")
 }

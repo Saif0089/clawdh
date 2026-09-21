@@ -214,6 +214,13 @@ func localTarget(acct accounts.Account, accountsDir, claudeJSON string) sessionT
 // local or shared.
 func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessionTarget, passthrough []string, resolve func(switching.Handoff) (sessionTarget, bool)) int {
 	defer os.Remove(handoff)
+	defer switching.ClearOutcome(handoff) // an outcome nobody collected (a `!clawdh` switch has no hook waiting)
+	// The hook writes the handoff here; on a machine that has only ever
+	// joined shares the directory may not exist yet, and a hook that cannot
+	// write is a switch that never happens.
+	if err := os.MkdirAll(filepath.Dir(handoff), 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, "clawdh: in-session switching unavailable:", err)
+	}
 
 	// Mint the session id up front so usage is attributed from the first token,
 	// not the first switch. Only on a fresh launch, and kept out of passthrough
@@ -235,6 +242,18 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 	// A session on a shared account is recorded in clawdh's shared-session ledger:
 	// the one thing remote help may ever look at. Personal sessions never enter it.
 	recordSharedSession(target, sessionID)
+
+	// One signal channel for the life of the supervisor, not one per launch. A
+	// signal that landed between two launches — during a switch, while the
+	// hook's message was still on its way to the screen — met Go's default
+	// handler and took the supervisor down mid-switch, or sat unread in a
+	// channel about to be dropped: an editor closing a chat in that window got
+	// a relaunch instead, and the closed chat's Claude Code lived on.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	supervisorSignals = sigs
+	defer func() { supervisorSignals = nil }()
 
 	sessionArgs := launchArgs
 	for {
@@ -281,14 +300,22 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 			close(stopWatch) // the watcher stops here whether or not it staged a switch
 		}
 		if !switched {
+			// stderr, not stdout: in a terminal both are the screen, but when an
+			// editor hosts this session stdout is the message channel the extension
+			// parses, and a sentence there is a protocol error.
 			if target.local && config.IsRevoked(target.accountID) {
-				fmt.Printf("\nYour access to %s was withdrawn by your team. This session has stopped; your conversation is saved.\n", target.display)
+				fmt.Fprintf(os.Stderr, "\nYour access to %s was withdrawn by your team. This session has stopped; your conversation is saved.\n", target.display)
 			}
 			return code
 		}
 
 		h, ok := switching.ReadHandoff(handoff)
 		if !ok {
+			return code
+		}
+		// The editor closed this chat while the switch was under way: stop here
+		// rather than start a Claude Code nobody is talking to.
+		if stopRequested(sigs) {
 			return code
 		}
 		next, ok := resolve(h)
@@ -299,7 +326,7 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		// A relaunch onto the same shared account is the key-watcher recovering from
 		// a revoke+re-grant, not a user switch — say so, since the user did not ask.
 		if !next.local && !target.local && strings.EqualFold(next.display, target.display) {
-			fmt.Printf("clawdh: your access to %s was renewed — reconnecting; your conversation continues.\n", next.display)
+			fmt.Fprintf(os.Stderr, "clawdh: your access to %s was renewed — reconnecting; your conversation continues.\n", next.display)
 		}
 		target = next
 		sessionID = h.SessionID
@@ -313,9 +340,64 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 				fmt.Fprintln(os.Stderr, "clawdh: could not record the switch for the usage monitor:", err)
 			}
 		}
+		// The relaunch names the conversation it carries over, so whatever the
+		// launch said about sessions (an editor's --session-id=<id>, a user's
+		// --resume) has to go — two session flags is an error, and the wrong one
+		// winning is a conversation silently left behind.
 		resume := switching.ResumeArgs(h.SessionID, switching.HasTranscript(claudeDir, h.SessionID))
-		sessionArgs = append(append([]string{}, passthrough...), resume...)
+		sessionArgs = append(switching.WithoutSessionArgs(passthrough), resume...)
 	}
+}
+
+// hostedByEditor is set when an editor, not a terminal, owns this supervisor
+// (see cmdExec). Two things differ. The terminal delivers ctrl-c to Claude Code
+// itself, so a terminal supervisor absorbs signals; an editor delivers them
+// to the supervisor — the only process it knows — and expects the whole
+// session to end, so an editor supervisor passes them down. And the editor
+// has no screen to rebuild: it parses stdout, so nothing extra may be written
+// there (superviseSession writes to stderr for that reason regardless).
+var hostedByEditor bool
+
+// supervisorSignals is where ctrl-c and SIGTERM arrive for as long as
+// superviseSession runs; each launch listens on it rather than on a channel of
+// its own, so no signal falls into the gap between two launches (see the note
+// where it is opened). Nil outside superviseSession.
+var supervisorSignals chan os.Signal
+
+// stopRequested reports whether a signal has arrived that means the session
+// should end rather than go on to its next launch. Only an editor's does: it
+// signals the supervisor to close the chat. A terminal supervisor absorbs
+// signals — Claude Code got the same ctrl-c from the tty — so there the answer
+// is always no, and the signal is simply drained.
+func stopRequested(sigs <-chan os.Signal) bool {
+	select {
+	case <-sigs:
+		return hostedByEditor
+	default:
+		return false
+	}
+}
+
+// switchGrace is how long the supervisor gives the hook to collect the outcome
+// it wrote before ending the session, and switchSettle how long after that it
+// lets Claude Code show it. Ending the session the instant the switch is
+// staged killed the very turn that was reporting it: in a terminal that was a
+// flash of half-drawn screen, and in an editor a turn that never ended, since
+// the process died before it could say so.
+var (
+	switchGrace  = 1500 * time.Millisecond
+	switchSettle = 250 * time.Millisecond
+)
+
+// awaitOutcomeRead returns once the hook has picked up the outcome, or after
+// switchGrace when nothing does — a `!clawdh <name>` staged from a shell
+// command has no hook waiting, and that must not stall the switch for long.
+func awaitOutcomeRead(handoff string) {
+	deadline := time.Now().Add(switchGrace)
+	for switching.OutcomePending(handoff) && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	time.Sleep(switchSettle)
 }
 
 // shareKeyPollInterval is how often a shared session checks whether its gateway
@@ -459,10 +541,18 @@ func runClaudeOnce(bin string, args, env []string, handoff, accountID string, ap
 
 	// The terminal delivers ctrl-c to Claude Code directly (same process
 	// group), so the supervisor must not die on it — it absorbs the common
-	// signals and lets Claude Code handle them.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+	// signals and lets Claude Code handle them. An editor is the other way
+	// round: it signals the supervisor, the only process it spawned, and a
+	// supervisor that shrugged that off left Claude Code running after the
+	// chat was closed, until the extension gave up and SIGKILLed the tree.
+	// The channel belongs to the supervisor as a whole (supervisorSignals);
+	// only a launch outside one listens for itself.
+	sigCh := supervisorSignals
+	if sigCh == nil {
+		sigCh = make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
+	}
 
 	stop := make(chan struct{})
 	switched := make(chan struct{}, 1)
@@ -474,6 +564,10 @@ func runClaudeOnce(bin string, args, env []string, handoff, accountID string, ap
 			case <-stop:
 				return
 			case <-sigCh:
+				if hostedByEditor {
+					terminate(cmd) // the editor is closing this session: end it, don't relaunch
+					return
+				}
 				// absorb — Claude Code already received it from the tty
 			case <-t.C:
 				// The account was taken back by the panel: stop this session.
@@ -492,8 +586,19 @@ func runClaudeOnce(bin string, args, env []string, handoff, accountID string, ap
 				// The callback settles anything that needs no relaunch — an
 				// account that has gone away, an unreadable list — and reports
 				// it to the waiting hook itself.
-				if applyInPlace != nil && applyInPlace(h) {
-					continue
+				if applyInPlace != nil {
+					if applyInPlace(h) {
+						continue
+					}
+					// The callback just told the hook what is about to happen; let
+					// that reach the screen before the session goes.
+					awaitOutcomeRead(handoff)
+					// …unless the editor closed the chat meanwhile: then the session
+					// ends here, and switched stays unsent so nothing is relaunched.
+					if stopRequested(sigCh) {
+						terminate(cmd)
+						return
+					}
 				}
 				if err := switching.WriteHandoff(handoff, h); err == nil {
 					select {

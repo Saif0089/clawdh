@@ -107,12 +107,29 @@ func TestResumeArgs(t *testing.T) {
 		t.Errorf("ResumeArgs(recorded) = %v, want %v", got, want)
 	}
 	// Switched before its first message: nothing to resume, and asking would
-	// take the relaunched session down with "No conversation found".
-	if got := ResumeArgs("sess-1", false); got != nil {
-		t.Errorf("ResumeArgs(unrecorded) = %v, want no resume flags", got)
+	// take the relaunched session down with "No conversation found" — so a
+	// clean start, but keeping the id the ledger and the editor already know.
+	if got, want := ResumeArgs("sess-1", false), []string{"--session-id", "sess-1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ResumeArgs(unrecorded) = %v, want %v", got, want)
 	}
 	if got := ResumeArgs("  ", false); !reflect.DeepEqual(got, []string{"--continue"}) {
 		t.Errorf("ResumeArgs(no id) = %v, want [--continue]", got)
+	}
+}
+
+func TestWithoutSessionArgs(t *testing.T) {
+	// What the VS Code extension launches with, plus every other spelling.
+	in := []string{
+		"--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
+		"--session-id=abc", "--resume=def", "--session-id", "ghi", "--resume", "jkl", "-r", "mno",
+		"--continue", "-c", "--fork-session", "--permission-mode", "default",
+	}
+	want := []string{"--output-format", "stream-json", "--verbose", "--input-format", "stream-json", "--permission-mode", "default"}
+	if got := WithoutSessionArgs(in); !reflect.DeepEqual(got, want) {
+		t.Errorf("WithoutSessionArgs = %v, want %v", got, want)
+	}
+	if got := WithoutSessionArgs(nil); len(got) != 0 {
+		t.Errorf("WithoutSessionArgs(nil) = %v, want empty", got)
 	}
 }
 

@@ -47,6 +47,14 @@ func ClearOutcome(handoffPath string) {
 	os.Remove(outcomePath(handoffPath) + ".tmp")
 }
 
+// OutcomePending reports whether a written outcome is still waiting to be read.
+// AwaitOutcome removes it on pickup, so this going false is how the supervisor
+// knows the hook has the answer and Claude Code is about to show it.
+func OutcomePending(handoffPath string) bool {
+	_, err := os.Stat(outcomePath(handoffPath))
+	return err == nil
+}
+
 // AwaitOutcome waits for the supervisor to report, and says whether it did.
 //
 // A timeout is not a failure: the supervisor may have decided it cannot switch

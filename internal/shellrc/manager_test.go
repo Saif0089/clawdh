@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -34,7 +35,11 @@ func TestSyncerWritesAliasesToAllRcFiles(t *testing.T) {
 	}
 }
 
-func TestSyncerWithNoAccountsRemovesBlock(t *testing.T) {
+// A sync with no entries drops the aliases but keeps the block, because the
+// block is also where the `claude` wrapper lives — and every caller now syncs
+// with no entries. Losing the wrapper meant a plain `claude` was no longer
+// supervised, so `clawdh <name>` typed into it could not switch it.
+func TestSyncerWithNoAccountsKeepsTheClaudeWrapper(t *testing.T) {
 	home := t.TempDir()
 	s := NewSyncer(home)
 
@@ -51,8 +56,18 @@ func TestSyncerWithNoAccountsRemovesBlock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HasBlock(%s): %v", path, err)
 		}
-		if has {
-			t.Errorf("%s: expected no managed block once accounts list is empty", shell)
+		if !has {
+			t.Fatalf("%s: the managed block must survive an empty sync — it carries the claude wrapper", shell)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "claude-work") {
+			t.Errorf("%s: alias still present after an empty sync", shell)
+		}
+		if !strings.Contains(string(data), "run --auto") {
+			t.Errorf("%s: claude wrapper missing after an empty sync:\n%s", shell, data)
 		}
 	}
 }

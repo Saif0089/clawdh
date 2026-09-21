@@ -66,8 +66,14 @@ func NewSyncer(homeDir string) *Syncer {
 }
 
 // Sync rewrites the managed block in every rc file to match entries
-// exactly. Call it after any account add/rename/remove. If entries is
-// empty, the managed block (if any) is removed rather than left empty.
+// exactly. Call it after any account add/rename/remove. The block is never
+// empty: even with no entries it carries the `claude` wrapper that routes a
+// plain `claude` through clawdh's supervisor, which is what makes that session
+// switchable by `clawdh <name>` / `clawdh shared <name>` typed into it. Since
+// per-account aliases went away every caller passes nil, and for a while that
+// removed the block — and the wrapper with it — so plain sessions on every
+// machine silently stopped being switchable. Removal is RemoveAll's job, for
+// `clawdh uninstall` only.
 func (s *Syncer) Sync(entries []AliasEntry) error {
 	for shell, path := range RcPaths(s.HomeDir) {
 		if err := s.sync(shell, path, entries); err != nil {
@@ -87,9 +93,6 @@ func (s *Syncer) Sync(entries []AliasEntry) error {
 }
 
 func (s *Syncer) sync(shell Shell, path string, entries []AliasEntry) error {
-	if len(entries) == 0 {
-		return RemoveBlock(path)
-	}
 	return UpsertBlock(path, RenderBody(shell, entries))
 }
 

@@ -114,7 +114,7 @@ EVERYDAY
 ACCOUNTS live on the web page clawdh opens — add, connect, and remove them there:
   clawdh install [--port N]    Start clawdh at login and open the page (do this once)
   clawdh start | stop          Start or stop the clawdh service now
-  clawdh editor [name]         Point VS Code / Cursor at an account (blank: show which)
+  clawdh editor [shared] [name] Point VS Code / Cursor at an account or a share (blank: show which)
   clawdh prune [--yes] [id...] Reclaim disk from old accounts (previews unless --yes)
 
 SHARING one account with other people (needs a panel + gateway):

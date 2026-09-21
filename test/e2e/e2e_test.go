@@ -132,9 +132,10 @@ func TestFullLifecycle(t *testing.T) {
 	// --- full account lifecycle over the real HTTP API. ---
 	account := h.createAccount("Work")
 	// Accounts no longer get a shell alias — they run as `clawdh <name>` on every
-	// OS — so creating one writes no managed rc block.
-	if data, err := os.ReadFile(h.anyRcPath()); err == nil && strings.Contains(string(data), "Managed by clawdh") {
-		t.Errorf("creating an account wrote a shell alias block, want none:\n%s", data)
+	// OS — so creating one adds nothing to the managed rc block, which carries
+	// only the `claude` wrapper.
+	if data, err := os.ReadFile(h.anyRcPath()); err == nil && strings.Contains(string(data), "claude-work") {
+		t.Errorf("creating an account wrote a shell alias, want none:\n%s", data)
 	}
 
 	h.driveLoginToLinked(account.ID)
@@ -144,12 +145,15 @@ func TestFullLifecycle(t *testing.T) {
 		t.Fatalf("accounts after login = %+v, want one linked account", accountsAfterLogin)
 	}
 
-	// --- removing the only account must clean its alias out too. ---
+	// --- removing the only account keeps the rc block: it carries the `claude`
+	// wrapper that makes a plain `claude` a switchable session, accounts or not.
+	// (Dropping the block here is what once left every new terminal's `claude`
+	// unsupervised.) Only uninstall, below, removes it. ---
 	h.deleteAccount(account.ID)
-	rcPath := h.anyRcPath()
-	if _, err := os.Stat(rcPath); !os.IsNotExist(err) {
-		data, _ := os.ReadFile(rcPath)
-		t.Errorf("expected rc file removed once no accounts remain, got:\n%s", data)
+	if data, err := os.ReadFile(h.anyRcPath()); err != nil {
+		t.Errorf("rc file should still exist once no accounts remain: %v", err)
+	} else if !strings.Contains(string(data), "clawdh run --auto") {
+		t.Errorf("rc block lost the claude wrapper once no accounts remain:\n%s", data)
 	}
 
 	// --- uninstall must undo everything: autostart artifact, service,

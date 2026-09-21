@@ -83,11 +83,11 @@ func TestAccountsCRUDLifecycle(t *testing.T) {
 	}
 
 	// Accounts no longer get a shell alias — they run as `clawdh <name>` — so
-	// creating one writes no managed rc block.
+	// creating one adds nothing to the managed rc block: it carries the `claude`
+	// wrapper (which every sync writes, so a plain `claude` is switchable) and
+	// no alias for the account.
 	rcPath := anyRcPath(home)
-	if data, _ := os.ReadFile(rcPath); strings.Contains(string(data), "Managed by clawdh") {
-		t.Errorf("creating an account wrote a shell alias block, want none: %q", data)
-	}
+	assertWrapperOnly(t, rcPath, "creating an account", "claude-work")
 
 	// List.
 	resp, err = http.Get(ts.URL + "/api/accounts")
@@ -112,9 +112,7 @@ func TestAccountsCRUDLifecycle(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	resp.Body.Close()
-	if data, _ := os.ReadFile(rcPath); strings.Contains(string(data), "Managed by clawdh") {
-		t.Errorf("renaming an account wrote a shell alias block, want none: %q", data)
-	}
+	assertWrapperOnly(t, rcPath, "renaming an account", "claude-side-project")
 
 	// Delete.
 	req, _ = http.NewRequest(http.MethodDelete, ts.URL+"/api/accounts/"+created.ID+"?confirm=true", nil)
@@ -127,8 +125,26 @@ func TestAccountsCRUDLifecycle(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	if _, err := os.Stat(rcPath); !os.IsNotExist(err) {
-		t.Errorf("expected rc file removed once no accounts remain, stat err = %v", err)
+	// The block stays when the last account goes: the wrapper is not an alias.
+	// (Removing it here is what once left every new terminal's `claude`
+	// unsupervised; only uninstall removes it.)
+	assertWrapperOnly(t, rcPath, "deleting the last account", "claude-work")
+}
+
+// assertWrapperOnly checks that the managed rc block is present with the
+// `claude` wrapper and carries no alias for the account named.
+func assertWrapperOnly(t *testing.T, rcPath, after, alias string) {
+	t.Helper()
+	data, err := os.ReadFile(rcPath)
+	if err != nil {
+		t.Errorf("%s: rc file should hold the managed block: %v", after, err)
+		return
+	}
+	if !strings.Contains(string(data), "clawdh run --auto") {
+		t.Errorf("%s: rc block lost the claude wrapper: %q", after, data)
+	}
+	if strings.Contains(string(data), alias) {
+		t.Errorf("%s: wrote a shell alias, want none: %q", after, data)
 	}
 }
 

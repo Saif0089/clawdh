@@ -161,7 +161,8 @@ func TestRunKeepsLaunchFlagsAcrossASwitch(t *testing.T) {
 // A session switched before it wrote anything has no conversation to carry.
 // Resuming it anyway is what made Claude Code exit with "No conversation found
 // with session ID" and drop the user back to the shell, so the relaunch must
-// start clean instead.
+// start clean instead — under the same id, which the usage ledger (and an
+// editor that launched the session by id) already knows it by.
 func TestRunSwitchOfAnUnrecordedSessionStartsClean(t *testing.T) {
 	seedRunEnv(t)
 
@@ -185,8 +186,48 @@ func TestRunSwitchOfAnUnrecordedSessionStartsClean(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("want 2 launches, got %d: %v", len(calls), calls)
 	}
-	if len(calls[1]) != 0 {
-		t.Errorf("relaunch args = %v, want none (nothing to resume)", calls[1])
+	if want := []string{"--session-id", "never-written"}; !reflect.DeepEqual(calls[1], want) {
+		t.Errorf("relaunch args = %v, want %v (nothing to resume, same id)", calls[1], want)
+	}
+}
+
+// An editor launches every session as `--session-id=<id>` (and a resumed one
+// as `--resume=<id>`). A relaunch that kept those beside its own --resume gave
+// Claude Code two session flags, so the launch's session args must go and only
+// the relaunch's remain.
+func TestRunRelaunchDropsTheLaunchSessionArgs(t *testing.T) {
+	seedRunEnv(t)
+	home := os.Getenv("HOME")
+	// Record a transcript for the session so the relaunch resumes it.
+	proj := filepath.Join(home, ".claude", "projects", "-tmp-proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(proj, "sess-editor.jsonl"), "{}\n")
+
+	var calls [][]string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, _ onSwitch) (int, bool) {
+		calls = append(calls, append([]string{}, args...))
+		if len(calls) == 1 {
+			if err := switching.WriteHandoff(handoff, switching.Handoff{Account: "work", SessionID: "sess-editor"}); err != nil {
+				t.Fatal(err)
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+
+	if code := cmdRun([]string{"ehti", "--output-format", "stream-json", "--session-id=sess-editor"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d, want 0", code)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("want 2 launches, got %d: %v", len(calls), calls)
+	}
+	want := []string{"--output-format", "stream-json", "--resume", "sess-editor"}
+	if !reflect.DeepEqual(calls[1], want) {
+		t.Errorf("relaunch args = %v, want %v", calls[1], want)
 	}
 }
 

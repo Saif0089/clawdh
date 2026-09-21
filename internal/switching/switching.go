@@ -100,7 +100,9 @@ func ResolveAccount(list []accounts.Account, name string) (accounts.Account, boo
 //   - a session id with nothing recorded is one switched before its first
 //     message. There is no conversation to carry, and --resume on it makes
 //     Claude Code exit with "No conversation found with session ID", taking
-//     the terminal down with it — so start clean instead;
+//     the terminal down with it — so start clean, but under the same id: the
+//     usage ledger already attributes that id, and an editor that launched the
+//     session by id is still calling it that;
 //   - no session id at all (a Claude Code that does not export it) falls back
 //     to --continue, the most recent conversation in this directory, which is
 //     the one just terminated.
@@ -111,8 +113,30 @@ func ResumeArgs(sessionID string, recorded bool) []string {
 	case recorded:
 		return []string{"--resume", sessionID}
 	default:
-		return nil
+		return []string{"--session-id", sessionID}
 	}
+}
+
+// WithoutSessionArgs drops the flags that name a conversation — --session-id,
+// --resume/-r, --continue/-c, --fork-session, in both `--flag value` and
+// `--flag=value` forms — so a relaunch can name the one it is carrying over
+// without contradicting the launch's own. An editor launches every session as
+// `--session-id=<id>`; relaunching with that still present beside --resume is
+// two answers to the same question.
+func WithoutSessionArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--session-id" || a == "--resume" || a == "-r":
+			i++ // and its value
+		case a == "--continue" || a == "-c" || a == "--fork-session":
+		case strings.HasPrefix(a, "--session-id=") || strings.HasPrefix(a, "--resume="):
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // HasTranscript reports whether sessionID has a conversation recorded under

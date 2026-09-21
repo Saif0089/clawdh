@@ -4,28 +4,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"clawdh/internal/accounts"
 	"clawdh/internal/config"
+	"clawdh/internal/service"
+	"clawdh/internal/switching"
+	"clawdh/panel"
 )
 
 // cmdExec is what an editor runs instead of Claude Code.
 //
 // The Claude Code extension can be told to launch Claude through another
 // executable — `claudeCode.claudeProcessWrapper` — which it then runs with the
-// real binary as the first argument. clawdh puts itself there so every
-// conversation the editor starts is scoped to the account that editor is set
-// to, rather than to whatever the extension's machine-wide environment setting
-// happened to hold.
+// real binary as the first argument. clawdh puts itself there, and from then
+// on every conversation the editor starts is a supervised session, exactly
+// like `clawdh <account>` in a terminal: it starts as the account the editor
+// is set to (`clawdh editor <name>` — a local login or a gateway share), and
+// `clawdh <name>` / `clawdh shared <name>` typed into the chat relaunches that
+// conversation on the other account, resumed, while every other chat and every
+// terminal stays where it was.
 //
-// Each conversation used to get a credential store of its own, seeded from the
-// account, so `clawdh <name>` typed in one chat could move that chat alone. That
-// needed clawdh to write credential stores, which is exactly the thing that
-// destroyed two real logins, so it is gone: every conversation in an editor now
-// runs as the account the editor is set to, and changing account is a setting
-// for the whole editor again.
+// For a while this was a plain launcher: the switching hook saw no supervisor
+// behind an editor session and answered that it could not be switched. The
+// supervisor is the same loop the terminal uses; what an editor changes is the
+// plumbing around it — the extension talks stream-json over stdout, so
+// nothing else may be written there, and it ends a session by signalling this
+// process, so signals are passed down rather than absorbed (hostedByEditor).
 //
 // It is deliberately hard to break. Anything unexpected — no account, no
 // config directory — falls through to running the real binary exactly as the
@@ -38,57 +44,142 @@ func cmdExec(args []string) int {
 	}
 	bin, passthrough := args[0], args[1:]
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return runPlainClaude(bin, passthrough)
+	}
+	accountsFile, err := config.AccountsFile()
+	if err != nil {
+		return runPlainClaude(bin, passthrough)
+	}
+	accountsDir, err := config.AccountsDir()
+	if err != nil {
+		return runPlainClaude(bin, passthrough)
+	}
+	sharesPath, err := config.SharesFile()
+	if err != nil {
+		return runPlainClaude(bin, passthrough)
+	}
+	store := accounts.NewStore(accountsFile)
+	claudeDir := sharedClaudeDir(home)
+	claudeJSON := filepath.Join(home, ".claude.json")
+
 	// Whichever account this editor is set to, and the user's default login
 	// when it has never been set — which is what a plain `claude` would have
 	// used, so an editor nobody has configured behaves exactly as before.
-	acct, ok := editorAccount()
+	target, ok := editorTarget(store, accountsDir, claudeJSON, sharesPath)
 	if !ok {
 		return runPlainClaude(bin, passthrough)
 	}
 
-	cmd := exec.Command(bin, passthrough...)
-	cmd.Env = accounts.EnvForSharedConfig(acct.ConfigDir)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-
-	// The editor talks to this process over its stdio, so clawdh must be a plain
-	// conduit: no extra output, and the child's exit code passed straight back.
-	if err := cmd.Start(); err != nil {
-		return runPlainClaude(bin, passthrough)
+	// The switch hook is what turns `clawdh <name>` typed in the chat into a
+	// handoff (idempotent; a failure only disables in-session switching, so it
+	// is a warning on stderr — never stdout — not a reason to refuse to start).
+	if self, err := service.SelfPath(); err == nil {
+		if err := switching.EnsureUserPromptSubmitHook(filepath.Join(claudeDir, "settings.json"), self); err != nil {
+			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
+		}
 	}
-	waitErr := cmd.Wait()
-	return exitCodeOf(waitErr)
+
+	handoff := filepath.Join(accountsDir, fmt.Sprintf(".handoff-%d.json", os.Getpid()))
+	ledger := switching.LedgerPath(home)
+	resolve := func(h switching.Handoff) (sessionTarget, bool) {
+		return resolveHandoffTarget(h, store, accountsDir, claudeJSON, sharesPath)
+	}
+	hostedByEditor = true
+	return superviseSession(bin, claudeDir, ledger, handoff, target, passthrough, resolve)
 }
 
-// editorAccount is the account this editor's conversations start as: whichever
-// one `clawdh editor <account>` last recorded. Absent, clawdh stays out of the way.
-func editorAccount() (accounts.Account, bool) {
-	accountsFile, err := config.AccountsFile()
-	if err != nil {
-		return accounts.Account{}, false
+// editorDefault is what `clawdh editor <name>` recorded: the account every new
+// conversation in an editor starts as. One of AccountID (a local login) or
+// Shared (a gateway share's slug) is set. Name and ConfigDir are as they were
+// when it was recorded — for reading by anything that finds the file later —
+// and are not what the launch uses: the account is resolved live, so a
+// rename, a re-login, or a revoked share is seen.
+type editorDefault struct {
+	AccountID string `json:"accountId,omitempty"`
+	Shared    string `json:"shared,omitempty"`
+	Name      string `json:"name"`
+	ConfigDir string `json:"configDir,omitempty"`
+}
+
+func editorDefaultPath(accountsDir string) string {
+	return filepath.Join(filepath.Dir(accountsDir), "editors", "default.json")
+}
+
+// readEditorDefault returns the recorded default, or the zero value when there
+// is none (or it cannot be read — the same thing, for a launch).
+func readEditorDefault(accountsDir string) editorDefault {
+	var rec editorDefault
+	if data, err := os.ReadFile(editorDefaultPath(accountsDir)); err == nil {
+		_ = json.Unmarshal(data, &rec)
 	}
-	list, err := accounts.NewStore(accountsFile).Load()
-	if err != nil {
-		return accounts.Account{}, false
+	return rec
+}
+
+// writeEditorDefault records the account an editor's conversations start as.
+func writeEditorDefault(accountsDir string, rec editorDefault) error {
+	dir := filepath.Dir(editorDefaultPath(accountsDir))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
 	}
-	accountsDir, err := config.AccountsDir()
+	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
-		return accounts.Account{}, false
+		return err
 	}
-	if data, err := os.ReadFile(filepath.Join(filepath.Dir(accountsDir), "editors", "default.json")); err == nil {
-		var rec storeOwner
-		if json.Unmarshal(data, &rec) == nil {
-			for _, a := range list {
-				if a.ID == rec.AccountID {
-					return a, true
-				}
+	return os.WriteFile(editorDefaultPath(accountsDir), data, 0o600)
+}
+
+// editorTarget is the session target an editor's new conversation starts as:
+// the recorded share or local account, else the default login as a plain
+// `claude` would use. A recorded share that is no longer shared with this
+// machine falls through to the local default rather than failing the editor.
+func editorTarget(store *accounts.Store, accountsDir, claudeJSON, sharesPath string) (sessionTarget, bool) {
+	rec := readEditorDefault(accountsDir)
+	if rec.Shared != "" {
+		if t, ok := resolveHandoffTarget(switching.Handoff{Account: rec.Shared, Shared: true}, store, accountsDir, claudeJSON, sharesPath); ok {
+			return t, true
+		}
+	}
+	list, err := store.Load()
+	if err != nil {
+		return sessionTarget{}, false
+	}
+	if rec.AccountID != "" {
+		for _, a := range list {
+			if a.ID == rec.AccountID {
+				return localTarget(a, accountsDir, claudeJSON), true
 			}
 		}
 	}
-	// Never configured: the default login, exactly as a plain `claude` would.
 	for _, a := range list {
 		if a.IsDefault() {
-			return a, true
+			return localTarget(a, accountsDir, claudeJSON), true
 		}
 	}
-	return accounts.Account{}, false
+	return sessionTarget{}, false
+}
+
+// editorDefaultLabel says what the recorded default is, resolved against what
+// exists now — the live account name and its command, as `clawdh list` shows
+// them — so `clawdh editor` and `clawdh list` never disagree about a name.
+func editorDefaultLabel(rec editorDefault, list []accounts.Account, shares []panel.GatewayShare) string {
+	switch {
+	case rec.Shared != "":
+		for _, sh := range shares {
+			if strings.EqualFold(sh.Slug, rec.Shared) {
+				return fmt.Sprintf("%s (clawdh shared %s)", sh.Account, sh.Slug)
+			}
+		}
+		return fmt.Sprintf("%s — a shared account that is no longer shared with you, so the default login is used", rec.Shared)
+	case rec.AccountID != "":
+		for _, a := range list {
+			if a.ID == rec.AccountID {
+				return fmt.Sprintf("%s (clawdh %s)", displayName(a), a.Slug)
+			}
+		}
+		return fmt.Sprintf("%s — an account that no longer exists, so the default login is used", rec.Name)
+	default:
+		return "not set (your default login)"
+	}
 }
