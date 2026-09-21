@@ -54,14 +54,16 @@ ACCOUNT=$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/accounts" \
 echo "$ACCOUNT" | grep -q '"alias":"claude-work"' || fail "unexpected account payload: $ACCOUNT"
 ok "account created"
 
-# Accounts no longer get a shell alias — they run as `clawdh <name>` — so no
-# managed block may be written to any shell rc file a Linux user has.
+# Accounts no longer get a shell alias — they run as `clawdh <name>` — so the
+# managed block in a shell rc file carries only the `claude` wrapper (which
+# makes a plain `claude` a switchable session) and never a per-account alias.
 for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish"; do
-  if [ -f "$rc" ] && grep -q "Managed by clawdh" "$rc"; then
-    fail "a managed alias block was written to $rc; accounts run as 'clawdh <name>' now"
+  if [ -f "$rc" ] && grep -q "claude-work" "$rc"; then
+    fail "a shell alias was written to $rc; accounts run as 'clawdh <name>' now"
   fi
 done
-ok "no shell alias block written (accounts run as 'clawdh <name>')"
+grep -q "clawdh run --auto" "$HOME/.bashrc" || fail "the managed block in ~/.bashrc lacks the claude wrapper"
+ok "shell rc carries the claude wrapper and no per-account alias"
 
 # --- login: URL then linked, over SSE ---
 curl -fsS -X POST "http://127.0.0.1:$PORT/api/accounts/work/login" -o /dev/null
