@@ -396,3 +396,69 @@ func TestChangesAreRecordedUnderTheSignersName(t *testing.T) {
 		t.Errorf("activity still attributes a change to \"You\": %s", joined)
 	}
 }
+
+// The People tab names the clawdh build on each machine: the one it enrolled
+// with until it checks in, then whichever it last reported. A check-in that
+// says nothing about its build — one from a clawdh older than the reporting —
+// keeps whatever the panel knew rather than blanking it. The panel names its
+// own build on /api/status the way the local page's corner does.
+func TestAMachineReportsItsBuildAndThePanelItsOwn(t *testing.T) {
+	h := newHarness(t)
+	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
+		t.Fatalf("setup = %d %v", code, body)
+	}
+	if code, _ := h.do("POST", "/api/people", map[string]string{"name": "Alice"}, ""); code != 201 {
+		t.Fatal("adding a person failed")
+	}
+	_, panelBody := h.do("GET", "/api/panel", nil, "")
+	personID := panelBody["people"].([]any)[0].(map[string]any)["id"].(string)
+	_, codeBody := h.do("POST", "/api/people/"+personID+"/code", nil, "")
+	joinCode, _ := codeBody["code"].(string)
+
+	status, enrolled := h.do("POST", "/api/v1/enroll",
+		map[string]string{"code": joinCode, "machine": "alice-mbp", "version": " v1.4.0 · 7b506ea "}, "")
+	if status != 200 {
+		t.Fatalf("enrolling = %d %v", status, enrolled)
+	}
+	token, _ := enrolled["token"].(string)
+
+	machine := func() map[string]any {
+		t.Helper()
+		_, body := h.do("GET", "/api/panel", nil, "")
+		devices := body["people"].([]any)[0].(map[string]any)["devices"].([]any)
+		if len(devices) != 1 {
+			t.Fatalf("Alice has %d machines, want 1", len(devices))
+		}
+		return devices[0].(map[string]any)
+	}
+	if got := machine()["version"]; got != "v1.4.0 · 7b506ea" {
+		t.Errorf("build after enrolling = %v, want the one it enrolled with, trimmed", got)
+	}
+
+	// The machine updates and checks in as the new build.
+	if code, _ := h.do("POST", "/api/v1/checkin", map[string]string{"version": "main · d005986"}, token); code != 200 {
+		t.Fatal("check-in failed")
+	}
+	if got := machine()["version"]; got != "main · d005986" {
+		t.Errorf("build after a check-in = %v, want the one it reported", got)
+	}
+
+	// A check-in from before build reporting says nothing, and changes nothing.
+	h.do("POST", "/api/v1/checkin", map[string]bool{"remote": false}, token)
+	if got := machine()["version"]; got != "main · d005986" {
+		t.Errorf("a check-in without a build changed it to %v", got)
+	}
+
+	// A test binary is stamped with nothing, so the panel's own tag falls back to
+	// what Vercel sets for the deploy it built, and to "dev" with neither.
+	t.Setenv("VERCEL_GIT_COMMIT_SHA", "")
+	t.Setenv("VERCEL_GIT_COMMIT_REF", "")
+	if _, body := h.do("GET", "/api/status", nil, ""); body["tag"] != "dev" {
+		t.Errorf("tag with nothing to name the build = %v, want dev", body["tag"])
+	}
+	t.Setenv("VERCEL_GIT_COMMIT_SHA", "0f81cd2d3ad5b0f1e6d2c7a8b9e0f1a2b3c4d5e6")
+	t.Setenv("VERCEL_GIT_COMMIT_REF", "main")
+	if _, body := h.do("GET", "/api/status", nil, ""); body["tag"] != "main · 0f81cd2" {
+		t.Errorf("tag on Vercel = %v, want the branch and short commit it deployed", body["tag"])
+	}
+}

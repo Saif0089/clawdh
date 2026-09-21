@@ -37,6 +37,10 @@ type Device struct {
 	// the jobs channel needs. The machine reports it every check-in; false (the
 	// default) means the panel will not offer to ask this machine anything.
 	Remote bool `json:"remote,omitempty"`
+	// Version is the clawdh build the machine last checked in with, as its own
+	// page shows it ("main · 7b506ea"), so the panel can say which machines are
+	// behind. "" until a build that reports it checks in.
+	Version string `json:"version,omitempty"`
 }
 
 // Account is one Claude login the panel lends out.

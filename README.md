@@ -241,6 +241,20 @@ Set `CLAWDH_AUTO_UPDATE=0` in the service's environment to turn it off, and
 `CLAWDH_NOTIFY=0` to keep the notifications quiet. To update by hand at any
 time, re-run the install command above.
 
+Which build is actually running is shown in three places: the top-right
+corner of the local page, the shared panel — its own build in the header,
+and each machine's in the People tab's Machines list (reported at every
+check-in; a machine still on a build from before this shows "older build")
+— and Claude Code's own status line inside every session clawdh starts — `clawdh main@7b506ea · HassanDH`,
+the build that launched the session and the account it runs as. A session
+keeps the build it was launched with; when an update has landed underneath
+it the badge says `(update ready)`, and the next session runs the new one.
+The badge is put in front of whatever status line you already had: clawdh
+points Claude Code's `statusLine` at `clawdh statusline`, keeps your own
+command in `~/.clawdh/statusline.json`, and runs it with the same input on
+every redraw. A session clawdh did not start shows your line alone, and
+`clawdh uninstall` puts your setting back.
+
 ## Uninstalling
 
 ```sh
@@ -248,7 +262,8 @@ clawdh uninstall
 ```
 
 Stops the service, removes the autostart registration, strips every
-managed shell block, and removes the installed binary. Your accounts'
+managed shell block, takes the switch hook and the status-line badge back out
+of `~/.claude/settings.json`, and removes the installed binary. Your accounts'
 login data under `~/.clawdh/accounts` (and `~/.ccam/accounts`, if carried over
 from a previous ccam install) is left in place — remove those directories
 yourself for a full wipe.

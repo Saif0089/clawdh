@@ -26,7 +26,9 @@ export interface AccountWindow {
 }
 export interface Limit { id: string; subjectType: string; subjectId: string; windowKind: string; maxWeighted?: number; maxCostUsd?: number }
 export interface Account { id: string; name: string; email?: string; plan?: string; hasLogin: boolean; warning?: string; shared?: { shareId: string; personId: string; personName: string; expiresAt?: string }[] }
-export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean }
+// version is the clawdh build the machine last reported (`main · 7b506ea`); absent for one
+// still on a build older than version reporting, which is itself the news.
+export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean; version?: string }
 export interface Person { id: string; name: string; email?: string; can?: string[]; canUntil?: string[]; devices?: Device[] }
 export interface Job {
   id: string; kind: string; params?: string; status: string; result?: string;

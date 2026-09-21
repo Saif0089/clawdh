@@ -19,14 +19,16 @@ export default function App() {
   const [status, setStatus] = useState<Status>("loading");
   const [tab, setTab] = useState<Tab>("accounts");
   const [actor, setActor] = useState("");
+  const [tag, setTag] = useState("");
   const [tour, setTour] = useState(false);
   const reduce = useReducedMotion();
   const seen = useRef(introSeen());
 
   useEffect(() => {
-    api<{ needsSetup: boolean; signedIn: boolean; actor?: string }>("GET", "/api/status")
+    api<{ needsSetup: boolean; signedIn: boolean; actor?: string; tag?: string }>("GET", "/api/status")
       .then((s) => {
         setActor(s.actor || "");
+        setTag(s.tag || "");
         setStatus(s.signedIn ? "in" : s.needsSetup ? "setup" : "gate");
       })
       .catch(() => setStatus("gate"));
@@ -54,7 +56,7 @@ export default function App() {
       <Backdrop />
       <AnimatePresence>{intro && <ClawIntro onDone={() => setIntro(false)} />}</AnimatePresence>
       {status === "loading" ? null : status === "in" ? (
-        <Shell tab={tab} setTab={setTab} actor={actor} onSignOut={() => setStatus("gate")} />
+        <Shell tab={tab} setTab={setTab} actor={actor} tag={tag} onSignOut={() => setStatus("gate")} />
       ) : (
         <Gate
           setup={status === "setup"}
@@ -175,7 +177,7 @@ function Gate({ setup, onIn }: { setup: boolean; onIn: (name: string) => void })
   );
 }
 
-function Shell({ tab, setTab, actor, onSignOut }: { tab: Tab; setTab: (t: Tab) => void; actor: string; onSignOut: () => void }) {
+function Shell({ tab, setTab, actor, tag, onSignOut }: { tab: Tab; setTab: (t: Tab) => void; actor: string; tag: string; onSignOut: () => void }) {
   const signOut = async () => {
     try {
       await api("POST", "/api/logout");
@@ -191,6 +193,9 @@ function Shell({ tab, setTab, actor, onSignOut }: { tab: Tab; setTab: (t: Tab) =
         <Logo />
         <span className="text-[22px] font-bold tracking-tight">clawdh</span>
         <span className="rounded-full border border-line bg-raised px-2.5 py-0.5 text-[12px] font-medium text-muted">Team panel</span>
+        {/* The build serving the panel, the way the local page's corner names its own —
+            so "is the panel behind my machines?" is answered without leaving the header. */}
+        {tag && <span className="hidden whitespace-nowrap font-mono text-[12px] text-faint sm:inline" title="The build serving this panel">{tag}</span>}
         <div className="ml-auto flex min-w-0 items-center gap-3">
           {actor && (
             <span className="hidden min-w-0 items-center gap-1.5 text-[13.5px] text-muted sm:flex" title="Your changes are recorded under this name">
@@ -510,6 +515,13 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                         <div key={d.id} className="flex items-center gap-2 py-1 text-[13.5px]">
                           <span className="font-mono text-ink">{d.name}</span>
                           {d.remote && <span title="Remote help is on" className="rounded-full bg-primary/12 px-1.5 py-px text-[11px] font-medium text-primary">remote</span>}
+                          {/* A machine reports its build on every check-in; one that never has is on a
+                              build from before that, which is exactly the thing worth knowing here. */}
+                          {d.version ? (
+                            <span className="font-mono text-[12px] text-faint" title="The clawdh build this machine runs">{d.version}</span>
+                          ) : (
+                            <span className="text-[12px] text-faint" title="This machine's clawdh predates build reporting; its build shows once it updates">older build</span>
+                          )}
                           <span className="text-faint">{when(d.lastSeen)}</span>
                           <div className="ml-auto flex gap-1">
                             {d.remote && <button onClick={() => setJobsFor(d)} className="rounded px-1.5 py-0.5 text-[13px] text-primary transition-colors hover:bg-primary/12">Remote help</button>}

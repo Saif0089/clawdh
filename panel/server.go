@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"clawdh/internal/buildinfo"
 	"clawdh/internal/config"
 	"embed"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -134,7 +136,32 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"actor":        s.actorOrEmpty(r),
 		"canonicalUrl": strings.TrimRight(config.Env("PANEL_URL"), "/"),
 		"gatewayUrl":   gatewayURL(),
+		"tag":          panelTag(),
 	})
+}
+
+// panelTag names the build serving the panel, the way the local page's corner
+// names its own. A stamped release is named as such. Vercel builds from source
+// without clawdh's ldflags, so there the branch and commit it deployed — the
+// variables it sets for every build — are the truth; Go's own VCS stamp would
+// at best repeat the commit and at worst mark it "+" for the wrapper Vercel
+// writes into the tree. Anything else is a dev build and says so.
+func panelTag() string {
+	if buildinfo.Version != "dev" {
+		return buildinfo.Tag()
+	}
+	sha := os.Getenv("VERCEL_GIT_COMMIT_SHA")
+	if len(sha) > 7 {
+		sha = sha[:7]
+	}
+	ref := os.Getenv("VERCEL_GIT_COMMIT_REF")
+	switch {
+	case ref != "" && sha != "":
+		return ref + " · " + sha
+	case sha != "":
+		return sha
+	}
+	return buildinfo.Tag()
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {

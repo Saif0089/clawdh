@@ -50,6 +50,7 @@ type deviceView struct {
 	Name     string     `json:"name"`
 	LastSeen *time.Time `json:"lastSeen,omitempty"`
 	Remote   bool       `json:"remote,omitempty"`
+	Version  string     `json:"version,omitempty"` // the clawdh build it last checked in with
 }
 
 type personView struct {
@@ -114,7 +115,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 			if dev.PersonID != p.ID {
 				continue
 			}
-			dv := deviceView{ID: dev.ID, Name: dev.Name, Remote: dev.Remote}
+			dv := deviceView{ID: dev.ID, Name: dev.Name, Remote: dev.Remote, Version: dev.Version}
 			if !dev.LastSeen.IsZero() {
 				seen := dev.LastSeen
 				dv.LastSeen = &seen
@@ -534,6 +535,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Code    string `json:"code"`
 		Machine string `json:"machine"`
+		Version string `json:"version"` // the clawdh build joining, shown per machine
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, 400, "That request could not be read.")
@@ -569,6 +571,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 			d.Devices = append(d.Devices, Device{
 				ID: deviceID, PersonID: c.PersonID, Name: machine,
 				TokenHash: hash, EnrolledAt: now, LastSeen: now,
+				Version: strings.TrimSpace(in.Version),
 			})
 			d.Log(now, d.personName(c.PersonID), "set up "+machine)
 			return nil
@@ -611,9 +614,11 @@ type clientShare struct {
 func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Device) {
 	// The machine tells us, every check-in, whether its owner has remote help on.
 	// It is the consent the jobs channel runs on: a machine reporting false is
-	// never offered for a job and is served nothing to run.
+	// never offered for a job and is served nothing to run. It also says which
+	// clawdh build it runs, so the People tab can show a machine that is behind.
 	var in struct {
-		Remote bool `json:"remote"`
+		Remote  bool   `json:"remote"`
+		Version string `json:"version"`
 	}
 	_ = readJSON(r, &in)
 
@@ -623,6 +628,9 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 			if d.Devices[i].ID == dev.ID {
 				d.Devices[i].LastSeen = now
 				d.Devices[i].Remote = in.Remote
+				if v := strings.TrimSpace(in.Version); v != "" {
+					d.Devices[i].Version = v
+				}
 			}
 		}
 		return nil
