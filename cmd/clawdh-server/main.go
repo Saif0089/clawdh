@@ -33,6 +33,16 @@ func main() {
 		}
 		return
 	}
+	// `clawdh-server wipe-usage [--yes]` shows what the metering tables hold
+	// and, with --yes, clears them so the boards start over.
+	if len(os.Args) > 1 && os.Args[1] == "wipe-usage" {
+		yes := len(os.Args) > 2 && os.Args[2] == "--yes"
+		if err := runWipeUsage(context.Background(), os.Getenv("DATABASE_URL"), yes); err != nil {
+			fmt.Fprintln(os.Stderr, "wipe-usage:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")
 	memberKey := flag.String("member-key", config.Env("GW_MEMBER_KEY"), "the gateway key a client presents")

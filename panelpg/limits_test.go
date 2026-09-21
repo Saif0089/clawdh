@@ -133,3 +133,42 @@ func TestACeilingIsCheckedAgainstTheAccountsWeeklyWindow(t *testing.T) {
 		t.Errorf("p2's message = %q, want it to say the ceiling is the account's", st.Message)
 	}
 }
+
+// A wipe clears what the gateway recorded and every window reading, in one
+// go, and nothing else: the ceilings stay.
+func TestWipingMeteringLeavesCeilingsAlone(t *testing.T) {
+	ctx := context.Background()
+	b := freshBackend(t)
+	if _, err := b.db.ExecContext(ctx, `DELETE FROM limits; DELETE FROM usage_events; DELETE FROM usage_counters; DELETE FROM account_windows`); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RecordUsage(ctx, UsageEvent{PersonID: "p1", AccountID: "a1", Model: "claude-opus-5", Input: 10, Weighted: 50}); err != nil {
+		t.Fatal(err)
+	}
+	b.RecordWindows("a1", 0.1, 0.2, time.Time{}, time.Time{})
+	if err := b.SetLimit(ctx, panel.Limit{SubjectType: "account", SubjectID: "a1", MaxPercent: 0.7}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := b.MeteringCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before["usage_events"] != 1 || before["usage_counters"] != 2 || before["account_windows"] != 1 {
+		t.Fatalf("counts before = %v", before)
+	}
+	if err := b.WipeMetering(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := b.MeteringCounts(ctx)
+	for _, tbl := range MeteringTables() {
+		if after[tbl] != 0 {
+			t.Errorf("%s has %d rows after the wipe", tbl, after[tbl])
+		}
+	}
+	if limits, _ := b.ListLimits(ctx); len(limits) != 1 {
+		t.Errorf("limits after the wipe = %+v, want the ceiling kept", limits)
+	}
+	if at, _ := b.LatestEventAt(ctx); !at.IsZero() {
+		t.Errorf("latest event after the wipe = %v, want none", at)
+	}
+}
