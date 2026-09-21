@@ -154,3 +154,11 @@ foreach ($old in $oldCcam) {
 
 Write-Host ""
 & $dest install
+
+# An invite link makes install and join one paste: the invite page shows
+#   $env:CLAWDH_JOIN = "https://panel/i/<code>"; irm ... | iex
+# and clawdh joins right after it starts.
+if ($env:CLAWDH_JOIN) {
+  Write-Host ""
+  & $dest join $env:CLAWDH_JOIN
+}

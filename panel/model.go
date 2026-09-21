@@ -108,12 +108,15 @@ type Share struct {
 // whether or not the sweep has removed it yet.
 func (sh Share) Live(now time.Time) bool { return sh.ExpiresAt.IsZero() || now.Before(sh.ExpiresAt) }
 
-// JoinCode is a one-shot code that enrols a machine as a given person.
+// JoinCode is the one-shot code inside an invite link: it enrols a machine as
+// a given person. InvitedBy is the signer who made the invite, so the page the
+// link opens can say who is inviting.
 type JoinCode struct {
 	CodeHash  string    `json:"codeHash"`
 	PersonID  string    `json:"personId"`
 	ExpiresAt time.Time `json:"expiresAt"`
 	UsedAt    time.Time `json:"usedAt,omitempty"`
+	InvitedBy string    `json:"invitedBy,omitempty"`
 }
 
 // Admin is the single administrator's password, salted and stretched.

@@ -349,8 +349,39 @@ func TestInviteLinkOpensAWelcomePage(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("opening the invite = %d", resp.StatusCode)
 	}
-	if !strings.Contains(string(page), "invited") {
-		t.Error("the invite page does not welcome the person")
+	// It says who is inviting whom, and it has one thing to do per situation:
+	// a button that opens the local clawdh page with the invite (clawdh
+	// installed), or an install command that carries the invite (not yet).
+	// The person is never asked to copy the link they just opened.
+	html := string(page)
+	for _, want := range []string{
+		"Tester invited you to Claude", "as <b>Ehtisham</b>",
+		`href="http://127.0.0.1:47932/?invite=` + neturl.QueryEscape(url) + `"`,
+		"install.sh | sh -s -- --join &#34;" + url + "&#34;", // in the copy box, HTML-escaped
+		`$env:CLAWDH_JOIN = "` + url + `"; irm`,              // the Windows tab's command, in the page script
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the invite page lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"Paste your link", "Prefer the terminal", `<code id="invite-link">`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("the invite page still asks the person to handle the link again: %q", gone)
+		}
+	}
+
+	// Once used, the same link says so instead of offering anything.
+	if code, body := h.do("POST", "/api/v1/enroll", map[string]string{"code": body["code"].(string), "machine": "e-mbp"}, ""); code != 200 {
+		t.Fatalf("joining from the invite = %d %v", code, body)
+	}
+	resp2, err := http.Get(h.srv.URL + "/i/" + body["code"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	used, _ := io.ReadAll(resp2.Body)
+	if !strings.Contains(string(used), "already been used") || strings.Contains(string(used), "Join on this computer") {
+		t.Error("a used invite still offers to join")
 	}
 }
 

@@ -7,6 +7,19 @@ set -eu
 
 REPO="Saif0089/clawdh"
 
+# An invite link makes install and join one paste: the invite page shows
+#   curl ... | sh -s -- --join https://panel/i/<code>
+# and the same works as CLAWDH_JOIN=<link>. clawdh joins right after it starts.
+join="${CLAWDH_JOIN:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --join) shift; join="${1:-}" ;;
+    --join=*) join="${1#--join=}" ;;
+    *) echo "clawdh install: unknown option $1" >&2; exit 2 ;;
+  esac
+  [ $# -gt 0 ] && shift
+done
+
 os_name="$(uname -s)"
 case "$os_name" in
   Darwin) os=darwin ;;
@@ -103,3 +116,8 @@ done
 
 echo ""
 "$install_dir/clawdh" install
+
+if [ -n "$join" ]; then
+  echo ""
+  "$install_dir/clawdh" join "$join"
+fi

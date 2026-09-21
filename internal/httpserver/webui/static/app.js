@@ -464,7 +464,13 @@ async function refreshPanel() {
 }
 
 async function connectWithInvite() {
-  const raw = document.getElementById("invite-input").value.trim();
+  await connectFrom(document.getElementById("invite-input").value.trim());
+}
+
+// connectFrom joins the panel an invite link names — from the box, or from the
+// invite the page was opened with. It reports into the box's error line either
+// way, which is where a person looks when nothing appears.
+async function connectFrom(raw) {
   const err = document.getElementById("connect-err");
   err.textContent = "";
   const parsed = parseInvite(raw);
@@ -486,6 +492,21 @@ async function connectWithInvite() {
     btn.disabled = false; btn.textContent = "Connect";
   }
 }
+
+// The invite page's one button opens this page with the invite in the URL —
+// so the person never copies the link. Join at once, and take the invite out
+// of the address bar so a reload or a bookmark does not try a used code again.
+(function joinFromURL() {
+  const invite = new URLSearchParams(location.search).get("invite");
+  if (!invite) return;
+  history.replaceState(null, "", location.pathname);
+  connectBlock.hidden = false;
+  document.getElementById("invite-input").value = invite;
+  connectFrom(invite).then(() => {
+    const note = document.getElementById("connected-note");
+    if (!note.hidden) note.scrollIntoView({ block: "center" });
+  });
+})();
 
 // parseInvite pulls the panel URL and code out of a pasted invite link. It also
 // accepts a bare "url code" for anyone who has them separately.

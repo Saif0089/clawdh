@@ -61,7 +61,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.admin(s.handleRemoveAccount))
 	mux.HandleFunc("POST /api/people", s.admin(s.handleAddPerson))
 	mux.HandleFunc("DELETE /api/people/{id}", s.admin(s.handleRemovePerson))
-	mux.HandleFunc("POST /api/people/{id}/code", s.admin(s.handleJoinCode))
 	mux.HandleFunc("POST /api/people/{id}/invite", s.admin(s.handleInvite))
 	mux.HandleFunc("DELETE /api/devices/{id}", s.admin(s.handleRemoveDevice))
 	mux.HandleFunc("POST /api/accounts/{id}/share", s.admin(s.handleShare))

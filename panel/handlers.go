@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-// joinCodeLife is how long a join code is good for. One-shot and short-lived is
-// what makes a code short enough to read out over a call safe to use at all.
-const joinCodeLife = 24 * time.Hour
-
 // inviteLife is how long an invite link works. Short on purpose: an invite is
 // sent through chat and sits in a history, so it stops being useful before it
 // stops being findable. Long enough that a person can act on it in one sitting.
@@ -386,31 +382,6 @@ func (s *Server) handleRemovePerson(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-func (s *Server) handleJoinCode(w http.ResponseWriter, r *http.Request) {
-	who := s.actor(r) // the signed-in name every change is recorded under
-	id := r.PathValue("id")
-	code, hash, err := NewJoinCode()
-	if err != nil {
-		fail(w, 500, err.Error())
-		return
-	}
-	expires := s.now().Add(joinCodeLife)
-	err = s.store.Mutate(func(d *Data) error {
-		p, ok := d.Person(id)
-		if !ok {
-			return errors.New("There is no such person.")
-		}
-		d.JoinCodes = append(d.JoinCodes, JoinCode{CodeHash: hash, PersonID: id, ExpiresAt: expires})
-		d.Log(s.now(), who, "made a join code for "+p.Name)
-		return nil
-	})
-	if err != nil {
-		fail(w, 404, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"code": code, "expiresAt": expires})
-}
-
 // handleInvite mints an invite link for a person: a single-use, one-hour link
 // that carries the join code, so setting someone up is "send them this link"
 // rather than "read this code down the phone". The link lands on the panel's own
@@ -431,7 +402,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 			return errors.New("There is no such person.")
 		}
 		invitee = p.Name
-		d.JoinCodes = append(d.JoinCodes, JoinCode{CodeHash: hash, PersonID: id, ExpiresAt: expires})
+		d.JoinCodes = append(d.JoinCodes, JoinCode{CodeHash: hash, PersonID: id, ExpiresAt: expires, InvitedBy: who})
 		d.Log(s.now(), who, "made an invite link for "+p.Name)
 		return nil
 	})
@@ -452,9 +423,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 // what to do with it — so it is safe to serve without a session.
 func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
-	link := s.baseURL(r) + "/i/" + code
-
-	state := "unknown"
+	inv := invitePage{Link: s.baseURL(r) + "/i/" + code, State: "unknown"}
 	d, err := s.store.Load()
 	if err == nil {
 		want := HashToken(strings.TrimSpace(code))
@@ -462,20 +431,21 @@ func (s *Server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 			if !SameToken(want, c.CodeHash) {
 				continue
 			}
+			inv.Invitee, inv.InvitedBy = d.personName(c.PersonID), c.InvitedBy
 			switch {
 			case !c.UsedAt.IsZero():
-				state = "used"
+				inv.State = "used"
 			case s.now().After(c.ExpiresAt):
-				state = "expired"
+				inv.State = "expired"
 			default:
-				state = "good"
+				inv.State = "good"
 			}
 			break
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(200)
-	_, _ = w.Write([]byte(invitePageHTML(link, state)))
+	_, _ = w.Write([]byte(invitePageHTML(inv)))
 }
 
 // baseURL is the panel's address as a visitor reaches it: the configured

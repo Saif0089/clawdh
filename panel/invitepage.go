@@ -1,89 +1,108 @@
 package panel
 
 import (
+	"fmt"
 	"html"
+	"net/url"
 	"strings"
+
+	"clawdh/internal/config"
 )
 
 // Install one-liners, shown on the invite page so a new person has real steps
 // rather than "ask your admin". Kept here (not just the README) because the
 // invite page is the first thing someone who has never seen clawdh will read.
 const (
-	installRepo    = "https://github.com/Saif0089/clawdh"
-	claudeCodeURL  = "https://claude.com/claude-code"
-	installUnixCmd = "curl -fsSL https://raw.githubusercontent.com/Saif0089/clawdh/main/install.sh | sh"
-	installWinCmd  = "irm https://raw.githubusercontent.com/Saif0089/clawdh/main/install.ps1 | iex"
+	installRepo   = "https://github.com/Saif0089/clawdh"
+	claudeCodeURL = "https://claude.com/claude-code"
+	installUnix   = "https://raw.githubusercontent.com/Saif0089/clawdh/main/install.sh"
+	installWin    = "https://raw.githubusercontent.com/Saif0089/clawdh/main/install.ps1"
 )
+
+// localPage is where clawdh's own page answers on the computer the invite is
+// opened on. The invite's one button opens it with the invite in hand, and the
+// page joins on its own — so a person with clawdh already installed never
+// copies anything.
+var localPage = fmt.Sprintf("http://127.0.0.1:%d/", config.DefaultPort)
+
+// invitePage is what the page an invite link opens is built from: the link
+// itself, whether it is still good, and who is inviting whom.
+type invitePage struct {
+	Link      string
+	State     string // good | used | expired | unknown
+	Invitee   string // the person the link joins the computer as
+	InvitedBy string // the signer who made it
+}
+
+// joinCommands are the one-line installs that also join, per platform: the
+// installer takes the invite and runs `clawdh join` once clawdh is in place,
+// so "install" and "join" are one paste for someone new to this.
+func joinCommands(link string) (unix, win string) {
+	return fmt.Sprintf(`curl -fsSL %s | sh -s -- --join %q`, installUnix, link),
+		fmt.Sprintf(`$env:CLAWDH_JOIN = "%s"; irm %s | iex`, link, installWin)
+}
 
 // invitePageHTML is the page an invite link opens in a browser. It is a single
 // self-contained document: an invite is often opened by someone who has never
-// seen clawdh, so it explains itself, gives real install commands, and stands on
-// its own. It shares the panel's colour tokens and type so the whole product
-// looks like one thing.
-func invitePageHTML(link, state string) string {
-	esc := html.EscapeString(link)
-	joinCmd := html.EscapeString("clawdh join " + link)
-
+// seen clawdh, so it explains itself and stands on its own. It shares the
+// panel's colour tokens and type so the whole product looks like one thing.
+//
+// It has one thing to do per situation and never asks the person to handle
+// the link again: clawdh already on this computer — one button, which opens
+// clawdh's page with the invite and joins; not yet — one command, which
+// installs clawdh and joins.
+func invitePageHTML(inv invitePage) string {
 	var body string
-	switch state {
+	switch inv.State {
 	case "expired", "used":
 		reason := "This invite has expired."
-		if state == "used" {
+		if inv.State == "used" {
 			reason = "This invite has already been used."
 		}
 		body = `
       <h1>Link no longer works</h1>
       <p class="lead">` + reason + ` Ask whoever sent it for a fresh one — invites last about an hour and work once.</p>`
 	default:
-		note := ""
-		if state == "unknown" {
-			note = `<p class="muted small">We couldn't confirm this link here. If it's from a different panel, these steps still apply.</p>`
+		title := "You've been invited to Claude"
+		if inv.InvitedBy != "" {
+			title = html.EscapeString(inv.InvitedBy) + " invited you to Claude"
 		}
+		as := ""
+		if inv.Invitee != "" {
+			as = " as <b>" + html.EscapeString(inv.Invitee) + "</b>"
+		}
+		note := ""
+		if inv.State == "unknown" {
+			note = `<p class="muted small">We couldn't confirm this link here. If it's from a different panel, the steps still apply.</p>`
+		}
+		unixCmd, winCmd := joinCommands(inv.Link)
+		joinURL := localPage + "?invite=" + url.QueryEscape(inv.Link)
 		body = `
-      <h1>You've been invited to Claude</h1>
-      <p class="lead">You'll run Claude Code on a shared account — no sign-in of your own, nothing to keep. Two steps and you're set.</p>
+      <h1>` + title + `</h1>
+      <p class="lead">You'll run Claude Code on an account shared with you` + as + ` — nothing to sign in to, nothing to keep. Works once, for about an hour.</p>
 
-      <ol class="steps">
-        <li>
-          <span class="n">1</span>
-          <div class="step-body">
-            <b>Install clawdh</b>
-            <span class="det">Once per computer. Paste this into a terminal — it installs, starts in the background, and opens the clawdh page.</span>
-            <div class="os-tabs" role="tablist">
-              <button type="button" class="os-tab is-on" data-os="unix">macOS / Linux</button>
-              <button type="button" class="os-tab" data-os="win">Windows</button>
-            </div>
-            <div class="copybox" data-copy-for="install">
-              <code id="install-cmd">` + html.EscapeString(installUnixCmd) + `</code>
-              <button type="button" class="copy" data-copy-target="install-cmd">Copy</button>
-            </div>
-            <span class="det small">Needs the <a href="` + claudeCodeURL + `" target="_blank" rel="noopener">Claude Code CLI</a> first ·
-              <a href="` + installRepo + `" target="_blank" rel="noopener">all install options</a></span>
-          </div>
-        </li>
-        <li>
-          <span class="n">2</span>
-          <div class="step-body">
-            <b>Paste your link</b>
-            <span class="det">Open the clawdh page the installer opened, find <b>Got an invite?</b>, and paste the link below. Done — shared accounts appear on their own.</span>
-            <label class="fieldlabel">Your invite link</label>
-            <div class="copybox big" data-copy-for="link">
-              <code id="invite-link">` + esc + `</code>
-              <button type="button" class="copy primary" data-copy-target="invite-link">Copy</button>
-            </div>
-          </div>
-        </li>
-      </ol>
+      <div class="way">
+        <b>Have clawdh on this computer?</b>
+        <a class="button primary" href="` + html.EscapeString(joinURL) + `">Join on this computer</a>
+        <span class="det">Opens your clawdh page and joins. Nothing happened? clawdh isn't installed here yet — use the command below.</span>
+      </div>
 
-      <details class="terminal">
-        <summary>Prefer the terminal?</summary>
-        <p class="det small">Skip the page — run this once after installing:</p>
-        <div class="copybox" data-copy-for="join">
-          <code id="join-cmd">` + joinCmd + `</code>
-          <button type="button" class="copy" data-copy-target="join-cmd">Copy</button>
+      <div class="way">
+        <b>New to clawdh? One command installs it and joins.</b>
+        <div class="os-tabs" role="tablist">
+          <button type="button" class="os-tab is-on" data-os="unix">macOS / Linux</button>
+          <button type="button" class="os-tab" data-os="win">Windows</button>
         </div>
-      </details>
+        <div class="copybox">
+          <code id="install-cmd">` + html.EscapeString(unixCmd) + `</code>
+          <button type="button" class="copy" data-copy-target="install-cmd">Copy</button>
+        </div>
+        <span class="det small">Paste it into a terminal. Needs the <a href="` + claudeCodeURL + `" target="_blank" rel="noopener">Claude Code CLI</a> ·
+          <a href="` + installRepo + `" target="_blank" rel="noopener">about clawdh</a></span>
+      </div>
       ` + note
+		// The OS tabs swap the command; the page's script needs both.
+		body += `<script>window.__joinCmds = { unix: ` + jsString(unixCmd) + `, win: ` + jsString(winCmd) + ` };</script>`
 	}
 
 	return `<!doctype html>
@@ -100,23 +119,23 @@ func invitePageHTML(link, state string) string {
   @media (prefers-reduced-motion: reduce) { .card { animation:none; } }
 
   h1 { margin:0 0 12px; font-size:30px; letter-spacing:-.025em; line-height:1.12; }
-  .lead { margin:0 0 30px; color:var(--muted); font-size:17px; line-height:1.5; }
+  .lead { margin:0 0 26px; color:var(--muted); font-size:17px; line-height:1.5; }
+  .lead b { color:var(--ink); }
 
-  .steps { list-style:none; margin:0 0 8px; padding:0; display:grid; gap:26px; }
-  .steps li { display:flex; gap:16px; align-items:flex-start; min-width:0; }
-  .steps .n { flex:none; width:30px; height:30px; border-radius:50%;
-    background:linear-gradient(160deg, var(--primary), #8a97ff);
-    color:var(--primary-ink); font-weight:800; font-size:15px;
-    display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px -4px var(--primary); }
-  .step-body { flex:1; min-width:0; }
-  .steps b { display:block; font-size:17px; margin-bottom:3px; }
-  .det { display:block; color:var(--muted); font-size:14.5px; line-height:1.5; }
+  .way { padding:22px 0 0; margin-top:22px; border-top:1px solid var(--line); }
+  .way:first-of-type { border-top:none; margin-top:0; padding-top:0; }
+  .way > b { display:block; font-size:17px; margin-bottom:12px; }
+  .det { display:block; color:var(--muted); font-size:14.5px; line-height:1.5; margin-top:12px; }
   .det.small { font-size:13px; margin-top:10px; }
   .det a { color:var(--primary); text-decoration:none; }
   .det a:hover { text-decoration:underline; }
-  .fieldlabel { display:block; font-size:12.5px; color:var(--faint); margin:16px 0 7px; }
 
-  .os-tabs { display:inline-flex; gap:4px; margin:14px 0 8px; padding:3px; background:var(--sunken);
+  .button { display:inline-block; padding:13px 22px; border-radius:12px; font-weight:700; font-size:16px;
+    text-decoration:none; transition:transform .1s ease, filter .15s ease; }
+  .button.primary { background:var(--primary); color:var(--primary-ink); box-shadow:0 8px 24px -10px var(--primary); }
+  .button.primary:hover { filter:brightness(1.08); transform:translateY(-1px); }
+
+  .os-tabs { display:inline-flex; gap:4px; margin:0 0 8px; padding:3px; background:var(--sunken);
     border:1px solid var(--line); border-radius:9px; }
   .os-tab { background:none; border:none; color:var(--muted); font:inherit; font-size:13px; font-weight:500;
     padding:6px 12px; border-radius:6px; cursor:pointer; transition:all .15s ease; }
@@ -127,23 +146,12 @@ func invitePageHTML(link, state string) string {
   .copybox code { flex:1; min-width:0; overflow-x:auto; white-space:nowrap; background:var(--sunken);
     border:1px solid var(--line); border-radius:10px; padding:13px 14px;
     font-family:var(--mono); font-size:13.5px; color:var(--ink); scrollbar-width:thin; }
-  .copybox.big code { font-size:14px; padding:14px 15px; }
   .copybox .copy { flex:none; background:var(--raised-2); color:var(--ink); border:1px solid var(--line);
     border-radius:10px; padding:0 18px; font:inherit; font-size:14px; font-weight:600; cursor:pointer;
     transition:transform .1s ease, filter .15s ease, background .15s ease; }
   .copybox .copy:hover { background:#252c37; transform:translateY(-1px); }
   .copybox .copy:active { transform:translateY(0); }
-  .copybox .copy.primary { background:var(--primary); color:var(--primary-ink); border-color:var(--primary); }
-  .copybox .copy.primary:hover { filter:brightness(1.08); }
   .copybox .copy.copied { background:var(--ok); color:var(--primary-ink); border-color:var(--ok); }
-
-  .terminal { margin-top:28px; padding-top:22px; border-top:1px solid var(--line); }
-  .terminal summary { cursor:pointer; color:var(--muted); font-size:14px; font-weight:500;
-    list-style:none; user-select:none; transition:color .15s ease; }
-  .terminal summary:hover { color:var(--ink); }
-  .terminal summary::before { content:"›"; display:inline-block; margin-right:8px; transition:transform .2s ease; }
-  .terminal[open] summary::before { transform:rotate(90deg); }
-  .terminal .det { margin:12px 0 8px; }
 
   .muted { color:var(--muted); } .small { font-size:13px; margin:16px 0 0; }
   @media (max-width:560px){ .card { padding:32px 24px 28px; } h1 { font-size:25px; } }
@@ -165,8 +173,8 @@ func invitePageHTML(link, state string) string {
     // OS tabs swap the install command; default to the visitor's platform.
     (function(){
       var cmd = document.getElementById('install-cmd');
-      if(!cmd) return;
-      var cmds = { unix: ` + jsString(installUnixCmd) + `, win: ` + jsString(installWinCmd) + ` };
+      var cmds = window.__joinCmds;
+      if(!cmd || !cmds) return;
       var tabs = document.querySelectorAll('.os-tab');
       function pick(os){
         cmd.textContent = cmds[os] || cmds.unix;
