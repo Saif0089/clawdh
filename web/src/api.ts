@@ -14,17 +14,20 @@ export async function api<T = any>(method: string, path: string, body?: unknown)
 }
 
 export interface ModelUsage {
-  model: string; weighted: number; costUsd: number;
+  model: string; weighted: number;
   input: number; output: number; cacheCreation: number; cacheRead: number;
 }
-export interface Subject { id: string; name: string; weighted: number; costUsd: number; byModel: ModelUsage[]; }
+export interface Subject { id: string; name: string; weighted: number; byModel: ModelUsage[]; }
 export interface Board { window: string; asOf: string; subjects: Subject[] }
-export interface Burn { window: string; asOf: string; buckets: { hour: string; weighted: number; costUsd: number }[] }
+// An account's real rolling windows (Claude's own %), and who filled the weekly
+// one. hasReading is false until the gateway has read the login once.
 export interface AccountWindow {
   accountId: string; name: string; fiveH: number; sevenD: number;
   fiveHReset?: string; sevenDReset?: string; updatedAt: string;
+  hasReading: boolean; ranBy: { id: string; name: string; weighted: number }[];
 }
-export interface Limit { id: string; subjectType: string; subjectId: string; windowKind: string; maxWeighted?: number; maxCostUsd?: number }
+// A ceiling: a 0..1 share of the weekly window past which the subject is turned away.
+export interface Limit { id: string; subjectType: string; subjectId: string; maxPercent: number }
 export interface Account { id: string; name: string; email?: string; plan?: string; hasLogin: boolean; addedBy?: string; warning?: string; shared?: { shareId: string; personId: string; personName: string; expiresAt?: string }[] }
 // version is the clawdh build the machine last reported (`main · 7b506ea`); absent for one
 // still on a build older than version reporting, which is itself the news.

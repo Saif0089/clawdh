@@ -82,7 +82,7 @@ func runDiagnose(ctx context.Context, dsn, keyB64 string) error {
 	}
 	if people, err := u.pg.UsageBySubject(ctx, "person", now.Add(-7*24*time.Hour)); err == nil {
 		for _, p := range people {
-			fmt.Printf("  this week %-20s %10.0f weighted tokens  $%.2f\n", nameOf(d.People, p.SubjectID), p.Weighted, p.CostUSD)
+			fmt.Printf("  this week %-20s %10.0f weighted tokens\n", nameOf(d.People, p.SubjectID), p.Weighted)
 		}
 	}
 	if ws, err := u.pg.AccountWindows(ctx); err == nil {

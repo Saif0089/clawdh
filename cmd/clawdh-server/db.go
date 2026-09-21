@@ -202,7 +202,7 @@ func (u *dbUpstream) Status(personID, accountID string) gateway.QuotaStatus {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	st, err := u.pg.MemberLimitStatus(ctx, personID, accountID, time.Now())
+	st, err := u.pg.MemberLimitStatus(ctx, personID, accountID)
 	if err != nil {
 		return gateway.QuotaStatus{}
 	}

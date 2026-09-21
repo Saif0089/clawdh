@@ -42,18 +42,24 @@ Then open https://clawdh.vercel.app and set the admin password.
 
 ## Enrolling machines against it
 
-On each machine, once — the panel shows the exact command under
-People → *the person* → **Send a code**:
+On the panel, People → **Invite someone** makes one link. Opened on a computer
+that has clawdh, it joins that computer in a click; on one without, the same
+page gives a one-line install that joins as it installs. The equivalent on the
+command line:
 
 ```sh
-clawdh panel join https://clawdh.vercel.app <code>
+clawdh join <invite-link>
 ```
 
-An account signed in on a machine is handed to the panel from that machine:
+A login signed in on a joined machine is handed to the panel from that machine
+— **Add to panel** on the machine's clawdh page, or:
 
 ```sh
-clawdh panel push <account> https://clawdh.vercel.app
+clawdh panel push <account>
 ```
+
+The machine's membership is the credential for both; the panel's password is
+only ever typed into the panel itself.
 
 ## What this defends against, and what it does not
 

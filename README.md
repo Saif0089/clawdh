@@ -114,23 +114,36 @@ serves everyone through it. One login can serve many people at once — the poin
 the whole design turns on — because the gateway refreshes the token centrally, so
 no one else ever holds the login and two machines never invalidate each other.
 
-The everyday flow lives in the web page, no terminal required:
+The everyday flow lives in the web page, no terminal required, and nobody but
+the panel's admin ever types the panel's password — a machine's own membership
+is the only credential it needs:
 
-- On the machine where an account is signed in, open clawdh and choose **Add to
-  panel** on that account. Its login is sealed and stored on the panel.
-- On the panel, **Invite someone** — they get a link that expires in about an
-  hour. They open it, connect in a click, and whatever you share appears on their
-  machine, ready to run as `clawdh shared <name>`.
+- On the panel, **Invite someone** — they get one link, good for about an hour.
+  Opening it on their computer joins that computer in a click; on a computer
+  without clawdh, the same page gives a one-line install that joins as it
+  installs. There is nothing to paste.
+- On any machine that has joined, open clawdh and choose **Add to panel** on a
+  login that is signed in there. Its login is sealed and stored on the panel,
+  and the person who added it can take it back from the same page. The panel's
+  Accounts tab is where logins arrive from machines; it has no add form of its
+  own.
 - **Give access** shares an account with a person; the ⨯ next to their name takes
   it back. Access stops within seconds — the gateway simply stops honouring their
   key.
+- **Usage** shows the two things the panel actually knows: each account's real
+  5-hour and weekly windows (Claude's own numbers, read by the gateway) with who
+  filled the week, and everyone ranked over the last day, week or month, split
+  by model. An editor session and a terminal session land on the same rows.
+- **Quotas** are ceilings: a percent of an account's weekly window past which a
+  person, or everyone on the account, is turned away — a reserve nobody can eat
+  into. That is the only kind.
 
 The same actions exist on the command line for anyone who prefers it:
 
 ```sh
 clawdh panel serve                          # run the panel (or host it — see below)
-clawdh panel push work http://host:47933    # add an account's login to the panel
-clawdh join <invite-link>                   # connect a machine from an invite link
+clawdh join <invite-link>                   # join this machine from an invite link
+clawdh panel push work                      # hand a login on this machine up to the panel
 clawdh shared work                          # run an account shared with you
 ```
 

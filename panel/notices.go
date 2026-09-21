@@ -24,58 +24,52 @@ func (s *Server) checkinNotices(ctx context.Context, personID string, d Data) []
 	return out
 }
 
-// quotaNotice is a single "approaching / over your limit" notice, for the
-// tightest of the person's own and the org's limits — the same limits the
-// gateway enforces. Nothing under 75% is worth a notice.
+// quotaNotice is a single "approaching / past your ceiling" notice, for the
+// tightest of the person's own ceilings — the same ones the gateway enforces.
+// Nothing under 75% is worth a notice.
 //
-// A person's window ceiling is measured the way the board measures it: against
-// the fullest weekly window among the accounts they can use (ceilingWindow),
-// since the metering layer's LimitUsage has no account in hand for a person.
+// A ceiling is measured the way the board measures it: against the fullest
+// weekly window among the accounts the person can use (ceilingWindow), so the
+// notice names the account whose window it is.
 func (s *Server) quotaNotice(ctx context.Context, personID string, d Data) []Notice {
 	limits, err := s.usage.ListLimits(ctx)
 	if err != nil {
 		return nil
 	}
-	var windows []AccountWindow
-	if hasPercent(limits) {
-		windows, _ = s.usage.AccountWindows(ctx)
+	var mine []Limit
+	for _, l := range limits {
+		if l.SubjectType == "person" && l.SubjectID == personID && l.MaxPercent > 0 {
+			mine = append(mine, l)
+		}
+	}
+	if len(mine) == 0 {
+		return nil
+	}
+	windows, err := s.usage.AccountWindows(ctx)
+	if err != nil {
+		return nil
 	}
 	var best float64
-	var window string
-	var ceiling bool
+	var account string
 	var reset time.Time
-	for _, l := range limits {
-		if !(l.SubjectType == "org" || (l.SubjectType == "person" && l.SubjectID == personID)) {
+	for _, l := range mine {
+		w, ok := ceilingWindow(d, windows, l)
+		if !ok {
 			continue
 		}
-		frac, r, err := s.usage.LimitUsage(ctx, l)
-		if err != nil {
-			continue
-		}
-		isCeiling := false
-		if l.MaxPercent != nil && *l.MaxPercent > 0 {
-			if w, ok := ceilingWindow(d, windows, l); ok {
-				if c := w.SevenD / *l.MaxPercent; c > frac {
-					frac, isCeiling = c, true
-					if !w.SevenDReset.IsZero() {
-						r = w.SevenDReset
-					}
-				}
-			}
-		}
-		if frac > best {
-			best, window, ceiling, reset = frac, l.WindowKind, isCeiling, r
+		if frac := w.SevenD / l.MaxPercent; frac > best {
+			best, account, reset = frac, d.accountName(w.AccountID), w.SevenDReset
 		}
 	}
 	th := quotaThreshold(best)
 	if th == "" {
 		return nil
 	}
-	// The reset time keys the notice, so a fresh window re-notifies but a standing
-	// one over the same threshold does not.
+	// The window's reset keys the notice, so a fresh window re-notifies but a
+	// standing one over the same threshold does not.
 	return []Notice{{
 		ID:   fmt.Sprintf("quota:%s:%d", th, reset.Unix()),
-		Body: quotaBody(th, window, ceiling),
+		Body: quotaBody(th, account),
 	}}
 }
 
@@ -124,34 +118,13 @@ func quotaThreshold(frac float64) string {
 	return ""
 }
 
-// quotaBody is the short line for a quota notice. A ceiling is about the
-// account's window rather than the person's own spend, so it says so.
-func quotaBody(threshold, windowKind string, ceiling bool) string {
-	if ceiling {
-		if threshold == "cap" {
-			return "The account's weekly window is past your ceiling — you're turned away until it resets"
-		}
-		return "The account's weekly window is at " + threshold + "% of your ceiling"
-	}
-	w := windowWord(windowKind)
+// quotaBody is the short line for a ceiling notice: about the account's
+// window, since that — not the person's own spend — is what the ceiling reads.
+func quotaBody(threshold, account string) string {
 	if threshold == "cap" {
-		return "You're over your " + w + "limit"
+		return account + "'s weekly window is past your ceiling — you're turned away until it resets"
 	}
-	return "You're at " + threshold + "% of your " + w + "limit"
-}
-
-// windowWord turns a window kind into the adjective for a sentence, with a
-// trailing space so an unknown kind reads "your limit", not "your  limit".
-func windowWord(kind string) string {
-	switch kind {
-	case "day":
-		return "daily "
-	case "week":
-		return "weekly "
-	case "month":
-		return "monthly "
-	}
-	return ""
+	return account + "'s weekly window is at " + threshold + "% of your ceiling"
 }
 
 // checkinWindows is the gateway's captured utilisation for each account the

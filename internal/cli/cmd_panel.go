@@ -261,7 +261,7 @@ func panelCheck(_ []string) int {
 		return 1
 	}
 	if !c.Config.Configured() {
-		fmt.Fprintln(os.Stderr, "clawdh: this machine is not enrolled with a panel. Run `clawdh panel join <url> <code>`.")
+		fmt.Fprintln(os.Stderr, "clawdh: this machine has not joined a panel. Open your invite link, or run `clawdh join <invite-link>`.")
 		return 1
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -383,7 +383,7 @@ func watchPanel(ctx context.Context) {
 	defer t.Stop()
 	for {
 		// Reload the config each tick rather than once at startup, so a machine
-		// enrolled from the web page (or by `clawdh panel join`) after the service
+		// joined from the web page (or by `clawdh join`) after the service
 		// was already running is picked up without a restart.
 		c, err := panelClient()
 		if err != nil || !c.Config.Configured() {

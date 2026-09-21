@@ -82,27 +82,30 @@ amd64/arm64 (`CGO_ENABLED=0`).
   sent to the browser — a test asserts the response body doesn't contain
   one.
 
-- **`internal/panel`** — the account-lending server, and the client half that
-  answers to it. Flat by design: one admin, no teams, no roles. It keeps its
-  state in one JSON file rather than a database — tens of rows, one writer, and
-  clawdh already stores accounts this way — and holds the invariant that matters
-  (an account is with at most one person) by keeping the mutex across
-  read-decide-write, which for a single writer is what a unique index would buy.
-  Logins it lends are sealed with a key beside the file, so a copy of the file
-  alone is not a working set of credentials. A machine asks every thirty
+- **`panel`** — the account-lending server, and the client half that answers
+  to it. Flat by design: one admin, no teams, no roles. Two credentials exist
+  and each does one job. The admin's password opens the panel's own site — a
+  cookie sealed with the panel key rather than anything held in memory, so any
+  instance can check it. A machine's enrolment (minted when an invite link is
+  opened there) is everything a machine does: hear what it may use, hand a
+  login up, take that login back. The person who handed a login up is recorded
+  on it, and only they or the admin can withdraw it. Logins are sealed with a
+  key beside the state, so a copy of the state alone is not a working set of
+  credentials, and they are only ever used by the gateway — a member's machine
+  holds a scoped gateway key, never the login. A machine asks every thirty
   seconds what it is entitled to and is answered with a complete list, so
   anything it holds and is not told about is given back: nothing has to reach a
   machine to take an account away from it.
 
   The panel keeps its whole state as one blob behind a small `Backend`
   interface: a JSON file for `clawdh panel serve` on one machine, and Postgres
-  (`panelpg`, a separate package so its driver never links into the
-  client binary) for a panel hosted as several instances at once. The one-holder
-  rule that a single writer gets from a mutex, several writers get from a
-  compare-and-swap on a version column — the losing writer re-runs its decision
-  against the winner's result, so two people are never handed the same account.
-  Admin sessions are a cookie sealed with the panel key rather than anything held
-  in memory, for the same reason: any instance can check it.
+  (`panelpg`, a separate package so its driver never links into the client
+  binary) for a panel hosted as several instances at once, where a
+  compare-and-swap on a version column does what a single writer's mutex does.
+  The metering the gateway writes (per person and per account, whichever
+  editor or terminal made the request) and each account's real window
+  readings live in ordinary tables beside it; the board shows only those two
+  things, and a quota is only a ceiling on a window.
 
 - **`internal/httpserver`** — the REST + SSE API and the embedded web UI
   (`internal/httpserver/webui`, plain HTML/CSS/JS via `embed.FS`, no build

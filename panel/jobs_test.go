@@ -62,7 +62,7 @@ func (m *memJobs) RecentJobs(_ context.Context, deviceID string, _ int) ([]Job, 
 // machine to diagnose itself, the machine only hears about it when it reports
 // remote help on, it posts the answer back, and the admin reads it.
 func TestRemoteJobRoundTripIsConsentGated(t *testing.T) {
-	h := newHarnessWith(t, &memJobs{})
+	h := newHarnessWith(t, nil, &memJobs{})
 
 	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
 		t.Fatal("setup failed")

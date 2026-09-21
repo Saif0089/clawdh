@@ -49,16 +49,20 @@ CREATE TABLE IF NOT EXISTS usage_counters (
 );
 
 CREATE TABLE IF NOT EXISTS limits (
-    id                  text PRIMARY KEY,
-    subject_type        text NOT NULL,           -- 'person' | 'account' | 'org'
-    subject_id          text NOT NULL DEFAULT '', -- '' = org-wide
-    window_kind         text NOT NULL,           -- 'day' | 'week' | 'month'
-    max_weighted_tokens double precision,
-    max_cost_usd        double precision,
-    max_percent         double precision,        -- ceiling on the account's weekly window (0..1)
-    created_at          timestamptz NOT NULL DEFAULT now()
+    id           text PRIMARY KEY,
+    subject_type text NOT NULL,             -- 'person' | 'account'
+    subject_id   text NOT NULL,
+    max_percent  double precision NOT NULL, -- ceiling on the account's weekly window (0..1)
+    created_at   timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE limits ADD COLUMN IF NOT EXISTS max_percent double precision;`
+-- Earlier builds also capped metered tokens and a notional dollar figure per
+-- calendar window. Those kinds are gone: their rows, then their columns.
+ALTER TABLE limits ADD COLUMN IF NOT EXISTS max_percent double precision;
+DELETE FROM limits WHERE max_percent IS NULL OR max_percent <= 0;
+ALTER TABLE limits DROP COLUMN IF EXISTS max_weighted_tokens;
+ALTER TABLE limits DROP COLUMN IF EXISTS max_cost_usd;
+ALTER TABLE limits DROP COLUMN IF EXISTS window_kind;
+ALTER TABLE limits ALTER COLUMN max_percent SET NOT NULL;`
 
 func ensureUsageSchema(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, usageDDL)
@@ -137,9 +141,12 @@ func (b *Backend) RecordUsage(ctx context.Context, ev UsageEvent) error {
 
 // ---------------------------------------------------------------- board reads
 //
-// The board types (SubjectUsage/ModelUsage/HourBucket) live in the panel package
-// so the panel can serve them without importing this Postgres layer; panelpg
-// returns them. That keeps the client binary, which imports panel, free of pgx.
+// The board types (SubjectUsage/ModelUsage) live in the panel package so the
+// panel can serve them without importing this Postgres layer; panelpg returns
+// them. That keeps the client binary, which imports panel, free of pgx. The
+// cost_usd column is recorded (what the tokens would have cost at API prices)
+// but never read for a board: a subscription has no per-token price, and a
+// dollar figure next to a window's real % was one number too many.
 
 // UsageBySubject returns every subject of a kind ('person' | 'account') with its
 // per-model usage since a time, sorted by weighted tokens descending. Names are
@@ -148,7 +155,7 @@ func (b *Backend) UsageBySubject(ctx context.Context, subjectType string, since 
 	rows, err := b.db.QueryContext(ctx, `
 		SELECT subject_id, model,
 		       SUM(weighted_tokens), SUM(input_tokens), SUM(output_tokens),
-		       SUM(cache_creation_tokens), SUM(cache_read_tokens), SUM(cost_usd)
+		       SUM(cache_creation_tokens), SUM(cache_read_tokens)
 		  FROM usage_counters
 		 WHERE subject_type = $1 AND window_start >= $2
 		 GROUP BY subject_id, model
@@ -163,7 +170,7 @@ func (b *Backend) UsageBySubject(ctx context.Context, subjectType string, since 
 		var sid string
 		var mu panel.ModelUsage
 		if err := rows.Scan(&sid, &mu.Model, &mu.Weighted, &mu.Input, &mu.Output,
-			&mu.CacheCreation, &mu.CacheRead, &mu.CostUSD); err != nil {
+			&mu.CacheCreation, &mu.CacheRead); err != nil {
 			return nil, err
 		}
 		s := bySubject[sid]
@@ -173,7 +180,6 @@ func (b *Backend) UsageBySubject(ctx context.Context, subjectType string, since 
 		}
 		s.ByModel = append(s.ByModel, mu)
 		s.Weighted += mu.Weighted
-		s.CostUSD += mu.CostUSD
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -187,14 +193,14 @@ func (b *Backend) UsageBySubject(ctx context.Context, subjectType string, since 
 	return out, nil
 }
 
-// AccountUsageByPerson breaks one account's usage down by person and model — the
-// "focus on this account, who ran it" view. It reads the raw events (the hourly
-// counters are per-subject, so they don't hold the person×account cross).
+// AccountUsageByPerson breaks one account's usage down by person and model —
+// who ran it. It reads the raw events (the hourly counters are per-subject, so
+// they don't hold the person×account cross).
 func (b *Backend) AccountUsageByPerson(ctx context.Context, accountID string, since time.Time) ([]panel.SubjectUsage, error) {
 	rows, err := b.db.QueryContext(ctx, `
 		SELECT person_id, model,
 		       SUM(weighted_tokens), SUM(input_tokens), SUM(output_tokens),
-		       SUM(cache_creation_tokens), SUM(cache_read_tokens), SUM(cost_usd)
+		       SUM(cache_creation_tokens), SUM(cache_read_tokens)
 		  FROM usage_events
 		 WHERE account_id = $1 AND at >= $2
 		 GROUP BY person_id, model`, accountID, since.UTC())
@@ -208,7 +214,7 @@ func (b *Backend) AccountUsageByPerson(ctx context.Context, accountID string, si
 		var sid string
 		var mu panel.ModelUsage
 		if err := rows.Scan(&sid, &mu.Model, &mu.Weighted, &mu.Input, &mu.Output,
-			&mu.CacheCreation, &mu.CacheRead, &mu.CostUSD); err != nil {
+			&mu.CacheCreation, &mu.CacheRead); err != nil {
 			return nil, err
 		}
 		s := bySubject[sid]
@@ -218,7 +224,6 @@ func (b *Backend) AccountUsageByPerson(ctx context.Context, accountID string, si
 		}
 		s.ByModel = append(s.ByModel, mu)
 		s.Weighted += mu.Weighted
-		s.CostUSD += mu.CostUSD
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -230,35 +235,6 @@ func (b *Backend) AccountUsageByPerson(ctx context.Context, accountID string, si
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Weighted > out[j].Weighted })
 	return out, nil
-}
-
-// HourlyTotals returns per-hour totals for one subject since a time, or across
-// all subjects of a kind when subjectID is "".
-func (b *Backend) HourlyTotals(ctx context.Context, subjectType, subjectID string, since time.Time) ([]panel.HourBucket, error) {
-	q := `
-		SELECT window_start, SUM(weighted_tokens), SUM(cost_usd)
-		  FROM usage_counters
-		 WHERE subject_type = $1 AND window_start >= $2`
-	args := []any{subjectType, since.UTC()}
-	if subjectID != "" {
-		q += ` AND subject_id = $3`
-		args = append(args, subjectID)
-	}
-	q += ` GROUP BY window_start ORDER BY window_start`
-	rows, err := b.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []panel.HourBucket
-	for rows.Next() {
-		var h panel.HourBucket
-		if err := rows.Scan(&h.Hour, &h.Weighted, &h.CostUSD); err != nil {
-			return nil, err
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
 }
 
 // LatestEventAt is when the most recent usage event landed — the "as of" a board
