@@ -227,7 +227,7 @@ export const adminSteps: TourStep[] = [
     tab: "usage",
     target: "tab:Usage",
     title: "3 · Watch usage",
-    body: "Each account’s real 5-hour and weekly windows, and who filled them — then everyone ranked, split by model.",
+    body: "One card per account: its real 5-hour and weekly windows, and who ran it on which models. Green, amber and red only ever mean how full a window is.",
   },
   {
     tab: "quotas",

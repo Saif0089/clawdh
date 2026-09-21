@@ -3,19 +3,18 @@ package panel
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 )
 
-// The usage board. It shows two things and nothing else, because they are the
-// only two numbers the panel actually knows:
+// The usage board. Its unit is the account: for each shared login, the rolling
+// 5-hour and weekly windows — Anthropic's own figures for how full they are,
+// read by the gateway off the login — and, for a rolling day, week, or month,
+// who ran it and on which models, from the gateway's own metering. A short
+// across-accounts list of people follows, for the one question a per-account
+// view cannot answer.
 //
-//   - each account's rolling 5-hour and weekly windows — Anthropic's own
-//     figures for how full they are, read by the gateway off the login — with
-//     who filled the weekly one, from the gateway's own metering;
-//   - each person's metered usage over a rolling day, week, or month, ranked,
-//     as a share of the team's, split by model.
-//
-// Both are per account and per person as the gateway attributes them, so a
+// Everything is attributed per account and per person by the gateway, so a
 // request from an editor and one from a terminal land on the same rows. Every
 // board carries an `asOf` (the time of the most recent metered event) so a
 // number is never mistaken for live while it is stale.
@@ -38,11 +37,13 @@ type SubjectUsage struct {
 	ByModel   []ModelUsage `json:"byModel"`
 }
 
-// PersonShare is one person's part of an account's usage: who filled a window.
+// PersonShare is one person's part of an account's usage in a period: how much
+// of it they ran, and on which models.
 type PersonShare struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Weighted float64 `json:"weighted"`
+	ID       string       `json:"id"`
+	Name     string       `json:"name"`
+	Weighted float64      `json:"weighted"`
+	ByModel  []ModelUsage `json:"byModel"`
 }
 
 // AccountWindow is a subscription's real utilisation of its rolling usage
@@ -60,10 +61,12 @@ type AccountWindow struct {
 	// HasReading is false for an account the gateway has not read yet: the
 	// board lists it with "no reading yet" instead of a 0% that looks like idle.
 	HasReading bool `json:"hasReading"`
-	// RanBy is who filled the weekly window — each person's metered share of
-	// this account's usage since the window opened — so a full bar has names on
-	// it. Empty when nobody has run it through the gateway in that time.
-	RanBy []PersonShare `json:"ranBy"`
+	// People is who ran this account in the board's period, largest first, each
+	// with their model split; Weighted and ByModel are the account's totals over
+	// the same period. All empty when nobody ran it through the gateway then.
+	People   []PersonShare `json:"people"`
+	Weighted float64       `json:"weighted"`
+	ByModel  []ModelUsage  `json:"byModel"`
 }
 
 // UsageReader is the metering read surface a board is drawn from. The Postgres
@@ -137,12 +140,15 @@ func (s *Server) handlePeopleUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleWindows serves every account that has a login, with its real 5h /
-// weekly utilisation — the same windows /usage shows — and who filled the
-// weekly one. An account the gateway has not read yet is listed all the same,
-// flagged, so the board never mistakes "not read" for "unused".
-func (s *Server) handleWindows(w http.ResponseWriter, r *http.Request) {
+// handleAccountsUsage serves the board's one view: every account that has a
+// login, with its real 5h / weekly utilisation — the same windows /usage
+// shows — and, for the asked period, who ran it and on which models. An
+// account the gateway has not read yet is listed all the same, flagged, so the
+// board never mistakes "not read" for "unused".
+func (s *Server) handleAccountsUsage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	windowName := normalizeWindow(r.URL.Query().Get("window"))
+	since := windowSince(s.now(), windowName)
 	rows, err := s.usage.AccountWindows(ctx)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "The window utilisation could not be read: "+err.Error())
@@ -153,7 +159,6 @@ func (s *Server) handleWindows(w http.ResponseWriter, r *http.Request) {
 		byAccount[row.AccountID] = row
 	}
 	d, _ := s.store.Load()
-	now := s.now()
 	out := make([]AccountWindow, 0, len(d.Accounts))
 	for _, a := range d.Accounts {
 		if !a.HasLogin() {
@@ -161,23 +166,20 @@ func (s *Server) handleWindows(w http.ResponseWriter, r *http.Request) {
 		}
 		row, ok := byAccount[a.ID]
 		row.AccountID, row.Name, row.HasReading = a.ID, a.Name, ok
-		// The weekly window covers the seven days before its reset, so that is
-		// the period whose usage filled it; with no reading yet, the last seven
-		// days is the closest honest answer.
-		since := now.Add(-7 * 24 * time.Hour)
-		if ok && !row.SevenDReset.IsZero() {
-			since = row.SevenDReset.Add(-7 * 24 * time.Hour)
-		}
-		row.RanBy = s.ranBy(ctx, d, a.ID, since)
+		row.People = s.ranBy(ctx, d, a.ID, since)
+		row.Weighted, row.ByModel = accountTotals(row.People)
 		out = append(out, row)
 	}
 	asOf, _ := s.usage.LatestEventAt(ctx)
-	writeJSON(w, http.StatusOK, map[string]any{"windows": out, "asOf": asOf.UTC()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"window": windowName, "since": since.UTC(), "asOf": asOf.UTC(), "accounts": out,
+	})
 }
 
-// ranBy is who ran an account since a time, largest share first, by name.
-// People since removed from the panel are left out: their share is history
-// with no card to hang it on. Best-effort: a read that fails names nobody.
+// ranBy is who ran an account since a time, largest share first, by name, with
+// each person's model split. People since removed from the panel are left
+// out: their share is history with no card to hang it on. Best-effort: a read
+// that fails names nobody.
 func (s *Server) ranBy(ctx context.Context, d Data, accountID string, since time.Time) []PersonShare {
 	rows, err := s.usage.AccountUsageByPerson(ctx, accountID, since)
 	if err != nil {
@@ -189,9 +191,37 @@ func (s *Server) ranBy(ctx context.Context, d Data, accountID string, since time
 		if !ok || row.Weighted <= 0 {
 			continue
 		}
-		out = append(out, PersonShare{ID: row.SubjectID, Name: name, Weighted: row.Weighted})
+		out = append(out, PersonShare{ID: row.SubjectID, Name: name, Weighted: row.Weighted, ByModel: row.ByModel})
 	}
 	return out
+}
+
+// accountTotals sums the people who ran an account into the account's own
+// total and model split, largest model first.
+func accountTotals(people []PersonShare) (float64, []ModelUsage) {
+	var total float64
+	byModel := map[string]*ModelUsage{}
+	for _, p := range people {
+		total += p.Weighted
+		for _, m := range p.ByModel {
+			t := byModel[m.Model]
+			if t == nil {
+				t = &ModelUsage{Model: m.Model}
+				byModel[m.Model] = t
+			}
+			t.Weighted += m.Weighted
+			t.Input += m.Input
+			t.Output += m.Output
+			t.CacheCreation += m.CacheCreation
+			t.CacheRead += m.CacheRead
+		}
+	}
+	out := make([]ModelUsage, 0, len(byModel))
+	for _, m := range byModel {
+		out = append(out, *m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Weighted > out[j].Weighted })
+	return total, out
 }
 
 func normalizeWindow(name string) string {

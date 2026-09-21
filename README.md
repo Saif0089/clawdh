@@ -130,10 +130,11 @@ is the only credential it needs:
 - **Give access** shares an account with a person; the ⨯ next to their name takes
   it back. Access stops within seconds — the gateway simply stops honouring their
   key.
-- **Usage** shows the two things the panel actually knows: each account's real
-  5-hour and weekly windows (Claude's own numbers, read by the gateway) with who
-  filled the week, and everyone ranked over the last day, week or month, split
-  by model. An editor session and a terminal session land on the same rows.
+- **Usage** is per account: one card for each shared login, holding its real
+  5-hour and weekly windows (Claude's own numbers, read by the gateway) and,
+  for the last day, week or month, who ran it and on which models. Colour means
+  one thing there — how full a window is; people and models are labelled, never
+  colour-coded. An editor session and a terminal session land on the same rows.
 - **Quotas** are ceilings: a percent of an account's weekly window past which a
   person, or everyone on the account, is turned away — a reserve nobody can eat
   into. That is the only kind.

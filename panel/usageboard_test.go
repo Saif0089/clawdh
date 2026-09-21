@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// The board's Accounts section lists every account with a login — one the
-// gateway has not read yet included, flagged, so "not read" never looks like
-// "unused" — and names who filled each weekly window, over the seven days that
-// window actually covers rather than the last seven on the clock.
-func TestTheBoardListsEveryAccountAndWhoFilledItsWindow(t *testing.T) {
+// The board's unit is the account. Every account with a login is listed — one
+// the gateway has not read yet included, flagged, so "not read" never looks
+// like "unused" — with who ran it over the asked rolling period, each person's
+// model split, and the account's own total and split summed from them.
+func TestTheBoardShowsEachAccountWithWhoRanItAndOnWhat(t *testing.T) {
 	usage := &fakeUsage{}
 	h := newHarnessUsage(t, usage)
 	h.setUp()
@@ -18,43 +18,57 @@ func TestTheBoardListsEveryAccountAndWhoFilledItsWindow(t *testing.T) {
 	teamID := h.contribute(aliceTok, "Team Max", "team@example.com")
 	spareID := h.contribute(bobTok, "Spare", "spare@example.com")
 
-	reset := h.clock.Add(50 * time.Hour)
-	usage.windows = []AccountWindow{{AccountID: teamID, FiveH: 0.12, SevenD: 0.61, SevenDReset: reset, UpdatedAt: h.clock}}
+	usage.windows = []AccountWindow{{AccountID: teamID, FiveH: 0.12, SevenD: 0.61, SevenDReset: h.clock.Add(50 * time.Hour), UpdatedAt: h.clock}}
 	usage.ranBy = map[string][]SubjectUsage{teamID: {
-		{SubjectID: bobID, Weighted: 300},
-		{SubjectID: aliceID, Weighted: 100},
+		{SubjectID: bobID, Weighted: 300, ByModel: []ModelUsage{{Model: "claude-opus-5", Weighted: 200}, {Model: "claude-sonnet-5", Weighted: 100}}},
+		{SubjectID: aliceID, Weighted: 100, ByModel: []ModelUsage{{Model: "claude-sonnet-5", Weighted: 100}}},
 		{SubjectID: "someone-removed", Weighted: 999},
 	}}
 
-	code, body := h.do("GET", "/api/usage/windows", nil, "")
-	if code != 200 {
-		t.Fatalf("windows = %d %v", code, body)
+	code, body := h.do("GET", "/api/usage/accounts?window=month", nil, "")
+	if code != 200 || body["window"] != "month" {
+		t.Fatalf("accounts = %d %v", code, body)
 	}
-	windows, _ := body["windows"].([]any)
-	if len(windows) != 2 {
-		t.Fatalf("got %d accounts, want both (one without a reading): %v", len(windows), body)
+	accounts, _ := body["accounts"].([]any)
+	if len(accounts) != 2 {
+		t.Fatalf("got %d accounts, want both (one without a reading): %v", len(accounts), body)
 	}
-	team := windows[0].(map[string]any)
+	team := accounts[0].(map[string]any)
 	if team["name"] != "Team Max" || team["hasReading"] != true || team["sevenD"] != 0.61 {
 		t.Errorf("Team Max row = %v", team)
 	}
-	ranBy, _ := team["ranBy"].([]any)
-	if len(ranBy) != 2 || ranBy[0].(map[string]any)["name"] != "Bob" || ranBy[1].(map[string]any)["name"] != "Alice" {
-		t.Errorf("ranBy = %v, want Bob then Alice and nobody removed", ranBy)
+	people, _ := team["people"].([]any)
+	if len(people) != 2 || people[0].(map[string]any)["name"] != "Bob" || people[1].(map[string]any)["name"] != "Alice" {
+		t.Errorf("people = %v, want Bob then Alice and nobody removed", people)
 	}
-	if got, want := usage.since[teamID], reset.Add(-7*24*time.Hour); !got.Equal(want) {
-		t.Errorf("Team Max's window was read since %v, want the seven days before its reset (%v)", got, want)
+	if split, _ := people[0].(map[string]any)["byModel"].([]any); len(split) != 2 {
+		t.Errorf("Bob's split = %v, want his two models", people[0])
+	}
+	if team["weighted"] != 400.0 {
+		t.Errorf("Team Max total = %v, want 400 (the people listed, no one removed)", team["weighted"])
+	}
+	models, _ := team["byModel"].([]any)
+	if len(models) != 2 || models[0].(map[string]any)["model"] != "claude-opus-5" && models[0].(map[string]any)["weighted"] != 200.0 {
+		t.Errorf("Team Max models = %v", models)
+	}
+	// Sonnet is 100 + 100 across the two of them; Opus 200 — a tie broken either way, but both present and summed.
+	for _, m := range models {
+		if mm := m.(map[string]any); mm["weighted"] != 200.0 {
+			t.Errorf("model %v = %v, want 200", mm["model"], mm["weighted"])
+		}
+	}
+	for _, id := range []string{teamID, spareID} {
+		if got, want := usage.since[id], h.clock.Add(-30*24*time.Hour); !got.Equal(want) {
+			t.Errorf("account %s read since %v, want the last 30 days (%v)", id, got, want)
+		}
 	}
 
-	spare := windows[1].(map[string]any)
-	if spare["name"] != "Spare" || spare["hasReading"] != false {
-		t.Errorf("Spare row = %v, want it listed with no reading", spare)
+	spare := accounts[1].(map[string]any)
+	if spare["name"] != "Spare" || spare["hasReading"] != false || spare["weighted"] != 0.0 {
+		t.Errorf("Spare row = %v, want it listed with no reading and no usage", spare)
 	}
-	if got, ok := spare["ranBy"].([]any); !ok || len(got) != 0 {
-		t.Errorf("Spare ranBy = %v, want an empty list, not null", spare["ranBy"])
-	}
-	if got, want := usage.since[spareID], h.clock.Add(-7*24*time.Hour); !got.Equal(want) {
-		t.Errorf("with no reading, Spare was read since %v, want the last seven days (%v)", got, want)
+	if got, ok := spare["people"].([]any); !ok || len(got) != 0 {
+		t.Errorf("Spare people = %v, want an empty list, not null", spare["people"])
 	}
 }
 

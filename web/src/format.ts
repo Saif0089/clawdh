@@ -6,28 +6,15 @@ export function fmtNum(n: number): string {
   return String(n);
 }
 
-export const MODELS = [
-  { test: /fable|mythos/, color: "#C77DFF", label: "Fable / Mythos" },
-  { test: /opus/, color: "#6E8BFF", label: "Opus" },
-  { test: /sonnet/, color: "#46C08A", label: "Sonnet" },
-  { test: /haiku/, color: "#E0A83E", label: "Haiku" },
-  { test: /unknown/, color: "#626D7C", label: "Unknown" },
+// modelLabel folds a dated model id into its family name. Models are named,
+// never colour-coded: on the boards colour is reserved for a window's state.
+const MODEL_FAMILIES: [RegExp, string][] = [
+  [/fable|mythos/, "Fable / Mythos"], [/opus/, "Opus"], [/sonnet/, "Sonnet"], [/haiku/, "Haiku"], [/unknown/, "Unknown"],
 ];
-export function modelColor(m: string) {
+export function modelLabel(m: string): string {
   const lm = (m || "").toLowerCase();
-  for (const c of MODELS) if (c.test.test(lm)) return c;
-  return { color: "#8892A0", label: m || "?" };
-}
-
-// A distinct, legible-on-dark colour per person. Assigned by position (stable
-// order) so a small team never collides; the same person keeps their colour
-// across every bar, so a slice is recognisable at a glance.
-export const PERSON_COLORS = [
-  "#6E8BFF", "#46C08A", "#E0A83E", "#C77DFF", "#4FD1E0",
-  "#F0787A", "#9AE85B", "#F59E0B", "#EC7FB6", "#7C90A8",
-];
-export function personColor(index: number): string {
-  return PERSON_COLORS[((index % PERSON_COLORS.length) + PERSON_COLORS.length) % PERSON_COLORS.length];
+  for (const [test, label] of MODEL_FAMILIES) if (test.test(lm)) return label;
+  return m || "?";
 }
 
 // pct renders a 0..1 fraction as a friendly whole/one-decimal percent.

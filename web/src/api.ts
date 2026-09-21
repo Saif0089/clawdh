@@ -19,12 +19,14 @@ export interface ModelUsage {
 }
 export interface Subject { id: string; name: string; weighted: number; byModel: ModelUsage[]; }
 export interface Board { window: string; asOf: string; subjects: Subject[] }
-// An account's real rolling windows (Claude's own %), and who filled the weekly
-// one. hasReading is false until the gateway has read the login once.
-export interface AccountWindow {
+// One account on the usage board: its real rolling windows (Claude's own %;
+// hasReading is false until the gateway has read the login once), and for the
+// asked period who ran it, each with their model split, plus the account's totals.
+export interface AccountUsage {
   accountId: string; name: string; fiveH: number; sevenD: number;
-  fiveHReset?: string; sevenDReset?: string; updatedAt: string;
-  hasReading: boolean; ranBy: { id: string; name: string; weighted: number }[];
+  fiveHReset?: string; sevenDReset?: string; updatedAt: string; hasReading: boolean;
+  people: { id: string; name: string; weighted: number; byModel: ModelUsage[] }[];
+  weighted: number; byModel: ModelUsage[];
 }
 // A ceiling: a 0..1 share of the weekly window past which the subject is turned away.
 export interface Limit { id: string; subjectType: string; subjectId: string; maxPercent: number }
