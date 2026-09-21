@@ -3,6 +3,7 @@ package panel
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Limit is one configured quota (a mirror of the row the Postgres layer stores).
@@ -16,10 +17,12 @@ type Limit struct {
 	WindowKind  string   `json:"windowKind"`  // 'day' | 'week' | 'month'
 	MaxWeighted *float64 `json:"maxWeighted,omitempty"`
 	MaxCostUSD  *float64 `json:"maxCostUsd,omitempty"`
-	// MaxPercent caps a person's share of the account's weekly window — the
-	// framing /usage uses ("25% of weekly"). 0..1. Only meaningful for a weekly
-	// window; enforced from the real utilisation the gateway captures, so it does
-	// nothing until that data is flowing (fail-open).
+	// MaxPercent is a ceiling on an account's weekly window — Anthropic's own
+	// number for how full the window is, read off the login — past which the
+	// subject is turned away. 0..1. For an account it applies to everyone using
+	// it; for a person, to whichever account they are using. Always a weekly
+	// window; enforced from the utilisation the gateway captures, so it does
+	// nothing until a reading exists (fail-open).
 	MaxPercent *float64 `json:"maxPercent,omitempty"`
 }
 
@@ -30,6 +33,11 @@ func (s *Server) handleListLimits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d, _ := s.store.Load()
+	// The accounts' weekly windows, for the % ceilings: read once for the list.
+	var windows []AccountWindow
+	if hasPercent(limits) {
+		windows, _ = s.usage.AccountWindows(r.Context())
+	}
 	out := make([]map[string]any, 0, len(limits))
 	for _, l := range limits {
 		name := "the whole team"
@@ -43,7 +51,26 @@ func (s *Server) handleListLimits(w http.ResponseWriter, r *http.Request) {
 		// approaching their cap. Best-effort: a usage read that errors just leaves
 		// the row without a live figure rather than failing the whole list.
 		frac, reset, _ := s.usage.LimitUsage(r.Context(), l)
-		out = append(out, map[string]any{"limit": l, "name": name, "fraction": frac, "resetAt": reset})
+		row := map[string]any{"limit": l, "name": name, "fraction": frac, "resetAt": reset}
+		// A % ceiling is measured against an account's weekly window. For an
+		// account that is its own; for a person it is the fullest window among
+		// the accounts they can use — the one that would turn them away first.
+		// The row says which, so the board can name it, and its reset is the
+		// window's own rolling reset — what actually frees it — not the
+		// calendar week the metered caps run on.
+		if l.MaxPercent != nil && *l.MaxPercent > 0 {
+			if w, ok := ceilingWindow(d, windows, l); ok {
+				row["window"] = w.SevenD
+				row["windowAccount"] = d.accountName(w.AccountID)
+				if l.SubjectType == "person" {
+					row["fraction"] = w.SevenD / *l.MaxPercent
+				}
+				if !w.SevenDReset.IsZero() {
+					row["resetAt"] = w.SevenDReset
+				}
+			}
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"limits": out})
 }
@@ -67,16 +94,16 @@ func (s *Server) handleSetLimit(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Pick which person or account this quota applies to.")
 		return
 	}
-	// A "% of weekly" cap is a share of the weekly window — a person's share of it,
-	// or an account's own use of it — so it forces a weekly window and can't apply
-	// to the whole team. Accept 0..1 or a 0..100 percentage.
+	// A window ceiling is a percentage of an account's weekly window, so it
+	// forces a weekly window and can't apply to the whole team. Accept 0..1 or
+	// a 0..100 percentage.
 	if l.MaxPercent != nil {
 		p := *l.MaxPercent
 		if p > 1 {
 			p /= 100
 		}
 		if p <= 0 || p > 1 {
-			fail(w, http.StatusBadRequest, "A weekly-share quota is a percent between 0 and 100.")
+			fail(w, http.StatusBadRequest, "A window ceiling is a percent between 0 and 100.")
 			return
 		}
 		if l.SubjectType == "org" {
@@ -109,4 +136,45 @@ func (s *Server) handleDeleteLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func hasPercent(limits []Limit) bool {
+	for _, l := range limits {
+		if l.MaxPercent != nil && *l.MaxPercent > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ceilingWindow is the weekly window a % ceiling is checked against: the
+// account's own for an account limit; for a person, the fullest among the
+// accounts currently shared with them (an expired loan is not one they can
+// use). False when no reading exists at all — a ceiling with nothing to
+// measure against, which fails open.
+func ceilingWindow(d Data, windows []AccountWindow, l Limit) (AccountWindow, bool) {
+	byAccount := make(map[string]AccountWindow, len(windows))
+	for _, w := range windows {
+		byAccount[w.AccountID] = w
+	}
+	if l.SubjectType == "account" {
+		w, ok := byAccount[l.SubjectID]
+		return w, ok
+	}
+	var best AccountWindow
+	found := false
+	now := time.Now()
+	for _, sh := range d.Shares {
+		if sh.PersonID != l.SubjectID || !sh.Live(now) {
+			continue
+		}
+		w, ok := byAccount[sh.AccountID]
+		if !ok {
+			continue
+		}
+		if !found || w.SevenD > best.SevenD {
+			best, found = w, true
+		}
+	}
+	return best, found
 }

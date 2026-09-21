@@ -125,7 +125,7 @@ type GatewayShare struct {
 	Slug      string    `json:"slug"`
 	Gateway   string    `json:"gateway"`
 	Key       string    `json:"key"`
-	ExpiresAt time.Time `json:"expiresAt,omitempty"` // when this access ends on its own; zero: until revoked
+	ExpiresAt time.Time `json:"expiresAt,omitzero"` // when this access ends on its own; zero: until revoked
 }
 
 // LoadShares reads the cached gateway shares. A missing file is no shares.
@@ -259,8 +259,10 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 		change.Jobs = out.Jobs
 	}
 	// Notices are about the person, not remote help, so they ride back whether or
-	// not this machine offers itself for jobs.
+	// not this machine offers itself for jobs — and so does the gateway's usage
+	// reading for each shared account (the bars on this machine's page).
 	change.Notices = out.Notices
+	change.Windows = out.Windows
 	if !change.Empty() && c.AfterChange != nil {
 		c.AfterChange()
 	}

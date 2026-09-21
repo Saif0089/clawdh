@@ -49,6 +49,8 @@ func main() {
 		}
 		up, rec, lim = u, u, u
 		fmt.Println("clawdh-server: serving from the panel database")
+		// Keep every shared login's usage reading fresh, idle or not.
+		go runUsagePoller(context.Background(), u)
 	} else {
 		token := config.Env("GW_TOKEN")
 		if token == "" || *memberKey == "" {

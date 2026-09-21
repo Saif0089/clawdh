@@ -3,6 +3,9 @@ package panel
 import (
 	"context"
 	"encoding/base64"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -211,5 +214,24 @@ func TestAMachineWithNoPanelDoesNothing(t *testing.T) {
 	}
 	if list, _ := mgr.List(); len(list) != 1 {
 		t.Error("an unconfigured check-in changed the account list")
+	}
+}
+
+// The gateway's usage reading for each shared account rides back on the
+// check-in and reaches the caller — it is what draws the bars on a machine's
+// page for a login the gateway holds. (It was parsed and then dropped once.)
+func TestCheckInCarriesTheWindowsThrough(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"gateway":[],"jobs":null,"notices":null,"windows":[{"slug":"ehtisham","email":"ehtisham@devhouse.co","fiveH":0.12,"sevenD":0.4,"updatedAt":"2026-09-19T20:06:06Z"}]}`)
+	}))
+	defer ts.Close()
+	c := &Client{Config: ClientConfig{Server: ts.URL, Token: "t", DeviceID: "d"}, Accounts: newTestManager(t), SharesPath: filepath.Join(t.TempDir(), "shares.json")}
+	change, err := c.CheckIn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(change.Windows) != 1 || change.Windows[0].Email != "ehtisham@devhouse.co" || change.Windows[0].SevenD != 0.4 {
+		t.Fatalf("windows = %+v, want the one the panel sent", change.Windows)
 	}
 }

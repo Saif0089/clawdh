@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS limits (
     window_kind         text NOT NULL,           -- 'day' | 'week' | 'month'
     max_weighted_tokens double precision,
     max_cost_usd        double precision,
-    max_percent         double precision,        -- share of the weekly window (0..1)
+    max_percent         double precision,        -- ceiling on the account's weekly window (0..1)
     created_at          timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE limits ADD COLUMN IF NOT EXISTS max_percent double precision;`

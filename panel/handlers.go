@@ -42,7 +42,7 @@ type shareView struct {
 	ShareID    string    `json:"shareId"`
 	PersonID   string    `json:"personId"`
 	PersonName string    `json:"personName"`
-	ExpiresAt  time.Time `json:"expiresAt,omitempty"` // zero: until revoked
+	ExpiresAt  time.Time `json:"expiresAt,omitzero"` // zero: until revoked
 }
 
 type deviceView struct {
@@ -594,7 +594,7 @@ type clientShare struct {
 	Slug      string    `json:"slug"`
 	Gateway   string    `json:"gateway"`
 	Key       string    `json:"key"`
-	ExpiresAt time.Time `json:"expiresAt,omitempty"` // when this access ends on its own; zero: until revoked
+	ExpiresAt time.Time `json:"expiresAt,omitzero"` // when this access ends on its own; zero: until revoked
 }
 
 // handleCheckin is the whole of what a machine asks: what may I use?

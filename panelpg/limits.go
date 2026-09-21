@@ -91,9 +91,9 @@ func (b *Backend) MemberLimitStatus(ctx context.Context, personID, accountID str
 		return LimitStatus{}, err
 	}
 
-	// The weekly-window share / utilisation are only computed if a % limit needs them.
-	windowShare, shareDone := 0.0, false
+	// The account's weekly utilisation is only read if a % limit needs it.
 	accountUtil, utilDone := 0.0, false
+	var windowReset time.Time
 
 	var tightest LimitStatus
 	for _, l := range limits {
@@ -115,29 +115,23 @@ func (b *Backend) MemberLimitStatus(ctx context.Context, personID, accountID str
 		if l.maxC.Valid && l.maxC.Float64 > 0 {
 			frac = maxf(frac, usedC/l.maxC.Float64)
 		}
-		// A "% of weekly" cap: for a person, their share of the weekly window; for
-		// an account, its own utilisation of it. Both fail open (0) until the real
-		// utilisation data is flowing, so such a quota never blocks on missing data.
-		if l.maxP.Valid && l.maxP.Float64 > 0 {
-			switch l.subjectType {
-			case "person":
-				if !shareDone {
-					windowShare, err = b.personWeeklyWindowShare(ctx, personID, now)
-					if err != nil {
-						return LimitStatus{}, err
-					}
-					shareDone = true
+		// A "% of weekly" cap is a ceiling on the account's own weekly window —
+		// Anthropic's number, read straight from the login — never an estimate
+		// of who caused it. For an account it applies to everyone using it; for
+		// a person it applies to whichever account they are using right now
+		// ("Ibrahim can use it while its week is under 25% full"). Fails open
+		// (0) until a reading exists, so it never blocks on missing data.
+		if l.maxP.Valid && l.maxP.Float64 > 0 && (l.subjectType == "person" || l.subjectType == "account") {
+			if !utilDone {
+				accountUtil, windowReset, err = b.accountWeeklyWindow(ctx, accountID)
+				if err != nil {
+					return LimitStatus{}, err
 				}
-				frac = maxf(frac, windowShare/l.maxP.Float64)
-			case "account":
-				if !utilDone {
-					accountUtil, err = b.accountWeeklyUtil(ctx, accountID)
-					if err != nil {
-						return LimitStatus{}, err
-					}
-					utilDone = true
-				}
-				frac = maxf(frac, accountUtil/l.maxP.Float64)
+				utilDone = true
+			}
+			frac = maxf(frac, accountUtil/l.maxP.Float64)
+			if !windowReset.IsZero() && accountUtil/l.maxP.Float64 >= frac {
+				reset = windowReset
 			}
 		}
 		if frac > tightest.Fraction {
@@ -148,13 +142,15 @@ func (b *Backend) MemberLimitStatus(ctx context.Context, personID, accountID str
 			case "account":
 				who = "this account's"
 			}
-			tightest = LimitStatus{
-				Over:     frac >= 1.0,
-				Fraction: frac,
-				ResetAt:  reset,
-				Message: fmt.Sprintf("%s clawdh %s quota is reached; it resets %s UTC.",
-					who, l.windowKind, reset.Format("2006-01-02 15:04")),
+			msg := fmt.Sprintf("%s clawdh %s quota is reached; it resets %s UTC.",
+				who, l.windowKind, reset.Format("2006-01-02 15:04"))
+			// A ceiling is about the account's window, so say that — and when
+			// the window itself rolls over, which is what actually frees it.
+			if l.maxP.Valid && l.maxP.Float64 > 0 && accountUtil/l.maxP.Float64 >= frac {
+				msg = fmt.Sprintf("this account's weekly window is %.0f%% full, past the %.0f%% ceiling set for %s on clawdh; the window resets %s UTC.",
+					accountUtil*100, l.maxP.Float64*100, subjectWord(l.subjectType), reset.Format("2006-01-02 15:04"))
 			}
+			tightest = LimitStatus{Over: frac >= 1.0, Fraction: frac, ResetAt: reset, Message: msg}
 		}
 	}
 	return tightest, nil
@@ -177,16 +173,13 @@ func (b *Backend) LimitUsage(ctx context.Context, l panel.Limit) (float64, time.
 	if l.MaxCostUSD != nil && *l.MaxCostUSD > 0 {
 		frac = maxf(frac, usedC/(*l.MaxCostUSD))
 	}
-	if l.MaxPercent != nil && *l.MaxPercent > 0 {
-		switch l.SubjectType {
-		case "person":
-			if share, err := b.personWeeklyWindowShare(ctx, l.SubjectID, time.Now()); err == nil {
-				frac = maxf(frac, share/(*l.MaxPercent))
-			}
-		case "account":
-			if util, err := b.accountWeeklyUtil(ctx, l.SubjectID); err == nil {
-				frac = maxf(frac, util/(*l.MaxPercent))
-			}
+	// An account's % cap is measured against its own weekly window. A person's
+	// is a ceiling on whichever account they use, so without an account in hand
+	// it is settled by the caller, which knows which accounts the person can use
+	// (see panel.handleListLimits).
+	if l.MaxPercent != nil && *l.MaxPercent > 0 && l.SubjectType == "account" {
+		if util, err := b.accountWeeklyUtil(ctx, l.SubjectID); err == nil {
+			frac = maxf(frac, util/(*l.MaxPercent))
 		}
 	}
 	return frac, reset, nil
@@ -212,21 +205,30 @@ func (b *Backend) usedSince(ctx context.Context, subjectType, subjectID string, 
 	return
 }
 
-// accountWeeklyUtil is an account's own share of its weekly usage window (0..1),
-// straight from the rate-limit headers the gateway captured — the number an
-// account's "X% of weekly" quota is checked against. Zero (fail-open) until a
-// reading exists for the account.
+// accountWeeklyUtil is how full an account's weekly usage window is (0..1) —
+// Anthropic's own number, captured off the rate-limit headers or read by the
+// usage poller — the number a window ceiling is checked against. Zero
+// (fail-open) until a reading exists for the account.
 func (b *Backend) accountWeeklyUtil(ctx context.Context, accountID string) (float64, error) {
+	u, _, err := b.accountWeeklyWindow(ctx, accountID)
+	return u, err
+}
+
+// accountWeeklyWindow is accountWeeklyUtil with the window's own reset time —
+// when Anthropic's rolling week actually frees up, which is what a ceiling
+// message should promise, not the calendar week.
+func (b *Backend) accountWeeklyWindow(ctx context.Context, accountID string) (float64, time.Time, error) {
 	var u sql.NullFloat64
+	var reset sql.NullTime
 	err := b.db.QueryRowContext(ctx,
-		`SELECT sevend_util FROM account_windows WHERE account_id = $1`, accountID).Scan(&u)
+		`SELECT sevend_util, sevend_reset FROM account_windows WHERE account_id = $1`, accountID).Scan(&u, &reset)
 	if err == sql.ErrNoRows {
-		return 0, nil
+		return 0, time.Time{}, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
-	return u.Float64, nil
+	return u.Float64, reset.Time, nil
 }
 
 func maxf(a, b float64) float64 {
@@ -234,68 +236,6 @@ func maxf(a, b float64) float64 {
 		return a
 	}
 	return b
-}
-
-// personWeeklyWindowShare is how much of the weekly usage window this person is
-// responsible for (0..1), across every account they used this week: for each
-// account, their fraction of that account's usage times the account's real
-// weekly utilisation (from Anthropic's headers). It is the number a
-// "X% of weekly" quota is checked against. Zero until the utilisation data is
-// flowing — so such a quota fails open, never blocking on missing data.
-func (b *Backend) personWeeklyWindowShare(ctx context.Context, personID string, now time.Time) (float64, error) {
-	start, _ := windowBounds(now, "week")
-	rows, err := b.db.QueryContext(ctx, `
-		SELECT account_id,
-		       COALESCE(SUM(weighted_tokens) FILTER (WHERE person_id = $1), 0) AS mine,
-		       COALESCE(SUM(weighted_tokens), 0) AS total
-		  FROM usage_events
-		 WHERE at >= $2 AND account_id <> ''
-		 GROUP BY account_id`, personID, start)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	mine, total := map[string]float64{}, map[string]float64{}
-	for rows.Next() {
-		var id string
-		var m, t float64
-		if err := rows.Scan(&id, &m, &t); err != nil {
-			return 0, err
-		}
-		mine[id], total[id] = m, t
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	util := map[string]float64{}
-	urows, err := b.db.QueryContext(ctx, `SELECT account_id, COALESCE(sevend_util,0) FROM account_windows`)
-	if err != nil {
-		return 0, err
-	}
-	defer urows.Close()
-	for urows.Next() {
-		var id string
-		var u float64
-		if err := urows.Scan(&id, &u); err != nil {
-			return 0, err
-		}
-		util[id] = u
-	}
-	return windowShareOf(mine, total, util), nil
-}
-
-// windowShareOf is the pure core of personWeeklyWindowShare: for each account,
-// the person's fraction of its usage times its real utilisation, summed. An
-// account with no utilisation reading yet contributes nothing (fail-open).
-func windowShareOf(mine, total, util map[string]float64) float64 {
-	share := 0.0
-	for id, t := range total {
-		if t > 0 && util[id] > 0 {
-			share += (mine[id] / t) * util[id]
-		}
-	}
-	return share
 }
 
 // SetLimit sets the cap for a subject+window, replacing any prior one for that
@@ -365,4 +305,11 @@ func nullF(p *float64) any {
 		return nil
 	}
 	return *p
+}
+
+func subjectWord(subjectType string) string {
+	if subjectType == "account" {
+		return "everyone using it"
+	}
+	return "you"
 }

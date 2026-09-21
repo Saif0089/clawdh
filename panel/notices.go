@@ -19,7 +19,7 @@ func (s *Server) checkinNotices(ctx context.Context, personID string, d Data) []
 		return nil
 	}
 	var out []Notice
-	out = append(out, s.quotaNotice(ctx, personID)...)
+	out = append(out, s.quotaNotice(ctx, personID, d)...)
 	out = append(out, s.collisionNotices(ctx, personID, d)...)
 	return out
 }
@@ -27,13 +27,22 @@ func (s *Server) checkinNotices(ctx context.Context, personID string, d Data) []
 // quotaNotice is a single "approaching / over your limit" notice, for the
 // tightest of the person's own and the org's limits — the same limits the
 // gateway enforces. Nothing under 75% is worth a notice.
-func (s *Server) quotaNotice(ctx context.Context, personID string) []Notice {
+//
+// A person's window ceiling is measured the way the board measures it: against
+// the fullest weekly window among the accounts they can use (ceilingWindow),
+// since the metering layer's LimitUsage has no account in hand for a person.
+func (s *Server) quotaNotice(ctx context.Context, personID string, d Data) []Notice {
 	limits, err := s.usage.ListLimits(ctx)
 	if err != nil {
 		return nil
 	}
+	var windows []AccountWindow
+	if hasPercent(limits) {
+		windows, _ = s.usage.AccountWindows(ctx)
+	}
 	var best float64
 	var window string
+	var ceiling bool
 	var reset time.Time
 	for _, l := range limits {
 		if !(l.SubjectType == "org" || (l.SubjectType == "person" && l.SubjectID == personID)) {
@@ -43,8 +52,19 @@ func (s *Server) quotaNotice(ctx context.Context, personID string) []Notice {
 		if err != nil {
 			continue
 		}
+		isCeiling := false
+		if l.MaxPercent != nil && *l.MaxPercent > 0 {
+			if w, ok := ceilingWindow(d, windows, l); ok {
+				if c := w.SevenD / *l.MaxPercent; c > frac {
+					frac, isCeiling = c, true
+					if !w.SevenDReset.IsZero() {
+						r = w.SevenDReset
+					}
+				}
+			}
+		}
 		if frac > best {
-			best, window, reset = frac, l.WindowKind, r
+			best, window, ceiling, reset = frac, l.WindowKind, isCeiling, r
 		}
 	}
 	th := quotaThreshold(best)
@@ -55,7 +75,7 @@ func (s *Server) quotaNotice(ctx context.Context, personID string) []Notice {
 	// one over the same threshold does not.
 	return []Notice{{
 		ID:   fmt.Sprintf("quota:%s:%d", th, reset.Unix()),
-		Body: quotaBody(th, window),
+		Body: quotaBody(th, window, ceiling),
 	}}
 }
 
@@ -104,8 +124,15 @@ func quotaThreshold(frac float64) string {
 	return ""
 }
 
-// quotaBody is the short line for a quota notice.
-func quotaBody(threshold, windowKind string) string {
+// quotaBody is the short line for a quota notice. A ceiling is about the
+// account's window rather than the person's own spend, so it says so.
+func quotaBody(threshold, windowKind string, ceiling bool) string {
+	if ceiling {
+		if threshold == "cap" {
+			return "The account's weekly window is past your ceiling — you're turned away until it resets"
+		}
+		return "The account's weekly window is at " + threshold + "% of your ceiling"
+	}
 	w := windowWord(windowKind)
 	if threshold == "cap" {
 		return "You're over your " + w + "limit"

@@ -68,6 +68,11 @@ type apiResponse struct {
 // "usage is unavailable".
 var ErrLoginRejected = errors.New("this account's login was rejected, reconnect it")
 
+// IsUnauthorized reports whether an error from Fetch means Anthropic refused
+// the token itself (revoked or rotated away), as opposed to a transport or
+// rate-limit failure.
+func IsUnauthorized(err error) bool { return errors.Is(err, ErrLoginRejected) }
+
 // RateLimited means Anthropic accepted the token and refused the
 // request anyway: too many of them, too fast.
 //

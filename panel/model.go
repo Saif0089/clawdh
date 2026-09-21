@@ -90,7 +90,7 @@ type Share struct {
 	// depends on someone remembering to take it back. Zero means until revoked.
 	// GrantedBy is who gave it, so the line that records it running out can say
 	// whose call it was.
-	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	ExpiresAt time.Time `json:"expiresAt,omitzero"`
 	GrantedBy string    `json:"grantedBy,omitempty"`
 }
 
