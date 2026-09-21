@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,7 +149,7 @@ func launchSharedSupervised(gatewayURL, key, label string, rest []string) int {
 
 	handoff := filepath.Join(accountsDir, fmt.Sprintf(".handoff-%d.json", os.Getpid()))
 	ledger := switching.LedgerPath(home)
-	resolve := func(h switching.Handoff) (sessionTarget, bool) {
+	resolve := func(h switching.Handoff) (sessionTarget, error) {
 		return resolveHandoffTarget(h, store, accountsDir, claudeJSON, sharesPath)
 	}
 	return superviseSession(claudeBin, claudeDir, ledger, handoff, sharedTarget(gatewayURL, key, label), rest, resolve)
@@ -177,29 +178,34 @@ func sharedTarget(gatewayURL, key, label string) sessionTarget {
 // resolveHandoffTarget turns a staged switch into the next target: a gateway
 // share when the handoff is marked shared, otherwise a local account. Both
 // stores are read fresh so a share added or an account renamed mid-session is
-// seen.
-func resolveHandoffTarget(h switching.Handoff, store *accounts.Store, accountsDir, claudeJSON, sharesPath string) (sessionTarget, bool) {
+// seen. A local account also has to be able to sign in — a login that went to
+// the gateway is dead here, and relaunching onto it is not a switch. The error
+// is the sentence to show the person, since the hook that staged the switch
+// reports it verbatim.
+func resolveHandoffTarget(h switching.Handoff, store *accounts.Store, accountsDir, claudeJSON, sharesPath string) (sessionTarget, error) {
 	if h.Shared {
 		shares, err := panel.LoadShares(sharesPath)
-		if err != nil {
-			return sessionTarget{}, false
-		}
-		for _, sh := range shares {
-			if strings.EqualFold(sh.Slug, h.Account) {
-				return sharedTarget(sh.Gateway, sh.Key, sh.Slug), true
+		if err == nil {
+			for _, sh := range shares {
+				if strings.EqualFold(sh.Slug, h.Account) {
+					return sharedTarget(sh.Gateway, sh.Key, sh.Slug), nil
+				}
 			}
 		}
-		return sessionTarget{}, false
+		return sessionTarget{}, fmt.Errorf("There is no shared account called %s on this machine any more, so nothing was switched.", h.Account)
 	}
 	list, err := store.Load()
 	if err != nil {
-		return sessionTarget{}, false
+		return sessionTarget{}, fmt.Errorf("clawdh could not read its accounts (%v), so nothing was switched.", err)
 	}
 	acct, ok := switching.ResolveAccount(list, h.Account)
 	if !ok {
-		return sessionTarget{}, false
+		return sessionTarget{}, fmt.Errorf("There is nothing called %s to switch to any more, so nothing was switched.", h.Account)
 	}
-	return localTarget(acct, accountsDir, claudeJSON), true
+	if reason := missingLogin(acct, accountsDir); reason != "" {
+		return sessionTarget{}, errors.New(reason)
+	}
+	return localTarget(acct, accountsDir, claudeJSON), nil
 }
 
 // accountsEnvWithout drops the named vars (case-insensitive) from an env slice.

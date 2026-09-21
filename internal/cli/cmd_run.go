@@ -141,6 +141,12 @@ func cmdRun(args []string) int {
 	// that never happened.
 	if handoffPath := os.Getenv(switching.HandoffEnvVar); handoffPath != "" && len(passthrough) == 0 && !auto {
 		if supervisorAlive() {
+			// Relaunching the conversation onto an account that cannot sign in
+			// is not a switch, it is a broken session — say why before, not after.
+			if reason := missingLogin(acct, accountsDir); reason != "" {
+				printProblem(reason)
+				return 1
+			}
 			h := switching.Handoff{Account: acct.Slug, SessionID: os.Getenv(switching.SessionIDEnvVar)}
 			if err := switching.WriteHandoff(handoffPath, h); err != nil {
 				fmt.Fprintln(os.Stderr, "clawdh: could not stage the switch:", err)
@@ -173,10 +179,22 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
+	// An account someone named has to be able to sign in; a session on one
+	// that cannot is a login prompt with the account's name on it, and when
+	// the login went to the gateway the right command is a different one.
+	// --auto is exempt: it is the plain `claude` wrapper, and a machine whose
+	// default login is not signed in yet signs in through exactly that session.
+	if !auto {
+		if reason := missingLogin(acct, accountsDir); reason != "" {
+			printProblem(reason)
+			return 1
+		}
+	}
+
 	handoff := filepath.Join(accountsDir, fmt.Sprintf(".handoff-%d.json", os.Getpid()))
 	ledger := switching.LedgerPath(home)
 	sharesPath, _ := config.SharesFile()
-	resolve := func(h switching.Handoff) (sessionTarget, bool) {
+	resolve := func(h switching.Handoff) (sessionTarget, error) {
 		return resolveHandoffTarget(h, store, accountsDir, claudeJSON, sharesPath)
 	}
 	return superviseSession(claudeBin, claudeDir, ledger, handoff, localTarget(acct, accountsDir, claudeJSON), passthrough, resolve)
@@ -211,8 +229,8 @@ func localTarget(acct accounts.Account, accountsDir, claudeJSON string) sessionT
 // same conversation — whenever a switch to another target is staged, until the
 // session ends. It is the one supervisor behind both `clawdh <account>` and
 // `clawdh shared <slug>`; resolve turns a staged handoff into the next target,
-// local or shared.
-func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessionTarget, passthrough []string, resolve func(switching.Handoff) (sessionTarget, bool)) int {
+// local or shared, or the reason (fit to show the person) it cannot.
+func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessionTarget, passthrough []string, resolve func(switching.Handoff) (sessionTarget, error)) int {
 	defer os.Remove(handoff)
 	defer switching.ClearOutcome(handoff) // an outcome nobody collected (a `!clawdh` switch has no hook waiting)
 	// The hook writes the handoff here; on a machine that has only ever
@@ -255,11 +273,22 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 	supervisorSignals = sigs
 	defer func() { supervisorSignals = nil }()
 
+	// In an editor, the shared ~/.claude.json names the account the editor is
+	// set to, and only that one. The Claude Code extension watches the file and
+	// takes any other identity appearing in it for "another account signed in
+	// outside this window" — on which it refreshes every webview and restarts
+	// every chat in the window, not just the one that switched. Each chat is
+	// its own supervisor here, so the first launch (the editor's account) may
+	// assert the identity and a switch inside a chat may not; the cost is that
+	// /status inside a switched chat still names the editor's account. A
+	// terminal has one session per window and keeps asserting on every launch.
+	assertIdentity := true
 	sessionArgs := launchArgs
 	for {
-		if target.applyID != nil {
+		if target.applyID != nil && assertIdentity {
 			target.applyID()
 		}
+		assertIdentity = !hostedByEditor
 		switching.ClearHandoff(handoff)
 
 		env := append(append([]string(nil), target.env...),
@@ -284,11 +313,9 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		// runs, so a write here corrupts the TUI mid-paint; the reply goes back
 		// through the outcome file to the hook that staged the switch.
 		code, switched := claudeRunner(claudeBin, sessionArgs, env, handoff, target.accountID, func(h switching.Handoff) bool {
-			next, ok := resolve(h)
-			if !ok {
-				switching.WriteOutcome(handoff, switching.Outcome{
-					Message: "There is nothing called " + h.Account + " to switch to any more, so nothing was switched.",
-				})
+			next, err := resolve(h)
+			if err != nil {
+				switching.WriteOutcome(handoff, switching.Outcome{Message: err.Error()})
 				return true // not a reason to restart the session
 			}
 			switching.WriteOutcome(handoff, switching.Outcome{
@@ -318,9 +345,9 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		if stopRequested(sigs) {
 			return code
 		}
-		next, ok := resolve(h)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "clawdh: cannot switch to %q\n", h.Account)
+		next, err := resolve(h)
+		if err != nil {
+			printProblem(err.Error())
 			return 1
 		}
 		// A relaunch onto the same shared account is the key-watcher recovering from
@@ -500,13 +527,7 @@ func autoAccount(list []accounts.Account) (accounts.Account, bool) {
 // Code exactly as the shell would have, unsupervised, rather than refuse to
 // start because clawdh has nothing registered.
 func runPlainClaude(bin string, args []string) int {
-	name, argv := claudebin.Invocation(bin, args)
-	cmd := exec.Command(name, argv...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return exitCodeOf(err)
-	}
-	return 0
+	return runClaudeAs(bin, args, nil)
 }
 
 // applyIdentity makes the shared ~/.claude.json name the account about to run,

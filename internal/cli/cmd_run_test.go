@@ -47,6 +47,11 @@ func seedRunEnv(t *testing.T) string {
 	mustWrite(t, filepath.Join(home, ".claude.json"), `{"oauthAccount":{"accountUuid":"orig"}}`)
 	// Give "work" an identity stub so the switch also exercises applyIdentity.
 	mustWrite(t, filepath.Join(workDir, ".claude.json"), `{"oauthAccount":{"accountUuid":"work-uuid"}}`)
+	// Both managed accounts are signed in: a session only runs on an account
+	// whose login is here (see missingLogin), and a login is a credentials file
+	// on every platform but a Mac that keeps it in the Keychain.
+	seedLogin(t, ehtiDir)
+	seedLogin(t, workDir)
 
 	// A clawdh-supervised shell would export a handoff path; clear it so these
 	// tests exercise the supervisor rather than the switch-staging path.
@@ -58,6 +63,12 @@ func seedRunEnv(t *testing.T) string {
 	stdinIsTTY = func() bool { return true }
 	t.Cleanup(func() { stdinIsTTY = origTTY })
 	return home
+}
+
+// seedLogin gives an account the credentials file Claude Code writes on login.
+func seedLogin(t *testing.T, configDir string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(configDir, ".credentials.json"), `{"claudeAiOauth":{"accessToken":"tok-`+filepath.Base(configDir)+`"}}`)
 }
 
 // seedTranscript writes the file Claude Code would have written for a session,

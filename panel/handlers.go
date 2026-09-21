@@ -584,9 +584,13 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 
 // clientShare is one account a person may use through the gateway: its name,
 // where to route (the gateway URL), and this person's key. The client turns each
-// into an alias that runs Claude Code in gateway mode.
+// into an alias that runs Claude Code in gateway mode. Email is the login's
+// address, so a machine that still has a local account for the same login can
+// point at the share when that local copy stops working (the gateway's refresh
+// rotates the single-use refresh token out from under it).
 type clientShare struct {
 	Account   string    `json:"account"`
+	Email     string    `json:"email,omitempty"`
 	Slug      string    `json:"slug"`
 	Gateway   string    `json:"gateway"`
 	Key       string    `json:"key"`
@@ -644,7 +648,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 			if err != nil {
 				continue
 			}
-			shares = append(shares, clientShare{Account: acct.Name, Slug: slugs[acct.ID], Gateway: gw, Key: string(plain), ExpiresAt: sh.ExpiresAt})
+			shares = append(shares, clientShare{Account: acct.Name, Email: acct.Email, Slug: slugs[acct.ID], Gateway: gw, Key: string(plain), ExpiresAt: sh.ExpiresAt})
 		}
 	}
 

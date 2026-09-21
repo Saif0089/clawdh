@@ -122,6 +122,51 @@ func TestCheckInCachesSharesAndDropsThemOnRevoke(t *testing.T) {
 	}
 }
 
+// A share that is revoked and granted again between two check-ins keeps its
+// slug and gets a new key. The cache has to take the new key — a running
+// session watches the file for exactly that — and it has to carry the login's
+// email, which is how a machine whose local copy of the same login has died
+// finds the share that now runs it.
+func TestCheckInRewritesARekeyedShareAndCarriesTheEmail(t *testing.T) {
+	t.Setenv("CLAWDH_GATEWAY_URL", "https://gw.example")
+	h := newHarness(t)
+	cfg, accountID, personID := setupSharing(t, h)
+	h.do("POST", "/api/accounts/"+accountID+"/login", map[string]string{
+		"credential": base64.StdEncoding.EncodeToString([]byte(`{"claudeAiOauth":{"accessToken":"lent"}}`)),
+		"email":      "work@example.com",
+	}, "")
+	sharesPath := filepath.Join(t.TempDir(), "shares.json")
+	c := &Client{Config: cfg, Accounts: newTestManager(t), SharesPath: sharesPath}
+
+	h.do("POST", "/api/accounts/"+accountID+"/share", map[string]string{"personId": personID}, "")
+	if _, err := c.CheckIn(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := LoadShares(sharesPath)
+	if len(before) != 1 || before[0].Email != "work@example.com" {
+		t.Fatalf("cached share = %+v, want one carrying work@example.com", before)
+	}
+
+	// Revoke and re-grant with no check-in in between: same slug, new key.
+	h.do("POST", "/api/shares/"+firstShareID(t, h)+"/revoke", nil, "")
+	h.do("POST", "/api/accounts/"+accountID+"/share", map[string]string{"personId": personID}, "")
+
+	change, err := c.CheckIn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.Empty() {
+		t.Errorf("a re-key is not a gain or a loss, got %+v", change)
+	}
+	after, _ := LoadShares(sharesPath)
+	if len(after) != 1 || after[0].Slug != before[0].Slug {
+		t.Fatalf("cached shares after re-key = %+v, want the same one", after)
+	}
+	if after[0].Key == before[0].Key {
+		t.Error("the cache still holds the revoked key")
+	}
+}
+
 // A machine that has been cut off forgets every shared account, without needing
 // to be told account by account.
 func TestACutOffMachineForgetsEverything(t *testing.T) {

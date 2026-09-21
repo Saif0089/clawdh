@@ -121,6 +121,7 @@ type Client struct {
 // where to route, and this person's key. It mirrors the panel's check-in reply.
 type GatewayShare struct {
 	Account   string    `json:"account"`
+	Email     string    `json:"email,omitempty"` // the login's address; "" from a panel that predates it
 	Slug      string    `json:"slug"`
 	Gateway   string    `json:"gateway"`
 	Key       string    `json:"key"`
@@ -292,6 +293,12 @@ func (c *Client) ReportResult(ctx context.Context, jobID, status, result string)
 // applyShares caches the shares just fetched and reports what changed, by
 // account name, against what was cached — so an unchanged check-in reports
 // nothing and does not rewrite dotfiles.
+//
+// "Changed" is any difference, not only a share gained or lost: a share can be
+// re-keyed (a revoke then a re-grant between two check-ins), re-dated (a loan
+// extended), or gain a field a newer panel sends, all under the same slug. A
+// running session watches this file for exactly the first of those, and for a
+// while it was never written unless the set of slugs moved.
 func (c *Client) applyShares(next []GatewayShare) Change {
 	var change Change
 	if c.SharesPath == "" {
@@ -299,10 +306,22 @@ func (c *Client) applyShares(next []GatewayShare) Change {
 	}
 	prev, _ := LoadShares(c.SharesPath)
 	change = diffShares(prev, next)
-	if !change.Empty() {
+	if !change.Empty() || !sameShares(prev, next) {
 		_ = SaveShares(c.SharesPath, next)
 	}
 	return change
+}
+
+// sameShares reports whether two share lists are identical in every field, in
+// the form they are cached (so a time's zone, which a JSON round trip may
+// change, cannot make equal lists look different).
+func sameShares(a, b []GatewayShare) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
 // forgetShares drops every cached share, as when this machine is cut off.

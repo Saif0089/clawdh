@@ -80,6 +80,16 @@ func cmdEditor(args []string) int {
 		fmt.Fprintln(os.Stderr, "      `clawdh list` shows them all with the name each one goes by.")
 		return 1
 	}
+	// An editor pointed at an account that cannot sign in would start every
+	// conversation on the default login with a note nobody sees; say it now.
+	if rec.AccountID != "" {
+		if acct, ok := switching.ResolveAccount(list, rec.AccountID); ok {
+			if reason := missingLogin(acct, accountsDir); reason != "" {
+				printProblem(reason)
+				return 1
+			}
+		}
+	}
 	self, err := service.SelfPath()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh: cannot find my own binary:", err)

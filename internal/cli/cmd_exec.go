@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"clawdh/internal/accounts"
+	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
 	"clawdh/internal/service"
 	"clawdh/internal/switching"
@@ -72,6 +74,19 @@ func cmdExec(args []string) int {
 		return runPlainClaude(bin, passthrough)
 	}
 
+	// The extension runs Claude Code's subcommands through the wrapper too —
+	// `auth status --json` to show who is signed in, `auth logout`,
+	// `design-login`. Those are one-shot commands, not conversations: they get
+	// the account's environment and identity, and none of the supervision.
+	// Supervising a probe minted a session id and a usage-ledger entry for a
+	// session that never existed.
+	if isSubcommand(passthrough) {
+		if target.applyID != nil {
+			target.applyID()
+		}
+		return runClaudeAs(bin, passthrough, target.env)
+	}
+
 	// The switch hook is what turns `clawdh <name>` typed in the chat into a
 	// handoff (idempotent; a failure only disables in-session switching, so it
 	// is a warning on stderr — never stdout — not a reason to refuse to start).
@@ -83,11 +98,33 @@ func cmdExec(args []string) int {
 
 	handoff := filepath.Join(accountsDir, fmt.Sprintf(".handoff-%d.json", os.Getpid()))
 	ledger := switching.LedgerPath(home)
-	resolve := func(h switching.Handoff) (sessionTarget, bool) {
+	resolve := func(h switching.Handoff) (sessionTarget, error) {
 		return resolveHandoffTarget(h, store, accountsDir, claudeJSON, sharesPath)
 	}
 	hostedByEditor = true
 	return superviseSession(bin, claudeDir, ledger, handoff, target, passthrough, resolve)
+}
+
+// isSubcommand reports whether an editor's invocation is one of Claude Code's
+// subcommands rather than a conversation. A conversation is always flags
+// (`--output-format stream-json …`, or nothing at all); a subcommand is always
+// a bare word first.
+func isSubcommand(args []string) bool {
+	return len(args) > 0 && !strings.HasPrefix(args[0], "-")
+}
+
+// runClaudeAs runs Claude Code once, unsupervised, with a target's environment
+// (nil: the inherited one) — for the one-shot subcommands an editor sends
+// through the wrapper, and for --auto's fall-through to a plain `claude`.
+func runClaudeAs(bin string, args, env []string) int {
+	name, argv := claudebin.Invocation(bin, args)
+	cmd := exec.Command(name, argv...)
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return exitCodeOf(err)
+	}
+	return 0
 }
 
 // editorDefault is what `clawdh editor <name>` recorded: the account every new
@@ -133,11 +170,13 @@ func writeEditorDefault(accountsDir string, rec editorDefault) error {
 // editorTarget is the session target an editor's new conversation starts as:
 // the recorded share or local account, else the default login as a plain
 // `claude` would use. A recorded share that is no longer shared with this
-// machine falls through to the local default rather than failing the editor.
+// machine, or a recorded account whose login is no longer here, falls through
+// to the local default rather than failing the editor — with a word on stderr
+// (never stdout, the editor's protocol channel) about why.
 func editorTarget(store *accounts.Store, accountsDir, claudeJSON, sharesPath string) (sessionTarget, bool) {
 	rec := readEditorDefault(accountsDir)
 	if rec.Shared != "" {
-		if t, ok := resolveHandoffTarget(switching.Handoff{Account: rec.Shared, Shared: true}, store, accountsDir, claudeJSON, sharesPath); ok {
+		if t, err := resolveHandoffTarget(switching.Handoff{Account: rec.Shared, Shared: true}, store, accountsDir, claudeJSON, sharesPath); err == nil {
 			return t, true
 		}
 	}
@@ -147,9 +186,14 @@ func editorTarget(store *accounts.Store, accountsDir, claudeJSON, sharesPath str
 	}
 	if rec.AccountID != "" {
 		for _, a := range list {
-			if a.ID == rec.AccountID {
-				return localTarget(a, accountsDir, claudeJSON), true
+			if a.ID != rec.AccountID {
+				continue
 			}
+			if reason := missingLogin(a, accountsDir); reason != "" {
+				printProblem(reason + "\nThis conversation starts on your default login instead.")
+				break
+			}
+			return localTarget(a, accountsDir, claudeJSON), true
 		}
 	}
 	for _, a := range list {
@@ -175,6 +219,9 @@ func editorDefaultLabel(rec editorDefault, list []accounts.Account, shares []pan
 	case rec.AccountID != "":
 		for _, a := range list {
 			if a.ID == rec.AccountID {
+				if !hasLogin(a) {
+					return fmt.Sprintf("%s (clawdh %s) — not signed in on this machine, so the default login is used until it is reconnected", displayName(a), a.Slug)
+				}
 				return fmt.Sprintf("%s (clawdh %s)", displayName(a), a.Slug)
 			}
 		}

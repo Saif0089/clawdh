@@ -205,6 +205,20 @@ path is NFC-normalised, the config-dir path is hashed raw — so a non-ASCII
 account directory would resolve to two different items if login and sessions
 took different branches. That is why `EnvForConfigDir` sets both variables.
 
+That single-use refresh token is also why a login handed to the gateway dies
+on the machine it came from. The gateway refreshes the login it holds
+(`cmd/clawdh-server/db.go`, `managerFor`/`persist`), which rotates the token;
+the local copy fails its next refresh with "OAuth refresh token is no longer
+valid" and Claude Code empties the store. Nothing in clawdh writes that
+store, so nothing can put it back: the person reconnects the account on the
+page, or runs the login through its share. Every place a local account is
+chosen — `clawdh <name>`, a switch staged in a session or by the hook, the
+supervisor's own resolve, an editor's default — therefore checks the login is
+still there first (`internal/cli/login_check.go`) and names the share that now
+runs it, matched by the email the panel sends with each share. The check is a
+read, like `DiscoverLogins`; on a Mac it is the same `security
+find-generic-password` read.
+
 The bundle is plain-text JS inside the binary. Grep it with `/usr/bin/grep -a`
 or python — a shell whose `grep` is aliased to `ugrep` fails on a bounded
 `{0,240}` window and prints nothing, which reads as "not found".

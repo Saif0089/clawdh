@@ -11,7 +11,6 @@ import (
 	"clawdh/internal/accounts"
 	"clawdh/internal/config"
 	"clawdh/internal/switching"
-	"clawdh/panel"
 )
 
 // cmdHook runs one of the hooks clawdh installs into Claude Code. Today the only
@@ -48,18 +47,12 @@ func hookUserPromptSubmit() int {
 		return 0 // the overwhelmingly common case: an ordinary prompt
 	}
 
-	// Resolve the target — a gateway share by slug, or a local account — and,
-	// if it exists, the label to report the switch by.
-	label, resolved := resolveSwitchTarget(name, shared)
-	if !resolved {
-		if shared {
-			return block(fmt.Sprintf("There is no shared account called %q on this machine. `clawdh list` shows what's shared with you.", name))
-		}
-		// A name that is not an account used to pass through to the model, which
-		// answered `clawdh saif` as though it were a question. Someone who types
-		// `clawdh <word>` meant clawdh, so say what went wrong.
-		return block(fmt.Sprintf("There is no clawdh account called %q. Accounts on this machine: %s.\nIf you meant to ask me something, put it in a sentence — `clawdh <name>` on its own is the switch command.",
-			name, accountNames(loadAccountsOrNil())))
+	// Resolve the target — a gateway share by slug, or a local account that
+	// can sign in — to the label to report the switch by, or to the reason it
+	// cannot be switched to.
+	label, problem := resolveSwitchTarget(name, shared)
+	if problem != "" {
+		return block(problem)
 	}
 
 	// With a supervisor, hand it the switch: relaunching the session is the only
@@ -93,41 +86,36 @@ func hookUserPromptSubmit() int {
 		label + ". Start sessions with `clawdh <account>` (or `clawdh shared <name>`) and the same command switches them.")
 }
 
-// resolveSwitchTarget checks that a switch target exists and returns the label
-// to report it by: a gateway share by slug, or a local account by name.
-func resolveSwitchTarget(name string, shared bool) (label string, ok bool) {
+// resolveSwitchTarget checks that a switch target exists — a gateway share by
+// slug, or a local account by name that still has its login here — and returns
+// the label to report it by. Otherwise it returns the reason, worded for the
+// person who typed the command: a switch that cannot happen is never allowed
+// through to the model, which used to answer `clawdh saif` as though it were a
+// question.
+func resolveSwitchTarget(name string, shared bool) (label, problem string) {
 	if shared {
-		path, err := config.SharesFile()
-		if err != nil {
-			return "", false
-		}
-		shares, err := panel.LoadShares(path)
-		if err != nil {
-			return "", false
-		}
-		for _, sh := range shares {
+		for _, sh := range sharedAccounts() {
 			if strings.EqualFold(sh.Slug, name) {
-				return sh.Slug, true
+				return sh.Slug, ""
 			}
 		}
-		return "", false
+		return "", fmt.Sprintf("There is no shared account called %q on this machine. `clawdh list` shows what's shared with you.", name)
 	}
 	list, err := loadAccounts()
 	if err != nil {
-		return "", false
+		return "", fmt.Sprintf("clawdh could not read its accounts (%v), so nothing was switched.", err)
 	}
 	acct, ok := switching.ResolveAccount(list, name)
 	if !ok {
-		return "", false
+		return "", fmt.Sprintf("There is no clawdh account called %q. Accounts on this machine: %s.\nIf you meant to ask me something, put it in a sentence — `clawdh <name>` on its own is the switch command.",
+			name, accountNames(list))
 	}
-	return displayName(acct), true
-}
-
-// loadAccountsOrNil is loadAccounts for an error message, where an unreadable
-// store just means an empty list.
-func loadAccountsOrNil() []accounts.Account {
-	list, _ := loadAccounts()
-	return list
+	if accountsDir, err := config.AccountsDir(); err == nil {
+		if reason := missingLogin(acct, accountsDir); reason != "" {
+			return "", reason
+		}
+	}
+	return displayName(acct), ""
 }
 
 // switchReportTimeout is how long the hook waits for the supervisor to report

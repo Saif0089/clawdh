@@ -364,8 +364,16 @@ func panelPush(args []string) int {
 	}
 	// Create the account on the panel if it is not there yet, then push — the
 	// same one-step flow the web page uses, so the CLI never dead-ends on "add
-	// it there first".
-	id, err := panel.CreateAccount(ctx, httpc, server, acct.Name, "", "")
+	// it there first". The login's email goes with it, as the web page sends
+	// it: it is how a machine finds the share that runs a login whose local
+	// copy has died (see missingLogin).
+	email, plan := "", ""
+	for _, l := range accounts.DiscoverLogins(list) {
+		if l.ConfigDir == acct.ConfigDir {
+			email, plan = l.Email, l.Plan
+		}
+	}
+	id, err := panel.CreateAccount(ctx, httpc, server, acct.Name, email, plan)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
@@ -376,6 +384,10 @@ func panelPush(args []string) int {
 	}
 	fmt.Printf("%s is on the panel and ready to share.\n", acct.Name)
 	fmt.Printf("This machine is recorded as a member with access; take that back from the panel to cut off the gateway without touching %s here.\n", acct.Name)
+	fmt.Println()
+	fmt.Printf("From now on run this login through the gateway (`clawdh shared <name>`, once it is shared with you), not as `clawdh %s`.\n", acct.Slug)
+	fmt.Printf("The gateway refreshes the login itself, and a Claude login can only be refreshed from one place: the copy here stops\n")
+	fmt.Printf("working the first time the gateway refreshes it, and `clawdh %s` will say so. Reconnect it on the clawdh page to have a separate local login again.\n", acct.Slug)
 	return 0
 }
 
