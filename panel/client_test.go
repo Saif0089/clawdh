@@ -2,7 +2,6 @@ package panel
 
 import (
 	"context"
-	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,30 +11,17 @@ import (
 	"clawdh/internal/accounts"
 )
 
-// setupSharing gets a harness to the point where "Work" has a login and Alice
-// has a machine enrolled, and returns the machine's config plus the ids. It
-// does not share anything yet — each test decides that.
+// setupSharing gets a harness to the point where "Work" (work@example.com) is
+// on the panel, handed up from Hassan's machine, and Alice has a machine joined;
+// it returns Alice's machine config plus the ids. It does not share anything
+// with Alice yet — each test decides that.
 func setupSharing(t *testing.T, h *harness) (cfg ClientConfig, accountID, personID string) {
 	t.Helper()
-	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, "")
-	h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, "")
-	h.do("POST", "/api/people", map[string]string{"name": "Alice"}, "")
-
-	_, panelBody := h.do("GET", "/api/panel", nil, "")
-	accountID = panelBody["accounts"].([]any)[0].(map[string]any)["id"].(string)
-	personID = panelBody["people"].([]any)[0].(map[string]any)["id"].(string)
-
-	login := base64.StdEncoding.EncodeToString([]byte(`{"claudeAiOauth":{"accessToken":"lent"}}`))
-	h.do("POST", "/api/accounts/"+accountID+"/login", map[string]string{"credential": login}, "")
-
-	_, codeBody := h.do("POST", "/api/people/"+personID+"/code", nil, "")
-	_, enrolled := h.do("POST", "/api/v1/enroll",
-		map[string]any{"code": codeBody["code"], "machine": "alice-mbp"}, "")
-	return ClientConfig{
-		Server:   h.srv.URL,
-		DeviceID: enrolled["deviceId"].(string),
-		Token:    enrolled["token"].(string),
-	}, accountID, personID
+	h.setUp()
+	_, hassan := h.join("Hassan", "hassan-mbp")
+	accountID = h.contribute(hassan, "Work", "work@example.com")
+	personID, token, deviceID := h.joinDevice("Alice", "alice-mbp")
+	return ClientConfig{Server: h.srv.URL, DeviceID: deviceID, Token: token, PersonName: "Alice"}, accountID, personID
 }
 
 func newTestManager(t *testing.T) *accounts.Manager {
@@ -46,15 +32,19 @@ func newTestManager(t *testing.T) *accounts.Manager {
 		filepath.Join(dir, "accounts"))
 }
 
-// firstShareID reads the id of the single share on the first account.
+// firstShareID reads the id of Alice's share on the first account (Hassan, who
+// handed the login up, has one of his own that the tests never touch).
 func firstShareID(t *testing.T, h *harness) string {
 	t.Helper()
 	_, panelBody := h.do("GET", "/api/panel", nil, "")
 	shared := panelBody["accounts"].([]any)[0].(map[string]any)["shared"].([]any)
-	if len(shared) == 0 {
-		t.Fatal("no share on the account")
+	for _, sh := range shared {
+		if sm := sh.(map[string]any); sm["personName"] == "Alice" {
+			return sm["shareId"].(string)
+		}
 	}
-	return shared[0].(map[string]any)["shareId"].(string)
+	t.Fatal("no share of Alice's on the account")
+	return ""
 }
 
 // A share reaches the machine as a cached gateway key — never a credential on
@@ -134,10 +124,6 @@ func TestCheckInRewritesARekeyedShareAndCarriesTheEmail(t *testing.T) {
 	t.Setenv("CLAWDH_GATEWAY_URL", "https://gw.example")
 	h := newHarness(t)
 	cfg, accountID, personID := setupSharing(t, h)
-	h.do("POST", "/api/accounts/"+accountID+"/login", map[string]string{
-		"credential": base64.StdEncoding.EncodeToString([]byte(`{"claudeAiOauth":{"accessToken":"lent"}}`)),
-		"email":      "work@example.com",
-	}, "")
 	sharesPath := filepath.Join(t.TempDir(), "shares.json")
 	c := &Client{Config: cfg, Accounts: newTestManager(t), SharesPath: sharesPath}
 

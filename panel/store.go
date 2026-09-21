@@ -199,27 +199,24 @@ func (d *Data) Device(id string) (*Device, bool) {
 	return nil, false
 }
 
-// personByName finds a person by name, case-insensitively. Names are how a
-// pushed login attributes the machine that added it, and one small team's
-// names are unique enough to key on.
-func (d *Data) personByName(name string) (*Person, bool) {
-	for i := range d.People {
-		if strings.EqualFold(d.People[i].Name, name) {
-			return &d.People[i], true
+// accountByLogin finds the account a login being handed up already is: the
+// one with the same sign-in address, else the same name. Case does not matter
+// in either — an address is one login however it was typed.
+func (d *Data) accountByLogin(email, name string) *Account {
+	email, name = strings.TrimSpace(email), strings.TrimSpace(name)
+	if email != "" {
+		for i := range d.Accounts {
+			if strings.EqualFold(d.Accounts[i].Email, email) {
+				return &d.Accounts[i]
+			}
 		}
 	}
-	return nil, false
-}
-
-// ensurePerson returns the person with this name, creating one if there is
-// none. It is how the machine that pushes a login gets a member record without
-// the admin having to add them by hand first.
-func (d *Data) ensurePerson(name, email string, now time.Time) *Person {
-	if p, ok := d.personByName(name); ok {
-		return p
+	for i := range d.Accounts {
+		if strings.EqualFold(d.Accounts[i].Name, name) {
+			return &d.Accounts[i]
+		}
 	}
-	d.People = append(d.People, Person{ID: newID(), Name: name, Email: email, CreatedAt: now})
-	return &d.People[len(d.People)-1]
+	return nil
 }
 
 // shareFor returns a person's existing share on an account, if any.

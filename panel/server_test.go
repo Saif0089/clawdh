@@ -74,48 +74,80 @@ func (h *harness) do(method, path string, body any, bearer string) (int, map[str
 	return resp.StatusCode, out
 }
 
+// setUp makes the harness's panel usable: an admin, signed in.
+func (h *harness) setUp() {
+	h.t.Helper()
+	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
+		h.t.Fatalf("setup = %d %v", code, body)
+	}
+}
+
+// join adds a person and enrols one machine of theirs from an invite, the way a
+// real machine arrives; it returns the person's id and the machine's token.
+func (h *harness) join(person, machine string) (personID, token string) {
+	personID, token, _ = h.joinDevice(person, machine)
+	return personID, token
+}
+
+// joinDevice is join, also returning the machine's device id.
+func (h *harness) joinDevice(person, machine string) (personID, token, deviceID string) {
+	h.t.Helper()
+	if code, _ := h.do("POST", "/api/people", map[string]string{"name": person}, ""); code != 201 {
+		h.t.Fatalf("adding %s failed", person)
+	}
+	_, pb := h.do("GET", "/api/panel", nil, "")
+	for _, p := range pb["people"].([]any) {
+		if pm := p.(map[string]any); pm["name"] == person {
+			personID = pm["id"].(string)
+		}
+	}
+	_, inv := h.do("POST", "/api/people/"+personID+"/invite", nil, "")
+	code, _ := inv["code"].(string)
+	status, enrolled := h.do("POST", "/api/v1/enroll", map[string]string{"code": code, "machine": machine}, "")
+	if status != 200 {
+		h.t.Fatalf("enrolling %s = %d %v", machine, status, enrolled)
+	}
+	token, _ = enrolled["token"].(string)
+	if token == "" {
+		h.t.Fatal("enrolling returned no token")
+	}
+	deviceID, _ = enrolled["deviceId"].(string)
+	return personID, token, deviceID
+}
+
+// fakeLogin is a credentials file as Claude Code writes it, base64 for the wire.
+var fakeLogin = base64.StdEncoding.EncodeToString([]byte(`{"claudeAiOauth":{"accessToken":"fake"}}`))
+
+// contribute hands a login up from a joined machine and returns the account's
+// id — the only way an account arrives on the panel.
+func (h *harness) contribute(token, name, email string) string {
+	h.t.Helper()
+	code, body := h.do("POST", "/api/v1/accounts", map[string]string{"name": name, "email": email, "credential": fakeLogin}, token)
+	if code != 201 && code != 200 {
+		h.t.Fatalf("handing up %s = %d %v", name, code, body)
+	}
+	id, _ := body["accountId"].(string)
+	if id == "" {
+		h.t.Fatalf("handing up %s returned no account id: %v", name, body)
+	}
+	return id
+}
+
 // The whole point, end to end: an account is lent to a person's machine, the
 // machine is told about it, the account is taken back, and the next thing the
 // machine hears is that it has nothing.
 func TestAMachineIsToldWhatItCanUseAndWhenItStops(t *testing.T) {
 	t.Setenv("CLAWDH_GATEWAY_URL", "https://gw.example")
 	h := newHarness(t)
+	h.setUp()
 
-	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
-		t.Fatalf("setup = %d %v", code, body)
-	}
+	// An account with a login to share — handed up by the person who has it —
+	// and someone else to share it with.
+	_, ownerToken := h.join("Hassan", "hassan-mbp")
+	accountID := h.contribute(ownerToken, "Work", "work@example.com")
+	personID, token := h.join("Alice", "alice-mbp")
 
-	// An account with a login to share, and someone to share it with.
-	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, ""); code != 201 {
-		t.Fatalf("adding an account = %d", code)
-	}
-	if code, _ := h.do("POST", "/api/people", map[string]string{"name": "Alice"}, ""); code != 201 {
-		t.Fatalf("adding a person = %d", code)
-	}
-	_, panelBody := h.do("GET", "/api/panel", nil, "")
-	accountID := panelBody["accounts"].([]any)[0].(map[string]any)["id"].(string)
-	personID := panelBody["people"].([]any)[0].(map[string]any)["id"].(string)
-
-	login := []byte(`{"claudeAiOauth":{"accessToken":"fake"}}`)
-	if code, body := h.do("POST", "/api/accounts/"+accountID+"/login",
-		map[string]string{"credential": base64.StdEncoding.EncodeToString(login)}, ""); code != 200 {
-		t.Fatalf("storing the login = %d %v", code, body)
-	}
-
-	// Alice enrols a machine with a one-shot code.
-	_, codeBody := h.do("POST", "/api/people/"+personID+"/code", nil, "")
-	joinCode, _ := codeBody["code"].(string)
-	status, enrolled := h.do("POST", "/api/v1/enroll",
-		map[string]string{"code": joinCode, "machine": "alice-mbp"}, "")
-	if status != 200 {
-		t.Fatalf("enrolling = %d %v", status, enrolled)
-	}
-	token, _ := enrolled["token"].(string)
-	if token == "" {
-		t.Fatal("enrolling returned no token")
-	}
-
-	// Nothing yet: enrolled is not the same as shared-with.
+	// Nothing yet: joined is not the same as shared-with.
 	if _, body := h.do("POST", "/api/v1/checkin", nil, token); body["gateway"] != nil {
 		t.Errorf("a machine with no share was told it can use %v", body["gateway"])
 	}
@@ -131,17 +163,26 @@ func TestAMachineIsToldWhatItCanUseAndWhenItStops(t *testing.T) {
 		t.Fatalf("the machine was told it can use %d accounts, want 1", len(list))
 	}
 	got := list[0].(map[string]any)
-	if got["account"] != "Work" || got["gateway"] != "https://gw.example" || got["key"] == "" {
+	if got["account"] != "Work" || got["gateway"] != "https://gw.example" || got["key"] == "" || got["accountId"] != accountID {
 		t.Errorf("share handed to the machine = %v, want Work on the gateway with a key", got)
 	}
 	// The login itself must never travel to the machine — that is the gateway.
 	if got["credential"] != nil {
 		t.Error("the check-in handed the machine a credential; only the server holds the login")
 	}
+	// Alice did not add it, so her page must not offer to take it back.
+	if got["contributed"] != nil {
+		t.Errorf("Alice's share of an account she did not add is marked contributed: %v", got)
+	}
 
 	// Access taken away.
 	_, pb2 := h.do("GET", "/api/panel", nil, "")
-	shareID := pb2["accounts"].([]any)[0].(map[string]any)["shared"].([]any)[0].(map[string]any)["shareId"].(string)
+	var shareID string
+	for _, sh := range pb2["accounts"].([]any)[0].(map[string]any)["shared"].([]any) {
+		if sm := sh.(map[string]any); sm["personId"] == personID {
+			shareID = sm["shareId"].(string)
+		}
+	}
 	if code, _ := h.do("POST", "/api/shares/"+shareID+"/revoke", nil, ""); code != 200 {
 		t.Fatalf("taking access away = %d", code)
 	}
@@ -154,84 +195,125 @@ func TestAMachineIsToldWhatItCanUseAndWhenItStops(t *testing.T) {
 	}
 }
 
-// The machine that pushes a login is recorded as a member with its own gateway
-// access, so it shows in the panel and can be cut off there. Re-pushing does not
-// duplicate the record, and taking the access away removes only the share — the
-// person stays, the escrowed login stays, and (structurally, since the panel
-// never reaches a client's account store) the login on that machine is untouched.
-func TestPushingALoginRecordsThePusherAsAMember(t *testing.T) {
+// A login handed up from a joined machine belongs to the person it joined as:
+// no password, no name to match. They can use it through the gateway at once,
+// re-adding it refreshes the login without rotating their key or making a
+// second account, only they (or the admin) can take it back, and taking the
+// admin's revoke of their access leaves the account and the person alone.
+func TestALoginHandedUpBelongsToWhoeverHandedItUp(t *testing.T) {
+	t.Setenv("CLAWDH_GATEWAY_URL", "https://gw.example")
 	h := newHarness(t)
+	h.setUp()
+	hassanID, hassan := h.join("Hassan", "hassan-mbp")
+	_, alice := h.join("Alice", "alice-mbp")
 
-	if code, _ := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, ""); code != 200 {
-		t.Fatal("setup failed")
+	// Nobody may add without being joined.
+	if code, _ := h.do("POST", "/api/v1/accounts", map[string]string{"name": "Work", "credential": fakeLogin}, ""); code != 401 {
+		t.Errorf("an unjoined machine handed up a login = %d, want 401", code)
 	}
-	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, ""); code != 201 {
-		t.Fatalf("adding an account = %d", code)
+	if code, _ := h.do("POST", "/api/v1/accounts", map[string]string{"name": "Work", "credential": "not-base64!"}, hassan); code != 400 {
+		t.Errorf("a broken credential = %d, want 400", code)
+	}
+
+	accountID := h.contribute(hassan, "Work", "Work@Example.com")
+
+	account := func() map[string]any {
+		t.Helper()
+		_, pb := h.do("GET", "/api/panel", nil, "")
+		accounts := pb["accounts"].([]any)
+		if len(accounts) != 1 {
+			t.Fatalf("the panel has %d accounts, want 1", len(accounts))
+		}
+		return accounts[0].(map[string]any)
+	}
+	a := account()
+	if a["addedBy"] != "Hassan" || a["hasLogin"] != true || a["email"] != "Work@Example.com" {
+		t.Errorf("the account as the panel shows it = %v", a)
+	}
+	shared, _ := a["shared"].([]any)
+	if len(shared) != 1 || shared[0].(map[string]any)["personId"] != hassanID {
+		t.Errorf("the contributor's own access = %v, want one share, Hassan's", shared)
+	}
+
+	// Their machine hears about it, marked as theirs to take back.
+	_, ci := h.do("POST", "/api/v1/checkin", nil, hassan)
+	list, _ := ci["gateway"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("Hassan's machine can use %d accounts, want 1", len(list))
+	}
+	mine := list[0].(map[string]any)
+	if mine["contributed"] != true || mine["accountId"] != accountID {
+		t.Errorf("the contributor's share = %v, want contributed with the account id", mine)
+	}
+	key := mine["key"]
+
+	// Re-adding — the same address in another spelling — refreshes, not duplicates.
+	code, body := h.do("POST", "/api/v1/accounts", map[string]string{"name": "Work again", "email": "work@example.com", "credential": fakeLogin}, hassan)
+	if code != 200 || body["refreshed"] != true || body["accountId"] != accountID {
+		t.Errorf("re-adding = %d %v, want 200 refreshed with the same id", code, body)
+	}
+	if a := account(); a["name"] != "Work" {
+		t.Errorf("re-adding renamed the account to %v", a["name"])
+	}
+	_, ci = h.do("POST", "/api/v1/checkin", nil, hassan)
+	if k := ci["gateway"].([]any)[0].(map[string]any)["key"]; k != key {
+		t.Error("re-adding rotated the contributor's key out from under their sessions")
+	}
+
+	// Alice cannot take it back; Hassan can, and with it goes everyone's access.
+	if code, body := h.do("DELETE", "/api/v1/accounts/"+accountID, nil, alice); code != 403 || !strings.Contains(body["error"].(string), "Hassan") {
+		t.Errorf("Alice taking back Hassan's login = %d %v, want 403 naming Hassan", code, body)
+	}
+	if code, _ := h.do("DELETE", "/api/v1/accounts/"+accountID, nil, ""); code != 401 {
+		t.Errorf("an unjoined machine taking a login back = %d, want 401", code)
+	}
+	if code, _ := h.do("DELETE", "/api/v1/accounts/"+accountID, nil, hassan); code != 204 {
+		t.Fatalf("Hassan taking his login back = %d, want 204", code)
 	}
 	_, pb := h.do("GET", "/api/panel", nil, "")
-	accountID := pb["accounts"].([]any)[0].(map[string]any)["id"].(string)
+	if n := len(pb["accounts"].([]any)); n != 0 {
+		t.Errorf("after taking it back the panel still has %d accounts", n)
+	}
+	if _, ci := h.do("POST", "/api/v1/checkin", nil, hassan); ci["gateway"] != nil {
+		t.Errorf("after taking it back Hassan's machine can still use %v", ci["gateway"])
+	}
+	if code, _ := h.do("DELETE", "/api/v1/accounts/"+accountID, nil, hassan); code != 404 {
+		t.Errorf("taking back an account that is gone = %d, want 404", code)
+	}
+	// The person stays: taking a login back is not leaving.
+	if people := pb["people"].([]any); len(people) != 2 {
+		t.Errorf("taking a login back changed the people: %v", people)
+	}
+}
 
-	login := base64.StdEncoding.EncodeToString([]byte(`{"claudeAiOauth":{"accessToken":"fake"}}`))
-	push := func() int {
-		code, _ := h.do("POST", "/api/accounts/"+accountID+"/login",
-			map[string]string{"credential": login, "pusher": "hassan-mbp"}, "")
-		return code
-	}
-	if code := push(); code != 200 {
-		t.Fatalf("pushing the login = %d", code)
-	}
+// The admin's revoke of a contributor's access takes only the access: the
+// escrowed login stays, the person stays, and their page simply stops offering
+// the account. The admin removing the account removes it for everyone.
+func TestTheAdminCanRevokeAContributorWithoutRemovingTheirLogin(t *testing.T) {
+	t.Setenv("CLAWDH_GATEWAY_URL", "https://gw.example")
+	h := newHarness(t)
+	h.setUp()
+	_, hassan := h.join("Hassan", "hassan-mbp")
+	accountID := h.contribute(hassan, "Work", "work@example.com")
 
-	// sharesAndPusher reads the one account's shares plus the pusher's person row.
-	sharesAndPusher := func() ([]any, map[string]any) {
-		_, pb := h.do("GET", "/api/panel", nil, "")
-		shared, _ := pb["accounts"].([]any)[0].(map[string]any)["shared"].([]any)
-		var person map[string]any
-		for _, p := range pb["people"].([]any) {
-			if pm := p.(map[string]any); pm["name"] == "hassan-mbp" {
-				person = pm
-			}
-		}
-		return shared, person
-	}
-
-	shared, person := sharesAndPusher()
-	if len(shared) != 1 {
-		t.Fatalf("the pusher got %d shares, want 1", len(shared))
-	}
-	if person == nil {
-		t.Fatal("the pusher was not recorded as a member")
-	}
-	if shared[0].(map[string]any)["personName"] != "hassan-mbp" {
-		t.Errorf("the account's share is not the pusher's: %v", shared[0])
-	}
-	if can, _ := person["can"].([]any); len(can) != 1 || can[0] != "Work" {
-		t.Errorf("the pusher cannot use the account they added: %v", person["can"])
-	}
-
-	// Re-pushing the same login keeps one member record, not two.
-	if code := push(); code != 200 {
-		t.Fatalf("re-push = %d", code)
-	}
-	shared, _ = sharesAndPusher()
-	if len(shared) != 1 {
-		t.Fatalf("re-pushing duplicated the member record: %d shares", len(shared))
-	}
-
-	// Take the access away.
-	shareID := shared[0].(map[string]any)["shareId"].(string)
+	_, pb := h.do("GET", "/api/panel", nil, "")
+	shareID := pb["accounts"].([]any)[0].(map[string]any)["shared"].([]any)[0].(map[string]any)["shareId"].(string)
 	if code, _ := h.do("POST", "/api/shares/"+shareID+"/revoke", nil, ""); code != 200 {
 		t.Fatalf("revoke = %d", code)
 	}
-	_, pb2 := h.do("GET", "/api/panel", nil, "")
-	acct := pb2["accounts"].([]any)[0].(map[string]any)
+	_, pb = h.do("GET", "/api/panel", nil, "")
+	acct := pb["accounts"].([]any)[0].(map[string]any)
 	if s, _ := acct["shared"].([]any); len(s) != 0 {
 		t.Errorf("after revoke the account still has shares: %v", s)
 	}
-	if acct["hasLogin"] != true {
-		t.Error("revoke removed the escrowed login; it must remove only gateway access")
+	if acct["hasLogin"] != true || acct["addedBy"] != "Hassan" {
+		t.Errorf("revoke changed the account itself: %v", acct)
 	}
-	if _, person := sharesAndPusher(); person == nil {
+	if len(pb["people"].([]any)) != 1 {
 		t.Error("revoke removed the person; it must remove only their gateway access")
+	}
+	if code, _ := h.do("DELETE", "/api/accounts/"+accountID, nil, ""); code != 204 {
+		t.Errorf("the admin removing the account = %d, want 204", code)
 	}
 }
 
@@ -285,8 +367,11 @@ func TestThePanelIsClosedToStrangers(t *testing.T) {
 			t.Errorf("GET %s without signing in = %d, want 401", path, code)
 		}
 	}
-	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Sneaky"}, ""); code != 401 {
-		t.Errorf("adding an account without signing in = %d, want 401", code)
+	if code, _ := h.do("DELETE", "/api/accounts/sneaky", nil, ""); code != 401 {
+		t.Errorf("removing an account without signing in = %d, want 401", code)
+	}
+	if code, _ := h.do("POST", "/api/people", map[string]string{"name": "Sneaky"}, ""); code != 401 {
+		t.Errorf("adding a person without signing in = %d, want 401", code)
 	}
 	if code, _ := h.do("POST", "/api/login", map[string]string{"password": "wrong", "name": "Tester"}, ""); code != 401 {
 		t.Errorf("signing in with the wrong password = %d, want 401", code)
@@ -307,7 +392,7 @@ func TestACutOffMachineIsTurnedAway(t *testing.T) {
 	_, panelBody := h.do("GET", "/api/panel", nil, "")
 	personID := panelBody["people"].([]any)[0].(map[string]any)["id"].(string)
 
-	_, codeBody := h.do("POST", "/api/people/"+personID+"/code", nil, "")
+	_, codeBody := h.do("POST", "/api/people/"+personID+"/invite", nil, "")
 	_, enrolled := h.do("POST", "/api/v1/enroll",
 		map[string]any{"code": codeBody["code"], "machine": "bob-pc"}, "")
 	token := enrolled["token"].(string)
@@ -335,12 +420,18 @@ func (j *cookieJar) Cookies(_ *neturl.URL) []*http.Cookie             { return j
 // state that would hand a member an empty account.
 func TestCannotShareAnAccountWithNoLogin(t *testing.T) {
 	h := newHarness(t)
-	h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Tester"}, "")
-	h.do("POST", "/api/accounts", map[string]string{"name": "Empty"}, "")
-	h.do("POST", "/api/people", map[string]string{"name": "Alice"}, "")
-	_, pb := h.do("GET", "/api/panel", nil, "")
-	acct := pb["accounts"].([]any)[0].(map[string]any)["id"].(string)
-	person := pb["people"].([]any)[0].(map[string]any)["id"].(string)
+	h.setUp()
+	_, hassan := h.join("Hassan", "hassan-mbp")
+	acct := h.contribute(hassan, "Empty", "")
+	person, _ := h.join("Alice", "alice-mbp")
+	// An account from before logins arrived with their accounts: no credential.
+	if err := h.store.Mutate(func(d *Data) error {
+		a, _ := d.Account(acct)
+		a.Credential = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	code, body := h.do("POST", "/api/accounts/"+acct+"/share", map[string]string{"personId": person}, "")
 	if code != 400 {
@@ -360,8 +451,8 @@ func TestChangesAreRecordedUnderTheSignersName(t *testing.T) {
 	if code, body := h.do("POST", "/api/setup", map[string]string{"password": "a-long-enough-one", "name": "Hassan"}, ""); code != 200 {
 		t.Fatalf("setup = %d %v", code, body)
 	}
-	if code, _ := h.do("POST", "/api/accounts", map[string]string{"name": "Work"}, ""); code != 201 {
-		t.Fatal("adding an account failed")
+	if code, _ := h.do("POST", "/api/people", map[string]string{"name": "Bob"}, ""); code != 201 {
+		t.Fatal("adding a person failed")
 	}
 	_, st := h.do("GET", "/api/status", nil, "")
 	if st["actor"] != "Hassan" {
@@ -387,7 +478,7 @@ func TestChangesAreRecordedUnderTheSignersName(t *testing.T) {
 		whos = append(whos, ev["who"].(string)+" "+ev["what"].(string))
 	}
 	joined := strings.Join(whos, " | ")
-	for _, want := range []string{"Hassan set this panel up", "Hassan added Work", "Ibrahim added Alice"} {
+	for _, want := range []string{"Hassan set this panel up", "Hassan added Bob", "Ibrahim added Alice"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("activity lacks %q; got: %s", want, joined)
 		}
@@ -412,7 +503,7 @@ func TestAMachineReportsItsBuildAndThePanelItsOwn(t *testing.T) {
 	}
 	_, panelBody := h.do("GET", "/api/panel", nil, "")
 	personID := panelBody["people"].([]any)[0].(map[string]any)["id"].(string)
-	_, codeBody := h.do("POST", "/api/people/"+personID+"/code", nil, "")
+	_, codeBody := h.do("POST", "/api/people/"+personID+"/invite", nil, "")
 	joinCode, _ := codeBody["code"].(string)
 
 	status, enrolled := h.do("POST", "/api/v1/enroll",

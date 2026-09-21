@@ -270,8 +270,7 @@ async function showInvite(ask: Ask, name: string, url: string, expiresAt?: strin
 
 function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask: Ask }) {
   const ready = data.accounts.filter((a) => a.hasLogin).length;
-  const need = data.accounts.length - ready;
-  const sub = data.accounts.length ? `${ready} ready to share` + (need ? `, ${need} need a login` : "") : "";
+  const sub = data.accounts.length ? `${ready} ready to share` : "";
 
   // giveAccess shares an account with people through the gateway. Many people
   // can use one account at once, and access ends the instant it is taken back.
@@ -324,42 +323,30 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
     if (ok) run(() => api("POST", `/api/shares/${sh.shareId}/revoke`), reload, ask);
   };
 
-  // howToAddLogin explains the one thing the panel can't do itself: sign in.
-  const howToAddLogin = (a: Account) =>
-    ask({
-      title: `Add a login for ${a.name}`,
-      note: "The panel can't sign in for you — Claude's login needs a real browser. On the machine where this account is signed in, open the clawdh page there and choose “Add to panel” on it. That hands its login up here. People you share it with never do this.",
-      confirm: "Got it",
-      cancel: "",
-    });
-
   const removeAccount = async (a: Account) => {
     const ok = await ask({ title: `Remove ${a.name}?`, note: (a.shared || []).length ? "Everyone using it loses access." : "", confirm: "Remove", danger: true });
     if (ok) run(() => api("DELETE", `/api/accounts/${a.id}`), reload, ask);
   };
 
-  const addAccount = async () => {
-    const out = await ask({
-      title: "Add an account",
-      fields: [
-        { name: "name", label: "Name", placeholder: "Work" },
-        { name: "email", label: "Its Claude sign-in (optional)", placeholder: "work@example.com" },
-      ],
-      note: "This makes an empty slot. To share it, add its login from the machine where it's signed in — see “How to add its login”.",
-      confirm: "Add",
+  // howAccountsArrive is the one thing the panel can't do itself: sign in. A
+  // login comes up from the machine it is signed in on, one click there.
+  const howAccountsArrive = () =>
+    ask({
+      title: "Adding an account",
+      note: "Claude's sign-in needs a real browser, so a login is added from the machine where it's signed in: on that machine's clawdh page, the account has an “Add to panel” button. One click — the machine must have joined this panel with an invite — and it shows up here, ready to share. Whoever added it can take it back from the same page.",
+      confirm: "Got it",
+      cancel: "",
     });
-    if (out?.name) run(() => api("POST", "/api/accounts", out), reload, ask);
-  };
 
   return (
     <div>
       <Head
         title="Accounts"
         sub={sub || "The Claude logins your team shares through the gateway."}
-        action={<PrimaryButton onClick={addAccount}>Add an account</PrimaryButton>}
+        action={<button onClick={howAccountsArrive} className="rounded-lg px-3 py-2 text-[14px] font-medium text-primary transition-colors hover:bg-primary/12">How do I add one?</button>}
       />
       {data.accounts.length === 0 ? (
-        <Empty>No accounts yet. On a machine where a Claude account is signed in, open its clawdh page and choose “Add to panel” — it shows up here, ready to share.</Empty>
+        <Empty>No accounts yet. On a machine that has joined this panel, open its clawdh page and choose “Add to panel” on a signed-in account — it shows up here, ready to share.</Empty>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {data.accounts.map((a) => (
@@ -371,12 +358,16 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
                     {a.warning && <span title={a.warning} className="cursor-help text-warn">⚠</span>}
                   </div>
                   {/* The second line is what the name doesn't already say: the email
-                      (unless the account is named by it), else the plan. */}
+                      (unless the account is named by it), the plan, and who added it. */}
                   <div className="mt-0.5 text-[14px] text-faint">
-                    {a.email && a.email.toLowerCase() !== a.name.toLowerCase() ? a.email : a.plan ? a.plan + " plan" : a.email ? "" : "no sign-in on file"}
+                    {[
+                      a.email && a.email.toLowerCase() !== a.name.toLowerCase() ? a.email : "",
+                      a.plan ? a.plan + " plan" : "",
+                      a.addedBy ? `added by ${a.addedBy}` : "",
+                    ].filter(Boolean).join(" · ")}
                   </div>
                 </div>
-                {a.hasLogin ? <Pill kind="ok">Ready</Pill> : <Pill kind="need">Needs a login</Pill>}
+                {a.hasLogin ? <Pill kind="ok">Ready</Pill> : <Pill kind="need">No login</Pill>}
               </div>
               {a.warning && (
                 <div className="mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] leading-snug text-warn">{a.warning}</div>
@@ -396,15 +387,13 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
                 ) : a.hasLogin ? (
                   <div className="text-[14px] text-faint">Not shared with anyone yet.</div>
                 ) : (
-                  <div className="text-[14px] text-faint">Add its login on the machine where it's signed in.</div>
+                  <div className="text-[14px] text-faint">Its login is gone — re-add it from the machine where it's signed in, or remove it.</div>
                 )}
               </div>
 
               <div className="mt-4 flex items-center gap-2 border-t border-line pt-3">
-                {a.hasLogin ? (
+                {a.hasLogin && (
                   <button onClick={() => give(a)} className="rounded-lg bg-primary/12 px-3.5 py-2 text-[14px] font-semibold text-primary transition-colors hover:bg-primary/20">Give access</button>
-                ) : (
-                  <button onClick={() => howToAddLogin(a)} className="rounded-lg bg-primary/12 px-3.5 py-2 text-[14px] font-semibold text-primary transition-colors hover:bg-primary/20">How to add its login</button>
                 )}
                 <button onClick={() => removeAccount(a)} className="ml-auto rounded-lg px-2.5 py-2 text-[14px] text-faint transition-colors hover:text-crit">Remove</button>
               </div>

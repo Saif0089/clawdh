@@ -1,9 +1,7 @@
 package cli
 
 import (
-	"bufio"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -36,8 +34,6 @@ func cmdPanel(args []string) int {
 		return panelStatusCmd()
 	case "serve":
 		return panelServe(args[1:])
-	case "join":
-		return panelJoin(args[1:])
 	case "check":
 		return panelCheck(args[1:])
 	case "push":
@@ -58,14 +54,15 @@ func panelUsage(w *os.File) {
 	fmt.Fprint(w, `clawdh panel — share Claude logins with other people, through a gateway
 
   clawdh panel serve [--addr host:port]   run the panel (default `+defaultPanelAddr+`)
-  clawdh panel join <url> <code>          connect this machine to a panel (or: clawdh join <invite-link>)
   clawdh panel check                      ask the panel what is shared with this machine, now
-  clawdh panel push <account> <url>       add an account's login to the panel so it can be shared
+  clawdh panel push <account>             add an account's login to the panel so it can be shared
   clawdh panel genkey                     print a new sealing key for a hosted panel
 
-Most of this lives in the clawdh web page now — connecting, and adding a login to
-the panel — so a person who does not use the terminal never has to. These are
-the same actions for anyone who prefers the command line.
+Connecting a machine is `+"`clawdh join <invite-link>`"+`. Everything a machine does
+with its panel — hearing what it may use, adding a login, taking one back — it
+does as the person it joined as; no password is ever typed here. The password
+is for the panel's own site. All of this also lives on the clawdh web page, so
+a person who does not use the terminal never has to.
 
 Serving on 127.0.0.1 keeps the panel to this machine. To let other people
 reach it, give --addr an address they can see, and put it behind TLS.
@@ -122,33 +119,20 @@ func panelServe(args []string) int {
 	return 0
 }
 
-func panelJoin(args []string) int {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: clawdh panel join <url> <code>")
-		return 1
-	}
-	return enrollMachine(strings.TrimRight(args[0], "/"), args[1])
-}
-
-// cmdJoin is the friendly front door for connecting a machine: one invite link,
-// no sub-command to remember. `clawdh join https://panel/i/<code>` pulls the panel
-// address and code out of the link; `clawdh join <url> <code>` still works for
-// anyone who has them separately.
+// cmdJoin connects this machine to a panel from the one thing a person is
+// sent: the invite link. `clawdh join https://panel/i/<code>` pulls the panel
+// address and the code out of it.
 func cmdJoin(args []string) int {
-	switch len(args) {
-	case 1:
-		server, code, ok := parseInvite(args[0])
-		if !ok {
-			fmt.Fprintln(os.Stderr, "clawdh: that does not look like an invite link. Paste the whole link, or use `clawdh join <url> <code>`.")
-			return 1
-		}
-		return enrollMachine(server, code)
-	case 2:
-		return enrollMachine(strings.TrimRight(args[0], "/"), args[1])
-	default:
-		fmt.Fprintln(os.Stderr, "usage: clawdh join <invite-link>   (or: clawdh join <url> <code>)")
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: clawdh join <invite-link>")
 		return 1
 	}
+	server, code, ok := parseInvite(args[0])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "clawdh: that does not look like an invite link. Paste the whole link you were sent.")
+		return 1
+	}
+	return enrollMachine(server, code)
 }
 
 // parseInvite pulls the panel URL and one-shot code out of an invite link. It
@@ -304,15 +288,17 @@ func panelCheck(_ []string) int {
 	return 0
 }
 
-// panelPush stores an account's login in the panel, from the machine where that
-// account is signed in. The panel cannot sign an account in by itself, so this
-// is how an account gets something to lend.
+// panelPush hands an account's login up to the panel this machine is joined
+// to, so it can be shared through the gateway. The panel cannot sign an account
+// in by itself, so this is how an account gets something to lend. It happens as
+// the person this machine joined as — no password, no URL: the enrolment is the
+// credential, and giving your own login away needs no privilege.
 func panelPush(args []string) int {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: clawdh panel push <account> <url>")
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: clawdh panel push <account>")
 		return 1
 	}
-	name, server := args[0], strings.TrimRight(args[1], "/")
+	name := args[0]
 
 	list, err := loadAccounts()
 	if err != nil {
@@ -335,69 +321,54 @@ func panelPush(args []string) int {
 		fmt.Fprintf(os.Stderr, "      Open http://127.0.0.1:%d, connect %s, finish the browser login, then run this again.\n", config.DefaultPort, acct.Slug)
 		return 1
 	}
-
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprint(os.Stderr, "Panel password: ")
-	pw, err := reader.ReadString('\n')
+	c, err := panelClient()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
 	}
-
-	// Record who is adding this account, as a member — the person, not the
-	// account (many people can share one login, so this is who holds the access
-	// and whose access revoke takes back). Enter accepts the default: the name
-	// this machine enrolled as, or its hostname.
-	member := panel.PusherName(server)
-	fmt.Fprintf(os.Stderr, "Record this machine as a member — name [%s]: ", member)
-	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
-		member = strings.TrimSpace(line)
-	}
-	jar := &oneHostJar{}
-	httpc := &http.Client{Jar: jar, Timeout: 30 * time.Second}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if err := panel.AdminLogin(ctx, httpc, server, strings.TrimSpace(pw), member); err != nil {
-		fmt.Fprintln(os.Stderr, "clawdh:", err)
+	if !c.Config.Configured() {
+		fmt.Fprintln(os.Stderr, "clawdh: this machine is not connected to a panel, so there is nowhere to add the login.")
+		fmt.Fprintln(os.Stderr, "      Ask the panel's admin for an invite link and run `clawdh join <invite-link>` first.")
 		return 1
 	}
-	// Create the account on the panel if it is not there yet, then push — the
-	// same one-step flow the web page uses, so the CLI never dead-ends on "add
-	// it there first". The login's email goes with it, as the web page sends
-	// it: it is how a machine finds the share that runs a login whose local
-	// copy has died (see missingLogin).
+	// The login's address goes with it, as the web page sends it: it is how a
+	// machine finds the share that runs a login whose local copy has died (see
+	// missingLogin), and how the panel knows a re-add is the same account.
 	email, plan := "", ""
 	for _, l := range accounts.DiscoverLogins(list) {
 		if l.ConfigDir == acct.ConfigDir {
 			email, plan = l.Email, l.Plan
 		}
 	}
-	id, err := panel.CreateAccount(ctx, httpc, server, acct.Name, email, plan)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	added, err := c.Contribute(ctx, acct.Name, email, plan, raw)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
 	}
-	if err := panel.PushLogin(ctx, httpc, server, id, base64.StdEncoding.EncodeToString(raw), member); err != nil {
-		fmt.Fprintln(os.Stderr, "clawdh:", err)
-		return 1
+	// Access to it comes back on a check-in; do one now rather than making the
+	// person wait for the next tick.
+	change, _ := c.CheckIn(ctx)
+	if added.Refreshed {
+		fmt.Printf("%s was already on the panel; its login is refreshed.\n", added.Name)
+	} else {
+		fmt.Printf("%s is on the panel and ready to share, added as %s.\n", added.Name, c.Config.PersonName)
 	}
-	fmt.Printf("%s is on the panel and ready to share.\n", acct.Name)
-	fmt.Printf("This machine is recorded as a member with access; take that back from the panel to cut off the gateway without touching %s here.\n", acct.Name)
+	slug := slugifyName(added.Name)
+	for _, sh := range gatewaySharesFor(c.SharesPath) {
+		if sh.AccountID == added.AccountID {
+			slug = sh.Slug
+		}
+	}
+	_ = change
 	fmt.Println()
-	fmt.Printf("From now on run this login through the gateway (`clawdh shared <name>`, once it is shared with you), not as `clawdh %s`.\n", acct.Slug)
+	fmt.Printf("From now on run this login through the gateway — `clawdh shared %s` — not as `clawdh %s`.\n", slug, acct.Slug)
 	fmt.Printf("The gateway refreshes the login itself, and a Claude login can only be refreshed from one place: the copy here stops\n")
 	fmt.Printf("working the first time the gateway refreshes it, and `clawdh %s` will say so. Reconnect it on the clawdh page to have a separate local login again.\n", acct.Slug)
+	fmt.Printf("To take it back off the panel: the clawdh page, under “Shared with you”.\n")
 	return 0
 }
-
-// oneHostJar holds the panel's session cookie for the life of one command.
-// net/http/cookiejar needs a public-suffix list, which is a large dependency
-// for one cookie against one host.
-type oneHostJar struct{ cookies []*http.Cookie }
-
-func (j *oneHostJar) SetCookies(_ *neturl.URL, c []*http.Cookie) { j.cookies = c }
-func (j *oneHostJar) Cookies(_ *neturl.URL) []*http.Cookie       { return j.cookies }
 
 // checkInEvery is how often an enrolled machine asks the panel what it holds.
 // It is the worst case for how long someone keeps an account after it was

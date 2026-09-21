@@ -20,20 +20,6 @@ import (
 // and carries the shared account's name, for the switch hook to read.
 const sharedSessionEnvVar = "CLAWDH_SHARED_SESSION"
 
-// cmdUse runs Claude Code through a clawdh gateway by raw URL + key: it points
-// Claude at the gateway (ANTHROPIC_BASE_URL) and presents the person's key
-// (ANTHROPIC_AUTH_TOKEN), so their traffic is served by the shared subscription
-// the gateway holds — the person never has the credential.
-//
-//	clawdh use <gateway-url> <key> [claude args...]
-func cmdUse(args []string) int {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: clawdh use <gateway-url> <key> [claude args...]")
-		return 2
-	}
-	return launchSharedSupervised(strings.TrimRight(args[0], "/"), args[1], "a shared account", args[2:])
-}
-
 // cmdShared runs a gateway-shared account by its slug, reading the gateway URL
 // and this person's key from clawdh's shares cache. Everything after the slug
 // goes to Claude Code unchanged.

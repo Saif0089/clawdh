@@ -31,8 +31,12 @@ type panelStatus struct {
 // the page: the account and the slug its `claude-<slug>` command is built from.
 // The key stays out of it — the page never needs it; `clawdh shared` holds it.
 type sharedView struct {
-	Account string `json:"account"`
-	Slug    string `json:"slug"`
+	Account   string `json:"account"`
+	AccountID string `json:"accountId,omitempty"`
+	Slug      string `json:"slug"`
+	// Contributed is whether this person handed the login up themselves — the
+	// page then offers to take it back off the panel.
+	Contributed bool `json:"contributed,omitempty"`
 	// ExpiresAt is when this access ends on its own (zero: until revoked).
 	ExpiresAt time.Time `json:"expiresAt,omitzero"`
 	// Window is the gateway's captured 5h/weekly utilisation for this account,
@@ -53,7 +57,7 @@ func (s *Server) currentPanelStatus() panelStatus {
 	if sp, err := config.SharesFile(); err == nil {
 		if shares, err := panel.LoadShares(sp); err == nil {
 			for _, sh := range shares {
-				v := sharedView{Account: sh.Account, Slug: sh.Slug, ExpiresAt: sh.ExpiresAt}
+				v := sharedView{Account: sh.Account, AccountID: sh.AccountID, Slug: sh.Slug, Contributed: sh.Contributed, ExpiresAt: sh.ExpiresAt}
 				if w, ok := windowForSlug(sh.Slug); ok {
 					v.Window = &w
 				}

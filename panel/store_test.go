@@ -32,25 +32,22 @@ func seed(t *testing.T, s *Store) (account, alice, bob string) {
 	return
 }
 
-// ensurePerson is how a pushed login attributes the machine that added it. It
-// must reuse an existing member by name (case-insensitively) rather than pile up
-// a new person on every push.
-func TestEnsurePersonDedupesByNameCaseInsensitively(t *testing.T) {
-	d := &Data{}
-	now := time.Now()
-	first := d.ensurePerson("Hassan", "", now).ID
-	again := d.ensurePerson("hassan", "", now).ID // same name, different case
-	if first != again {
-		t.Errorf("ensurePerson made two members for one name: %s vs %s", first, again)
+// accountByLogin is how a login handed up finds the account it already is:
+// the same address in any spelling, else the same name — never a second
+// account for one login.
+func TestAccountByLoginMatchesAddressThenName(t *testing.T) {
+	d := &Data{Accounts: []Account{
+		{ID: "a1", Name: "Work", Email: "Work@Example.com"},
+		{ID: "a2", Name: "personal"},
+	}}
+	if a := d.accountByLogin("work@example.com", "Something else"); a == nil || a.ID != "a1" {
+		t.Errorf("by address = %v, want a1", a)
 	}
-	if len(d.People) != 1 {
-		t.Errorf("People has %d entries, want 1", len(d.People))
+	if a := d.accountByLogin("", "PERSONAL"); a == nil || a.ID != "a2" {
+		t.Errorf("by name = %v, want a2", a)
 	}
-	if other := d.ensurePerson("Ibrahim", "", now).ID; other == first {
-		t.Error("a different name should be a different member")
-	}
-	if len(d.People) != 2 {
-		t.Errorf("People has %d entries, want 2", len(d.People))
+	if a := d.accountByLogin("new@example.com", "New"); a != nil {
+		t.Errorf("an unknown login matched %v", a)
 	}
 }
 

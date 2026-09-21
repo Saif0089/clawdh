@@ -74,7 +74,7 @@ func TestRemoteJobRoundTripIsConsentGated(t *testing.T) {
 	personID := pb["people"].([]any)[0].(map[string]any)["id"].(string)
 
 	// Alice enrols a machine.
-	_, codeBody := h.do("POST", "/api/people/"+personID+"/code", nil, "")
+	_, codeBody := h.do("POST", "/api/people/"+personID+"/invite", nil, "")
 	joinCode, _ := codeBody["code"].(string)
 	_, enrolled := h.do("POST", "/api/v1/enroll", map[string]string{"code": joinCode, "machine": "alice-mbp"}, "")
 	token, _ := enrolled["token"].(string)

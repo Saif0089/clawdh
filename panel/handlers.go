@@ -34,6 +34,9 @@ type accountView struct {
 	// Shared is everyone with gateway access to this account right now — many
 	// people can share one login, so this is a list, not one holder.
 	Shared []shareView `json:"shared,omitempty"`
+	// AddedBy names the person whose machine handed the login up; they can take
+	// it back from their own page. "" for an account from before that was kept.
+	AddedBy string `json:"addedBy,omitempty"`
 }
 
 // shareView is one person's gateway access to an account, with the share id
@@ -77,7 +80,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 
 	accounts := make([]accountView, 0, len(d.Accounts))
 	for _, a := range d.Accounts {
-		v := accountView{ID: a.ID, Name: a.Name, Email: a.Email, Plan: a.Plan, HasLogin: a.HasLogin()}
+		v := accountView{ID: a.ID, Name: a.Name, Email: a.Email, Plan: a.Plan, HasLogin: a.HasLogin(), AddedBy: d.personName(a.AddedBy)}
 		for _, sh := range d.Shares {
 			if sh.AccountID == a.ID {
 				v.Shared = append(v.Shared, shareView{ShareID: sh.ID, PersonID: sh.PersonID, PersonName: d.personName(sh.PersonID), ExpiresAt: sh.ExpiresAt})
@@ -136,49 +139,67 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- accounts
 
-func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
-	who := s.actor(r) // the signed-in name every change is recorded under
-	var in struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-		Plan  string `json:"plan"`
+// removeAccount drops an account and every share on it — everyone using it
+// loses access, since dropping the shares stops their keys at the gateway on
+// the next request. It is the one removal, whoever asked for it.
+func removeAccount(d *Data, id string) (Account, bool) {
+	a, ok := d.Account(id)
+	if !ok {
+		return Account{}, false
 	}
-	if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Name) == "" {
-		fail(w, 400, "Give the account a name.")
-		return
-	}
-	err := s.store.Mutate(func(d *Data) error {
-		for _, a := range d.Accounts {
-			if strings.EqualFold(a.Name, in.Name) {
-				return fmt.Errorf("There is already an account called %s.", in.Name)
-			}
+	gone := *a
+	shares := d.Shares[:0]
+	for _, sh := range d.Shares {
+		if sh.AccountID != id {
+			shares = append(shares, sh)
 		}
-		d.Accounts = append(d.Accounts, Account{
-			ID: newID(), Name: in.Name, Email: in.Email, Plan: in.Plan, CreatedAt: s.now(),
-		})
-		d.Log(s.now(), who, "added "+in.Name)
+	}
+	d.Shares = shares
+	out := d.Accounts[:0]
+	for _, acct := range d.Accounts {
+		if acct.ID != id {
+			out = append(out, acct)
+		}
+	}
+	d.Accounts = out
+	return gone, true
+}
+
+func (s *Server) handleRemoveAccount(w http.ResponseWriter, r *http.Request) {
+	who := s.actor(r) // the signed-in name every change is recorded under
+	id := r.PathValue("id")
+	err := s.store.Mutate(func(d *Data) error {
+		a, ok := removeAccount(d, id)
+		if !ok {
+			return errors.New("There is no such account.")
+		}
+		d.Log(s.now(), who, "removed "+a.Name)
 		return nil
 	})
 	if err != nil {
-		fail(w, 409, err.Error())
+		fail(w, 404, err.Error())
 		return
 	}
-	writeJSON(w, 201, map[string]bool{"ok": true})
+	w.WriteHeader(204)
 }
 
-// handleStoreLogin escrows an account's Claude login.
+// handleContribute is a member's machine handing up the login of an account
+// signed in there, so it can be shared through the gateway. It is the one way a
+// login reaches the panel — the panel cannot sign in by itself — and it needs no
+// privilege: the machine holds the login, and its enrolment says whose it is.
+// The login is sealed before it touches disk.
 //
-// The panel takes the credentials file Claude Code wrote for an account that is
-// already signed in, rather than driving a sign-in itself: an admin runs
-// `clawdh panel push <account>` on the machine where that account is linked. It
-// is sealed before it touches disk.
-func (s *Server) handleStoreLogin(w http.ResponseWriter, r *http.Request) {
-	who := s.actor(r) // the signed-in name every change is recorded under
+// A login the panel already holds (same address, else same name) is refreshed
+// in place, which is how a broken one is mended; whoever first added it stays
+// the one who can take it back. The contributor is given gateway access to
+// their own login, so from now on their machine runs it from here — the copy
+// left on the machine dies the first time the gateway refreshes it.
+func (s *Server) handleContribute(w http.ResponseWriter, r *http.Request, dev Device) {
 	var in struct {
-		Credential string `json:"credential"` // base64 of the credentials JSON
+		Name       string `json:"name"`
 		Email      string `json:"email"`
 		Plan       string `json:"plan"`
-		Pusher     string `json:"pusher"` // the machine that added it, recorded as a member
+		Credential string `json:"credential"` // base64 of the credentials JSON
 	}
 	if err := readJSON(r, &in); err != nil {
 		fail(w, 400, "That request could not be read.")
@@ -194,95 +215,107 @@ func (s *Server) handleStoreLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
-
-	// The machine that pushes a login is recorded as a member with its own
-	// gateway access, so it shows in the panel and can be cut off there without
-	// touching the login still on that machine. The key is minted once, before
-	// the write, so a CAS retry does not rotate it; it reaches the machine (when
-	// that machine is enrolled) on the next check-in, like any other share.
-	pusher := strings.TrimSpace(in.Pusher)
-	var pusherHash string
-	var pusherSealed []byte
-	if pusher != "" {
-		key, hash, err := NewToken()
-		if err != nil {
-			fail(w, 500, err.Error())
-			return
-		}
-		if pusherSealed, err = s.secret.Seal([]byte(key)); err != nil {
-			fail(w, 500, err.Error())
-			return
-		}
-		pusherHash = hash
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		name = strings.TrimSpace(in.Email)
+	}
+	if name == "" {
+		fail(w, 400, "Give the account a name.")
+		return
+	}
+	// The contributor's own key is minted once, before the write, so a CAS
+	// retry does not rotate it; it reaches their machine on its next check-in
+	// like any other share.
+	key, hash, err := NewToken()
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	sealedKey, err := s.secret.Seal([]byte(key))
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
 	}
 
-	id := r.PathValue("id")
+	var out struct {
+		AccountID string `json:"accountId"`
+		Name      string `json:"name"`
+		Refreshed bool   `json:"refreshed"`
+	}
 	err = s.store.Mutate(func(d *Data) error {
-		a, ok := d.Account(id)
-		if !ok {
-			return errors.New("There is no such account.")
-		}
-		a.Credential = sealed
-		if in.Email != "" {
-			a.Email = in.Email
-		}
-		if in.Plan != "" {
-			a.Plan = in.Plan
-		}
-		d.Log(s.now(), who, "stored the login for "+a.Name)
-
-		// Record the pusher as a member with access. Skip if they already have a
-		// share on this account, so re-pushing keeps their key instead of
-		// rotating it.
-		if pusher != "" {
-			// No email: the account's email is the login's, not the pusher's, and
-			// a wrong one is worse than none. An enrolled pusher keeps the email
-			// they already have (ensurePerson only sets it when creating).
-			p := d.ensurePerson(pusher, "", s.now())
-			if _, has := d.shareFor(a.ID, p.ID); !has {
-				d.putShare(Share{ID: newID(), AccountID: a.ID, PersonID: p.ID, KeyHash: pusherHash, SealedKey: pusherSealed, CreatedAt: s.now()})
-				d.Log(s.now(), pusher, "added "+a.Name+" and was recorded with access to it")
+		now := s.now()
+		who := d.personName(dev.PersonID)
+		a := d.accountByLogin(in.Email, name)
+		if a == nil {
+			d.Accounts = append(d.Accounts, Account{
+				ID: newID(), Name: name, Email: strings.TrimSpace(in.Email), Plan: strings.TrimSpace(in.Plan),
+				CreatedAt: now, Credential: sealed, AddedBy: dev.PersonID,
+			})
+			a = &d.Accounts[len(d.Accounts)-1]
+			d.Log(now, who, "added "+a.Name+" from "+dev.Name)
+		} else {
+			a.Credential = sealed
+			if e := strings.TrimSpace(in.Email); e != "" {
+				a.Email = e
 			}
+			if p := strings.TrimSpace(in.Plan); p != "" {
+				a.Plan = p
+			}
+			if a.AddedBy == "" {
+				a.AddedBy = dev.PersonID
+			}
+			out.Refreshed = true
+			d.Log(now, who, "refreshed the login for "+a.Name+" from "+dev.Name)
+		}
+		out.AccountID, out.Name = a.ID, a.Name
+		// Access to their own login. Kept if they already have it, so re-adding
+		// does not rotate a key their sessions are using.
+		if _, has := d.shareFor(a.ID, dev.PersonID); !has {
+			d.putShare(Share{ID: newID(), AccountID: a.ID, PersonID: dev.PersonID, KeyHash: hash, SealedKey: sealedKey, CreatedAt: now, GrantedBy: who})
 		}
 		return nil
 	})
 	if err != nil {
-		fail(w, 404, err.Error())
+		fail(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	code := 201
+	if out.Refreshed {
+		code = 200
+	}
+	writeJSON(w, code, out)
 }
 
-func (s *Server) handleRemoveAccount(w http.ResponseWriter, r *http.Request) {
-	who := s.actor(r) // the signed-in name every change is recorded under
+// handleWithdraw is a member taking back the login their machine handed up.
+// Only the person who added an account may do this (the admin removes any
+// account from the site); everyone sharing it loses access, exactly as when
+// the admin removes it.
+func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, dev Device) {
 	id := r.PathValue("id")
+	var problem int
 	err := s.store.Mutate(func(d *Data) error {
 		a, ok := d.Account(id)
 		if !ok {
-			return errors.New("There is no such account.")
+			problem = 404
+			return errors.New("That account is not on the panel any more.")
 		}
-		name := a.Name
-		// Everyone sharing it loses access — dropping the shares stops their
-		// keys at the gateway on the next request.
-		shares := d.Shares[:0]
-		for _, sh := range d.Shares {
-			if sh.AccountID != id {
-				shares = append(shares, sh)
-			}
+		switch {
+		case a.AddedBy == "":
+			problem = 403
+			return fmt.Errorf("%s was added before the panel recorded who adds what, so only its admin can remove it.", a.Name)
+		case a.AddedBy != dev.PersonID:
+			problem = 403
+			return fmt.Errorf("%s was added by %s — only they, or the panel's admin, can take it back.", a.Name, d.personName(a.AddedBy))
 		}
-		d.Shares = shares
-		out := d.Accounts[:0]
-		for _, acct := range d.Accounts {
-			if acct.ID != id {
-				out = append(out, acct)
-			}
-		}
-		d.Accounts = out
-		d.Log(s.now(), who, "removed "+name)
+		removeAccount(d, id)
+		d.Log(s.now(), d.personName(dev.PersonID), "took "+a.Name+" back off the panel")
 		return nil
 	})
 	if err != nil {
-		fail(w, 404, err.Error())
+		if problem == 0 {
+			problem = 500
+		}
+		fail(w, problem, err.Error())
 		return
 	}
 	w.WriteHeader(204)
@@ -593,11 +626,15 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 // rotates the single-use refresh token out from under it).
 type clientShare struct {
 	Account   string    `json:"account"`
+	AccountID string    `json:"accountId"`
 	Email     string    `json:"email,omitempty"`
 	Slug      string    `json:"slug"`
 	Gateway   string    `json:"gateway"`
 	Key       string    `json:"key"`
 	ExpiresAt time.Time `json:"expiresAt,omitzero"` // when this access ends on its own; zero: until revoked
+	// Contributed is whether this person's own machine handed the login up —
+	// then their page offers to take it back, which nobody else's does.
+	Contributed bool `json:"contributed,omitempty"`
 }
 
 // handleCheckin is the whole of what a machine asks: what may I use?
@@ -656,7 +693,11 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 			if err != nil {
 				continue
 			}
-			shares = append(shares, clientShare{Account: acct.Name, Email: acct.Email, Slug: slugs[acct.ID], Gateway: gw, Key: string(plain), ExpiresAt: sh.ExpiresAt})
+			shares = append(shares, clientShare{
+				Account: acct.Name, AccountID: acct.ID, Email: acct.Email, Slug: slugs[acct.ID],
+				Gateway: gw, Key: string(plain), ExpiresAt: sh.ExpiresAt,
+				Contributed: acct.AddedBy != "" && acct.AddedBy == dev.PersonID,
+			})
 		}
 	}
 

@@ -44,8 +44,6 @@ func Run(args []string) int {
 		return cmdHook(args[1:])
 	case "statusline":
 		return cmdStatusLine(args[1:])
-	case "use":
-		return cmdUse(args[1:])
 	case "shared":
 		return cmdShared(args[1:])
 	case "list", "ls", "accounts":
@@ -121,7 +119,6 @@ ACCOUNTS live on the web page clawdh opens — add, connect, and remove them the
 
 SHARING one account with other people (needs a panel + gateway):
   clawdh join <invite-link>    Connect this machine to a panel from an invite link
-  clawdh use <gateway> <key>   Run Claude on a shared account by hand, without joining
   clawdh remote [on|off]       Let the panel ask this machine to diagnose itself (off by default)
   clawdh panel <command>       Run or manage the panel — see `+"`clawdh panel help`"+`
 

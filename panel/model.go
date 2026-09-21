@@ -55,6 +55,10 @@ type Account struct {
 	Plan       string    `json:"plan,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	Credential []byte    `json:"credential,omitempty"`
+	// AddedBy is the person whose machine handed the login up — the one who may
+	// take it back again without the admin. "" for an account from before this
+	// was recorded; only the admin removes those.
+	AddedBy string `json:"addedBy,omitempty"`
 }
 
 // HasLogin reports whether this account has a login to lend.

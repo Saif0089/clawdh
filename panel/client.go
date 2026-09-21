@@ -3,6 +3,7 @@ package panel
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -124,11 +125,15 @@ type Client struct {
 // where to route, and this person's key. It mirrors the panel's check-in reply.
 type GatewayShare struct {
 	Account   string    `json:"account"`
+	AccountID string    `json:"accountId,omitempty"`
 	Email     string    `json:"email,omitempty"` // the login's address; "" from a panel that predates it
 	Slug      string    `json:"slug"`
 	Gateway   string    `json:"gateway"`
 	Key       string    `json:"key"`
 	ExpiresAt time.Time `json:"expiresAt,omitzero"` // when this access ends on its own; zero: until revoked
+	// Contributed is whether this machine's owner handed the login up — the page
+	// then offers to take it back, which it does for nobody else's.
+	Contributed bool `json:"contributed,omitempty"`
 }
 
 // LoadShares reads the cached gateway shares. A missing file is no shares.
@@ -271,6 +276,74 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 		c.AfterChange()
 	}
 	return change, nil
+}
+
+// Contributed is the panel's answer to a login handed up: the account it is
+// now (or already was — Refreshed), by id and name.
+type Contributed struct {
+	AccountID string `json:"accountId"`
+	Name      string `json:"name"`
+	Refreshed bool   `json:"refreshed"`
+}
+
+// Contribute hands a login signed in on this machine up to the panel, as the
+// person this machine is enrolled as. No password: the enrolment is the
+// credential, and giving your own login away needs no privilege. The reply
+// names the account; access to it arrives on the next check-in like any share.
+func (c *Client) Contribute(ctx context.Context, name, email, plan string, credential []byte) (Contributed, error) {
+	var out struct {
+		Contributed
+		Error string `json:"error"`
+	}
+	body := map[string]string{"name": name, "email": email, "plan": plan, "credential": base64.StdEncoding.EncodeToString(credential)}
+	err := post(ctx, c.http(), c.Config.Server+"/api/v1/accounts", c.Config.Token, body, &out)
+	if errors.Is(err, errUnauthorized) {
+		return Contributed{}, ErrNotEnrolled
+	}
+	if err != nil {
+		return Contributed{}, err
+	}
+	if out.Error != "" {
+		return Contributed{}, errors.New(out.Error)
+	}
+	return out.Contributed, nil
+}
+
+// Withdraw takes back a login this machine's owner handed up: the account
+// leaves the panel and everyone sharing it loses access. The panel refuses for
+// an account somebody else added, and says whose it is.
+func (c *Client) Withdraw(ctx context.Context, accountID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.Config.Server+"/api/v1/accounts/"+accountID, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Config.Token)
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrNotEnrolled
+	}
+	if resp.StatusCode >= 300 {
+		var out struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if out.Error == "" {
+			out.Error = "the panel answered " + resp.Status
+		}
+		return errors.New(out.Error)
+	}
+	return nil
+}
+
+func (c *Client) http() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return &http.Client{Timeout: 20 * time.Second}
 }
 
 // ReportResult posts a machine's answer to one of its remote jobs back to the

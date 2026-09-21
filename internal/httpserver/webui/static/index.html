@@ -202,16 +202,8 @@
 <!-- Add a local login to a panel so it can be shared. -->
 <dialog id="share-dialog">
   <form id="share-form">
-    <h2 id="share-title">Add to a panel</h2>
+    <h2 id="share-title">Add to the panel</h2>
     <p class="dialog-note" id="share-note"></p>
-    <label>
-      Panel address
-      <input id="share-panel" type="url" placeholder="https://your-panel.example.com" autocomplete="off">
-    </label>
-    <label>
-      Panel password
-      <input id="share-password" type="password" autocomplete="current-password">
-    </label>
     <p id="share-err" class="row-err"></p>
     <div class="dialog-actions">
       <button type="button" id="share-cancel">Cancel</button>
@@ -261,6 +253,10 @@
     </div>
     <div class="meters"></div>
     <p class="usage-note" hidden></p>
+    <div class="card-actions mine-actions" hidden>
+      <span class="mine-note">You added this login.</span>
+      <button class="withdraw-btn subtle-btn danger" type="button">Take it back</button>
+    </div>
   </article>
 </template>
 

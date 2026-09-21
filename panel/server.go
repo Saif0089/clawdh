@@ -58,8 +58,6 @@ func (s *Server) Handler() http.Handler {
 	// The admin's own API. One GET builds the whole interface; the rest are
 	// the decisions.
 	mux.HandleFunc("GET /api/panel", s.admin(s.handlePanel))
-	mux.HandleFunc("POST /api/accounts", s.admin(s.handleAddAccount))
-	mux.HandleFunc("POST /api/accounts/{id}/login", s.admin(s.handleStoreLogin))
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.admin(s.handleRemoveAccount))
 	mux.HandleFunc("POST /api/people", s.admin(s.handleAddPerson))
 	mux.HandleFunc("DELETE /api/people/{id}", s.admin(s.handleRemovePerson))
@@ -88,9 +86,13 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/v1/jobs/{id}/result", s.device(s.handleJobResult))
 	}
 
-	// What an enrolled machine speaks.
+	// What an enrolled machine speaks. Its enrolment is the only credential a
+	// machine ever needs: to hear what it may use, to hand up a login of its own,
+	// and to take that login back. The admin password is for this site alone.
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/checkin", s.device(s.handleCheckin))
+	mux.HandleFunc("POST /api/v1/accounts", s.device(s.handleContribute))
+	mux.HandleFunc("DELETE /api/v1/accounts/{id}", s.device(s.handleWithdraw))
 
 	// The public page an invite link opens. No session: it reveals only whether
 	// this one code is still good.

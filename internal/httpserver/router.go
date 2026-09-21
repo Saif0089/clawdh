@@ -34,6 +34,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/remote/trust", s.handleRemoteTrust)
 	mux.HandleFunc("GET /api/logins", s.handleListLogins)
 	mux.HandleFunc("POST /api/logins/add-to-panel", s.handleAddLoginToPanel)
+	mux.HandleFunc("POST /api/logins/withdraw", s.handleWithdrawFromPanel)
 	mux.HandleFunc("/panel/", s.handlePanelProxy)
 
 	mux.Handle("/", webui.Handler())

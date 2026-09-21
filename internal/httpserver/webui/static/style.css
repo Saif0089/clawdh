@@ -328,6 +328,9 @@ button.subtle-btn:hover { background: var(--raised-2); }
 }
 
 .shared-card .run-line { margin-top: 12px; }
+/* A login you handed up: one quiet line and the way to take it back. */
+.mine-actions { align-items: center; justify-content: space-between; }
+.mine-note { font-size: 13px; color: var(--muted); }
 
 /* ---- connect + connected ------------------------------------------- */
 

@@ -190,10 +190,17 @@ function renderAccounts(accounts) {
 
     // Add to panel: only meaningful once there is a login on this machine to
     // hand over. Kept visible but disabled otherwise, so the path is
-    // discoverable without pretending an empty account can be shared.
+    // discoverable without pretending an empty account can be shared. A login
+    // already on the panel (a share of it under this address) re-adds as a
+    // refresh, which is how a broken login is mended.
     const shareBtn = node.querySelector(".share-btn");
     if (login) {
-      shareBtn.addEventListener("click", () => openShareDialog(account, login));
+      const there = login.email && currentShares.find((sh) => sh.email && sh.email.toLowerCase() === login.email.toLowerCase());
+      if (there) {
+        shareBtn.textContent = "Refresh on panel";
+        shareBtn.title = `Already on the panel as ${there.account}; this hands up a fresh login.`;
+      }
+      shareBtn.addEventListener("click", () => openShareDialog(account, login, there));
     } else {
       shareBtn.disabled = true;
       shareBtn.title = "Sign this account in first, then it can be shared.";
@@ -373,12 +380,24 @@ async function removeAccount(account, isDefault) {
 
 // --- shared accounts ---------------------------------------------------
 
+// currentShares is what the last panel refresh said this machine may run, kept
+// so an account card can tell whether its login is already up there.
+let currentShares = [];
+
 function renderShared(shares) {
+  currentShares = shares || [];
   sharedBlock.hidden = !(shares && shares.length);
   sharedList.innerHTML = "";
   for (const sh of shares || []) {
     const node = sharedRowTemplate.content.cloneNode(true);
     node.querySelector(".account-name").textContent = sh.account;
+    // A login this person handed up is theirs to take back; nobody else's
+    // card offers it.
+    if (sh.contributed && sh.accountId) {
+      const mine = node.querySelector(".mine-actions");
+      mine.hidden = false;
+      mine.querySelector(".withdraw-btn").addEventListener("click", () => withdrawFromPanel(sh));
+    }
     const cmd = sharedRunCommand(sh.slug);
     node.querySelector(".run-cmd").textContent = cmd;
     const copyBtn = node.querySelector(".copy-cmd");
@@ -490,6 +509,23 @@ function parseInvite(text) {
   return null;
 }
 
+// withdrawFromPanel takes a login this person added back off the panel.
+// Everyone sharing it loses access — that is what taking it back means.
+async function withdrawFromPanel(sh) {
+  if (!confirm(`Take ${sh.account} back off the panel?\n\nEveryone it is shared with loses access right away. The login stays signed in on this machine.`)) return;
+  try {
+    await api("/api/logins/withdraw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: sh.accountId }),
+    });
+    await refreshPanel();
+    refreshAccounts();
+  } catch (e) {
+    alert("Could not take it back: " + e.message);
+  }
+}
+
 async function disconnectFromPanel() {
   if (!confirm("Disconnect this machine? Shared accounts stop appearing here.")) return;
   try { await api("/api/panel/disconnect", { method: "POST" }); await refreshPanel(); }
@@ -503,17 +539,24 @@ function prettyURL(u) { try { return new URL(u).host; } catch { return u; } }
 const shareDialog = document.getElementById("share-dialog");
 let shareTarget = null;
 
-function openShareDialog(account, login) {
+// openShareDialog asks for one confirmation and nothing else: the login goes to
+// the panel this machine is joined to, as the person it joined as. A machine
+// joined to no panel is told what to do instead of shown a form.
+async function openShareDialog(account, login, there) {
+  let st = null;
+  try { st = await api("/api/panel"); } catch (_) {}
+  if (!st || !st.enrolled) {
+    alert("This machine isn't connected to a panel yet.\n\nAsk the panel's admin for an invite link and paste it under “Got an invite?” — after that, adding a login is one click.");
+    return;
+  }
   shareTarget = { account, login };
-  document.getElementById("share-title").textContent = `Share ${account.name}`;
-  document.getElementById("share-note").textContent =
-    "Adds this login to a panel so many people can use it at once through the gateway. Important: after this, run it only through the gateway (claude-… under “Shared with you”), not this local one — using the same login both ways breaks it for everyone.";
+  const who = login.email || account.name;
+  document.getElementById("share-title").textContent = there ? `Refresh ${who} on the panel` : `Add ${who} to the panel`;
+  document.getElementById("share-note").textContent = there
+    ? `Hands a fresh login for ${there.account} up to ${prettyURL(st.server)}. Everyone sharing it keeps their access; use this after reconnecting a login that stopped working.`
+    : `Adds this login to ${prettyURL(st.server)} as ${st.personName || "you"}, so people you give access to can use it through the gateway, and you can take it back any time. Important: from then on run it through the gateway (its command under “Shared with you”), not this local one — using the same login both ways breaks it for everyone.`;
   document.getElementById("share-err").textContent = "";
-  document.getElementById("share-password").value = "";
-  // Prefill the panel address from wherever this machine is already connected.
-  api("/api/panel").then((st) => {
-    if (st && st.server) document.getElementById("share-panel").value = st.server;
-  }).catch(() => {});
+  document.getElementById("share-go").textContent = there ? "Refresh it" : "Add it";
   shareDialog.showModal();
 }
 
@@ -521,31 +564,32 @@ document.getElementById("share-cancel").addEventListener("click", () => shareDia
 document.getElementById("share-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!shareTarget) return;
-  const panelURL = document.getElementById("share-panel").value.trim();
-  const password = document.getElementById("share-password").value;
   const err = document.getElementById("share-err");
   err.textContent = "";
-  if (!panelURL || !password) { err.textContent = "Enter the panel address and password."; return; }
   const go = document.getElementById("share-go");
+  const label = go.textContent;
   go.disabled = true; go.textContent = "Adding…";
   try {
-    await api("/api/logins/add-to-panel", {
+    const out = await api("/api/logins/add-to-panel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         configDir: shareTarget.account.configDir || "",
+        name: shareTarget.account.name || "",
         email: shareTarget.login.email || "",
         plan: shareTarget.login.plan || "",
-        panel: panelURL,
-        password,
       }),
     });
     shareDialog.close();
-    alert(`${shareTarget.account.name} is on the panel — open it to give people access.\n\nFrom now on, use this account through the gateway (its claude-… command under "Shared with you"), not the local "${shareTarget.account.name}". Running the same login both ways rotates its token and breaks sharing.`);
+    await refreshPanel();
+    refreshAccounts();
+    if (!out.refreshed) {
+      alert(`${out.added} is on the panel. It's under “Shared with you” here — run it from there from now on, not as the local "${shareTarget.account.name}".\n\nOpen the panel to give other people access.`);
+    }
   } catch (e2) {
     err.textContent = e2.message;
   } finally {
-    go.disabled = false; go.textContent = "Add it";
+    go.disabled = false; go.textContent = label;
   }
 });
 
