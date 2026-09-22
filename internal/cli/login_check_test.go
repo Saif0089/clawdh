@@ -10,6 +10,7 @@ import (
 
 	"clawdh/internal/accounts"
 	"clawdh/internal/config"
+	"clawdh/internal/sessions"
 	"clawdh/internal/switching"
 )
 
@@ -189,7 +190,7 @@ func TestEditorTargetFallsBackWhenTheRecordedAccountHasNoLogin(t *testing.T) {
 	home := seedRunEnv(t)
 	dropLogin(t, home, "work", "work@example.com")
 	accountsDir := filepath.Join(home, ".clawdh", "accounts")
-	if err := writeEditorDefault(accountsDir, editorDefault{AccountID: "work", Name: "work"}); err != nil {
+	if err := writeNewSessionDefault(sessions.Default{AccountID: "work", Name: "work"}); err != nil {
 		t.Fatal(err)
 	}
 	accountsFile, _ := config.AccountsFile()
@@ -208,7 +209,7 @@ func TestEditorTargetFallsBackWhenTheRecordedAccountHasNoLogin(t *testing.T) {
 	}
 
 	list, _ := store.Load()
-	label := editorDefaultLabel(readEditorDefault(accountsDir), list, nil)
+	label := editorDefaultLabel(newSessionDefault(), list, nil)
 	if !strings.Contains(label, "not signed in on this machine") {
 		t.Errorf("editor label = %q, want it to say the account is not signed in", label)
 	}

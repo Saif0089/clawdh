@@ -299,6 +299,121 @@ button.subtle-btn:hover { background: var(--raised-2); }
   .run-cmd { white-space: normal; overflow-wrap: anywhere; font-size: 13.5px; }
 }
 
+/* ---- where new sessions start, and the two ways to run one ---------- */
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
+select {
+  appearance: none;
+  background: var(--raised-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239AA4B2' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center;
+  color: var(--ink); font: inherit; font-size: 14.5px;
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 32px 9px 12px; cursor: pointer; max-width: 100%;
+}
+select:hover { border-color: #3a4453; }
+select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+select:disabled { opacity: .55; cursor: default; }
+
+.start-panel {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--raised), var(--raised-2));
+  padding: 20px 22px;
+}
+.start-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.start-text { display: flex; flex-direction: column; gap: 3px; margin-right: auto; min-width: 0; }
+.start-label { color: var(--muted); font-size: 13.5px; }
+.start-account { font-size: 22px; font-weight: 660; letter-spacing: -0.02em; }
+.start-account.unset { color: var(--muted); font-weight: 560; }
+.start-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.start-note { margin: 14px 0 0; color: var(--faint); font-size: 13px; max-width: 70ch; }
+.start-note code, .lane-foot code {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  background: var(--sunken); border-radius: 5px; padding: 1px 5px;
+}
+.start-problem { margin: 12px 0 0; color: var(--warn); font-size: 13.5px; }
+.start-result { margin: 12px 0 0; color: var(--muted); font-size: 13.5px; }
+.start-result.ok { color: var(--ok); }
+.start-result.bad { color: var(--crit); }
+
+.lanes { margin-top: 18px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 760px) { .lanes { grid-template-columns: 1fr; } }
+.lane {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); padding: 18px 20px;
+}
+.lane h3 {
+  margin: 0 0 10px; font-size: 15.5px; font-weight: 640; letter-spacing: -0.01em;
+  display: flex; align-items: center; gap: 9px;
+}
+.lane-icon { width: 16px; height: 16px; flex: none; color: var(--primary); }
+.lane p { margin: 0; color: var(--muted); font-size: 14px; }
+.lane-state.ok { color: var(--ok); }
+.lane-state.warn { color: var(--warn); }
+.lane-cmd { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+.lane-cmd code {
+  flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
+  background: var(--sunken); border: 1px solid var(--line); border-radius: 9px;
+  padding: 9px 13px; font-family: var(--mono); font-size: 14px; color: var(--ink);
+}
+.lane-foot { margin-top: 12px !important; color: var(--faint) !important; font-size: 12.5px !important; }
+
+.editor-list { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.editor-list:empty { display: none; }
+.editor-chip {
+  font-size: 12.5px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); cursor: default;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.editor-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.editor-chip.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.editor-chip.on::before { background: var(--ok); }
+.editor-chip.off { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); }
+.editor-chip.off::before { background: var(--warn); }
+.editor-fix { font-size: 13px; padding: 7px 13px; }
+
+/* ---- what is running right now -------------------------------------- */
+
+.live-head { display: flex; align-items: center; gap: 18px 24px; flex-wrap: wrap; }
+.live-head > div:first-child { flex: 1 1 22rem; min-width: 0; }
+/* Pushed right whether or not it wrapped onto its own line, so it sits over
+   the per-session pickers below rather than floating loose under the text. */
+.live-all { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+/* An author `display` beats the UA's rule for [hidden], so without this the
+   control stays on screen — with an empty dropdown — when nothing is running. */
+.live-all[hidden] { display: none; }
+.live-all label { color: var(--muted); font-size: 13.5px; }
+.live-list { display: grid; gap: 10px; }
+.live-list:empty { display: none; }
+.live-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--raised); padding: 13px 16px;
+}
+.live-where { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.live-host {
+  font-size: 12.5px; font-weight: 600; letter-spacing: .01em;
+  padding: 3px 9px; border-radius: 999px; flex: none;
+  border: 1px solid var(--line); color: var(--muted); background: var(--sunken);
+}
+.live-host.editor { color: var(--primary-2); border-color: color-mix(in srgb, var(--primary-2) 35%, var(--line)); }
+.live-dir {
+  font-family: var(--mono); font-size: 13px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.live-spacer { flex: 1; min-width: 0; }
+.live-account { font-size: 14px; padding: 7px 30px 7px 11px; }
+.live-state { font-size: 12.5px; color: var(--muted); flex: none; }
+.live-state.bad { color: var(--crit); }
+.live-note { margin: 14px 0 0; color: var(--faint); font-size: 12.5px; max-width: 78ch; }
+@media (max-width: 560px) {
+  .live-row { align-items: stretch; }
+  .live-spacer { display: none; }
+  .live-account { width: 100%; }
+}
+
 /* ---- meters -------------------------------------------------------- */
 
 .meters { margin-top: 18px; display: grid; gap: 16px; }
@@ -326,6 +441,10 @@ button.subtle-btn:hover { background: var(--raised-2); }
   display: flex; gap: 8px; flex-wrap: wrap;
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
 }
+/* An author `display` beats the UA's rule for [hidden]. Without this, the
+   "you added this login / take it back" row showed on every shared account,
+   offering to withdraw one the panel would refuse to let you withdraw. */
+.card-actions[hidden] { display: none; }
 
 .shared-card .run-line { margin-top: 12px; }
 /* A login you handed up: one quiet line and the way to take it back. */

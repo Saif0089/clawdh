@@ -41,6 +41,9 @@ hash, so moving to the narrower one keeps every existing login working. clawdh:
   shell rc that runs the same supervisor. It steps aside — running Claude Code
   directly — inside an existing session, with no terminal (scripts, pipes, CI),
   when clawdh is not on PATH, or with `CLAWDH_WRAP=0` set.
+- shows every session it is supervising — terminal or editor chat — and moves
+  any of them, or all of them, to another account from the page, with no command
+  to remember,
 - runs as a per-user background service that starts at login and serves the
   UI at `http://127.0.0.1:47932`.
 
@@ -161,23 +164,43 @@ revoking their share makes it stop working on the next request. The panel binds
 `127.0.0.1` unless you give it `--addr`, and both the panel and the gateway
 should be behind TLS.
 
-## VS Code, Cursor, and the rest
+## Terminal, editor, and moving between accounts
 
-Nothing to run. If an editor has the Claude Code extension installed, clawdh
-configures it by setting the extension's `claudeCode.claudeProcessWrapper` to
-clawdh, so clawdh launches Claude on the extension's behalf. You open the editor as
-usual and start a chat as usual.
+There are two places to use an account, and the page's first section — **Running
+Claude here** — is about both.
 
-What that buys is the same thing the terminal gets: **every chat is a
-supervised session of its own**, so typing `clawdh <name>` — or `clawdh shared
-<name>` — in one chat restarts that chat on the other account with the
-conversation resumed, and leaves every other chat and every terminal where it
-was. As in a terminal, anything running inside the chat at that moment does not
-survive the restart. New chats start on the account `clawdh editor <name>` last
-set — one of your logins, or a share (`clawdh editor shared <name>` when a login
-and a share go by the same name) — or your default login if it was never set;
-`clawdh editor` on its own says what each editor is set to. Chats already open
-keep the account they started with until you switch or restart them.
+**In a terminal**, an account is one command: `clawdh <name>` (or `clawdh shared
+<name>`). Each account's card shows its own.
+
+**In an editor**, there is nothing to run. If VS Code, Cursor, VSCodium or
+Windsurf has the Claude Code extension installed, the clawdh service points the
+extension's `claudeCode.claudeProcessWrapper` at clawdh, so clawdh launches Claude
+on the extension's behalf. You open a chat exactly as you always did. The page
+names each editor it found and whether that is set up, because "is clawdh
+actually doing anything in my editor" is otherwise unanswerable; **Set up
+editors** repairs it if an editor was installed since the service started.
+
+Either way, **every session is supervised and can be moved**: a chat, a terminal,
+one at a time or all at once.
+
+- **Where new work starts.** One setting, on the page: pick an account and press
+  **Use for everything**. Every new chat an editor opens and every plain `claude`
+  in a terminal starts there. `clawdh <name>` still names an account outright and
+  is unaffected. (`clawdh editor <name>` sets the same thing from a terminal and
+  still works; a setting written by an older clawdh is adopted on first read.)
+- **What is running now.** The page lists every supervised session — each one
+  marked Terminal or by its editor's name, with the folder it was started in —
+  and the account beside it is a picker. Change it and that conversation restarts
+  on the other account, resumed, while every other chat and terminal stays put.
+  **Move every session to** does the lot; **Use for everything** does the lot and
+  sets where new ones start.
+- **From inside a chat**, the original way still works and needs no page: type
+  `clawdh <name>` (or `clawdh shared <name>`) as the prompt.
+
+A move is a genuine relaunch, so the conversation survives but anything running
+inside it at that moment — a subagent, a workflow, a background task — does not.
+Sessions started before clawdh was installed, or outside it, are not supervised:
+they are not listed and cannot be moved.
 
 Editors without the extension are left alone, `settings.json` keeps its comments
 and formatting (one value is edited in place), and `CLAWDH_MANAGE_EDITORS=0` in the

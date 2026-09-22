@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +11,7 @@ import (
 	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
 	"clawdh/internal/service"
+	"clawdh/internal/sessions"
 	"clawdh/internal/switching"
 	"clawdh/panel"
 )
@@ -128,44 +128,24 @@ func runClaudeAs(bin string, args, env []string) int {
 	return 0
 }
 
-// editorDefault is what `clawdh editor <name>` recorded: the account every new
-// conversation in an editor starts as. One of AccountID (a local login) or
-// Shared (a gateway share's slug) is set. Name and ConfigDir are as they were
-// when it was recorded — for reading by anything that finds the file later —
-// and are not what the launch uses: the account is resolved live, so a
-// rename, a re-login, or a revoked share is seen.
-type editorDefault struct {
-	AccountID string `json:"accountId,omitempty"`
-	Shared    string `json:"shared,omitempty"`
-	Name      string `json:"name"`
-	ConfigDir string `json:"configDir,omitempty"`
-}
-
-func editorDefaultPath(accountsDir string) string {
-	return filepath.Join(filepath.Dir(accountsDir), "editors", "default.json")
-}
-
-// readEditorDefault returns the recorded default, or the zero value when there
-// is none (or it cannot be read — the same thing, for a launch).
-func readEditorDefault(accountsDir string) editorDefault {
-	var rec editorDefault
-	if data, err := os.ReadFile(editorDefaultPath(accountsDir)); err == nil {
-		_ = json.Unmarshal(data, &rec)
+// newSessionDefault is the account new sessions start as — an editor's chats
+// and a plain `claude` alike (see sessions.Default). Reading it goes through
+// one path so the page, the CLI and a launch can never disagree about it.
+func newSessionDefault() sessions.Default {
+	path, err := config.NewSessionDefaultFile()
+	if err != nil {
+		return sessions.Default{}
 	}
-	return rec
+	return sessions.ReadDefault(path)
 }
 
-// writeEditorDefault records the account an editor's conversations start as.
-func writeEditorDefault(accountsDir string, rec editorDefault) error {
-	dir := filepath.Dir(editorDefaultPath(accountsDir))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(rec, "", "  ")
+// writeNewSessionDefault records the account new sessions start as.
+func writeNewSessionDefault(d sessions.Default) error {
+	path, err := config.NewSessionDefaultFile()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(editorDefaultPath(accountsDir), data, 0o600)
+	return sessions.WriteDefault(path, d)
 }
 
 // editorTarget is the session target an editor's new conversation starts as:
@@ -175,7 +155,7 @@ func writeEditorDefault(accountsDir string, rec editorDefault) error {
 // to the local default rather than failing the editor — with a word on stderr
 // (never stdout, the editor's protocol channel) about why.
 func editorTarget(store *accounts.Store, accountsDir, claudeJSON, sharesPath string) (sessionTarget, bool) {
-	rec := readEditorDefault(accountsDir)
+	rec := newSessionDefault()
 	if rec.Shared != "" {
 		if t, err := resolveHandoffTarget(switching.Handoff{Account: rec.Shared, Shared: true}, store, accountsDir, claudeJSON, sharesPath); err == nil {
 			return t, true
@@ -208,7 +188,7 @@ func editorTarget(store *accounts.Store, accountsDir, claudeJSON, sharesPath str
 // editorDefaultLabel says what the recorded default is, resolved against what
 // exists now — the live account name and its command, as `clawdh list` shows
 // them — so `clawdh editor` and `clawdh list` never disagree about a name.
-func editorDefaultLabel(rec editorDefault, list []accounts.Account, shares []panel.GatewayShare) string {
+func editorDefaultLabel(rec sessions.Default, list []accounts.Account, shares []panel.GatewayShare) string {
 	switch {
 	case rec.Shared != "":
 		for _, sh := range shares {

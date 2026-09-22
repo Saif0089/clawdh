@@ -14,6 +14,7 @@ import (
 
 	"clawdh/internal/accounts"
 	"clawdh/internal/config"
+	"clawdh/internal/sessions"
 	"clawdh/internal/switching"
 )
 
@@ -668,5 +669,152 @@ func TestRunClaudeOnceStopsOnRevocation(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the supervisor did not stop the session when its account was revoked")
+	}
+}
+
+// The page can only show and move what it can see. A supervisor publishes
+// itself for as long as it runs — naming the conversation and the account it
+// is on — and takes the entry away when the session ends, so what the page
+// lists is what is actually running.
+func TestSupervisorPublishesItselfWhileItRuns(t *testing.T) {
+	home := seedRunEnv(t)
+	registerDir := filepath.Join(home, ".clawdh", "sessions")
+
+	var whileRunning []sessions.Session
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, _ onSwitch) (int, bool) {
+		whileRunning = sessions.List(registerDir)
+		return 0, false
+	}
+
+	if code := cmdRun([]string{"ehti"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d, want 0", code)
+	}
+	if len(whileRunning) != 1 {
+		t.Fatalf("the register held %d sessions while one ran, want 1", len(whileRunning))
+	}
+	got := whileRunning[0]
+	if got.PID != os.Getpid() || got.AccountID != "ehti" || got.Slug != "ehti" {
+		t.Errorf("published %+v, want this process running as ehti", got)
+	}
+	if got.Host != sessions.HostTerminal {
+		t.Errorf("host = %q, want a terminal session", got.Host)
+	}
+	if got.SessionID == "" || got.Nonce == "" || got.Handoff == "" {
+		t.Errorf("published %+v, want the conversation, the stamp and the handoff path", got)
+	}
+	if after := sessions.List(registerDir); len(after) != 0 {
+		t.Errorf("the register still lists %d sessions after the session ended", len(after))
+	}
+}
+
+// A switch staged for a session that has since ended must never be acted on by
+// whichever supervisor happened to inherit its pid: it would move a conversation
+// nobody asked to move. The stamp is what tells them apart.
+func TestSupervisorIgnoresAHandoffStampedForAnotherSession(t *testing.T) {
+	home := seedRunEnv(t)
+	seedTranscript(t, home, "sess-1")
+
+	launches, handled := 0, false
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, applyInPlace onSwitch) (int, bool) {
+		launches++
+		if launches == 1 {
+			handled = applyInPlace(switching.Handoff{Account: "work", SessionID: "sess-1", For: "not-this-supervisor"})
+		}
+		return 0, false
+	}
+
+	if code := cmdRun([]string{"ehti"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d, want 0", code)
+	}
+	if !handled {
+		t.Error("the supervisor took a switch stamped for another session as its own")
+	}
+	if launches != 1 {
+		t.Errorf("launches = %d, want 1: nothing should have been relaunched", launches)
+	}
+}
+
+// The stamp only guards against a switch aimed elsewhere. One with no stamp is
+// what every in-session `clawdh <name>` writes, and still switches.
+func TestSupervisorTakesAnUnstampedHandoff(t *testing.T) {
+	home := seedRunEnv(t)
+	seedTranscript(t, home, "sess-1")
+
+	launches := 0
+	var second []string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, applyInPlace onSwitch) (int, bool) {
+		launches++
+		if launches == 1 {
+			h := switching.Handoff{Account: "work", SessionID: "sess-1"}
+			if applyInPlace(h) {
+				t.Error("an unstamped switch was refused")
+			}
+			_ = switching.WriteHandoff(handoff, h)
+			return 0, true
+		}
+		second = args
+		return 0, false
+	}
+
+	if code := cmdRun([]string{"ehti"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d, want 0", code)
+	}
+	if launches != 2 {
+		t.Fatalf("launches = %d, want the session relaunched on the other account", launches)
+	}
+	if !slices.Contains(second, "--resume") || !slices.Contains(second, "sess-1") {
+		t.Errorf("relaunch args = %v, want the conversation resumed", second)
+	}
+}
+
+// The page's own path, end to end: it reads the session's stamp out of the
+// register and stages a switch carrying it, and the supervisor relaunches the
+// conversation on the other account exactly as the typed command would.
+func TestSupervisorTakesAHandoffStampedForItself(t *testing.T) {
+	home := seedRunEnv(t)
+	seedTranscript(t, home, "sess-1")
+	registerDir := filepath.Join(home, ".clawdh", "sessions")
+
+	launches := 0
+	var second []string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, applyInPlace onSwitch) (int, bool) {
+		launches++
+		if launches == 1 {
+			// Exactly what the page does: find this session, take its stamp,
+			// and stage the switch with it.
+			live := sessions.List(registerDir)
+			if len(live) != 1 {
+				t.Fatalf("the register held %d sessions, want the one that is running", len(live))
+			}
+			h := switching.Handoff{Account: "work", SessionID: live[0].SessionID, For: live[0].Nonce}
+			if applyInPlace(h) {
+				t.Fatal("a switch stamped for this very session was refused")
+			}
+			_ = switching.WriteHandoff(handoff, h)
+			return 0, true
+		}
+		second = args
+		return 0, false
+	}
+
+	if code := cmdRun([]string{"ehti"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d, want 0", code)
+	}
+	if launches != 2 {
+		t.Fatalf("launches = %d, want the session relaunched on the other account", launches)
+	}
+	if !slices.Contains(second, "--session-id") && !slices.Contains(second, "--resume") {
+		t.Errorf("relaunch args = %v, want the conversation carried over", second)
+	}
+	if live := sessions.List(registerDir); len(live) != 0 {
+		t.Errorf("the register still lists %d sessions after the session ended", len(live))
 	}
 }

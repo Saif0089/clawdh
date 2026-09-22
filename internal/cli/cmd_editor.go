@@ -9,6 +9,7 @@ import (
 	"clawdh/internal/config"
 	"clawdh/internal/editors"
 	"clawdh/internal/service"
+	"clawdh/internal/sessions"
 	"clawdh/internal/switching"
 	"clawdh/panel"
 )
@@ -68,7 +69,7 @@ func cmdEditor(args []string) int {
 	}
 
 	if len(args) == 0 {
-		reportEditors(installed, readEditorDefault(accountsDir), list, shares)
+		reportEditors(installed, newSessionDefault(), list, shares)
 		return 0
 	}
 
@@ -98,7 +99,7 @@ func cmdEditor(args []string) int {
 
 	// The account every new conversation starts as. The wrapper reads this
 	// each time the editor launches Claude.
-	if err := writeEditorDefault(accountsDir, rec); err != nil {
+	if err := writeNewSessionDefault(rec); err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
 	}
@@ -130,28 +131,28 @@ func cmdEditor(args []string) int {
 // resolveEditorChoice turns the words after `clawdh editor` into a recorded
 // default and the label to confirm it by. A local account wins a bare name;
 // `shared <name>` asks for the share outright.
-func resolveEditorChoice(args []string, list []accounts.Account, shares []panel.GatewayShare) (editorDefault, string, bool) {
+func resolveEditorChoice(args []string, list []accounts.Account, shares []panel.GatewayShare) (sessions.Default, string, bool) {
 	name, sharedOnly := args[0], false
 	if len(args) >= 2 && args[0] == "shared" {
 		name, sharedOnly = args[1], true
 	}
 	if !sharedOnly {
 		if acct, ok := switching.ResolveAccount(list, name); ok {
-			return editorDefault{AccountID: acct.ID, Name: displayName(acct), ConfigDir: acct.ConfigDir},
+			return sessions.Default{AccountID: acct.ID, Name: displayName(acct), ConfigDir: acct.ConfigDir},
 				fmt.Sprintf("%s (clawdh %s)", displayName(acct), acct.Slug), true
 		}
 	}
 	for _, sh := range shares {
 		if strings.EqualFold(sh.Slug, name) {
-			return editorDefault{Shared: sh.Slug, Name: sh.Account},
+			return sessions.Default{Shared: sh.Slug, Name: sh.Account},
 				fmt.Sprintf("%s (clawdh shared %s)", sh.Account, sh.Slug), true
 		}
 	}
-	return editorDefault{}, "", false
+	return sessions.Default{}, "", false
 }
 
 // reportEditors says what each editor is set to.
-func reportEditors(installed []editors.Editor, rec editorDefault, list []accounts.Account, shares []panel.GatewayShare) {
+func reportEditors(installed []editors.Editor, rec sessions.Default, list []accounts.Account, shares []panel.GatewayShare) {
 	def := editorDefaultLabel(rec, list, shares)
 	for _, ed := range installed {
 		switch {

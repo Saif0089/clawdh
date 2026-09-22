@@ -39,6 +39,14 @@ type Handoff struct {
 	Account   string `json:"account"`
 	SessionID string `json:"sessionId"`
 	Shared    bool   `json:"shared,omitempty"`
+	// For is the nonce of the supervisor this switch was aimed at, set by a
+	// writer that picked its target out of the session register rather than by
+	// being inside the session — the local page, in practice. A supervisor
+	// ignores a handoff stamped for someone else, so a switch aimed at a
+	// session that ended before it was read cannot be acted on by an unrelated
+	// supervisor that inherited its pid. Empty from every in-session writer,
+	// which is already talking to its own supervisor and needs no stamp.
+	For string `json:"for,omitempty"`
 }
 
 // ParseTrigger reports whether a submitted prompt is a switch command and, if

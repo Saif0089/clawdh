@@ -9,25 +9,35 @@
 (function () {
   "use strict";
 
-  var SEEN = "clawdh:intro:v1";
+  var SEEN = "clawdh:intro:v2";
   function seen() { try { return localStorage.getItem(SEEN) === "1"; } catch (e) { return false; } }
   function markSeen() { try { localStorage.setItem(SEEN, "1"); } catch (e) { /* private mode */ } }
   var reduce = false;
   try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { /* old browser */ }
 
   var TRACKS = {
+    // Someone who just wants to use their own accounts here — most often the
+    // person who works in VS Code and could not tell whether clawdh applied to
+    // them at all, because everything the page said was a terminal command.
+    using: [
+      { target: "#start-picker", alt: "#run-block", title: "1 · Where new work starts", body: "Pick the account every new session runs as, then press Use for everything. It covers editor chats and terminals alike." },
+      { target: "#editor-lane", title: "2 · In an editor", body: "Nothing to install and no command to type. clawdh is already in VS Code and Cursor, so each chat is its own session on the account you chose." },
+      { target: "#live-block", alt: "#live-list", title: "3 · Moving what's running", body: "Sessions you have open are listed here. Change the account beside one and that conversation restarts on it, resumed — the others stay put." },
+      { title: "That's it", body: "Your accounts and their usage are on the cards below. In a chat you can also type  clawdh <name>  to move just that one." },
+    ],
     admin: [
       { target: "#signin-btn", alt: "#signin-first", title: "1 · Sign in the account", body: "Sign in the Claude login you want to lend to your team." },
       { target: ".share-btn", title: "2 · Add it to a panel", body: "Add that login to your team's panel — the gateway hands it out and takes it back, so nobody ever copies your login." },
+      { target: "#run-block", title: "3 · Using it yourself", body: "To work on an account here, set it at the top of this page. That covers your editor chats as well as your terminals." },
       { title: "That's it", body: "Then give people access, set quotas and watch usage on the panel." },
     ],
     member: [
       { target: "#invite-input", alt: "#connect-block", title: "1 · Paste your invite", body: "Got a link from someone? Paste it here and hit Connect." },
-      { title: "2 · Run it", body: "Then run  clawdh shared <name>  in your terminal — your session switches to the shared account in place." },
+      { target: "#start-picker", alt: "#run-block", title: "2 · Run it", body: "Pick it at the top of this page and press Use for everything — editor chats and terminals both start on it. In a terminal you can also type  clawdh shared <name>." },
       { target: "#shared-block", title: "Shared with you", body: "Accounts shared with you show up here, each one ready to run." },
     ],
   };
-  var ROLE = { title: "Welcome to clawdh", body: "This is your machine's clawdh page. What brings you here?" };
+  var ROLE = { title: "Welcome to clawdh", body: "This page runs Claude Code accounts on this machine — in your terminal and in your editor. What brings you here?" };
 
   var root = null, track = null, idx = 0;
 
@@ -114,8 +124,9 @@
       placeSpot(null);
       addTitle(card, ROLE.title, ROLE.body);
       var choices = elc("div", "tour-choices");
-      choices.appendChild(choice("I'm sharing an account", "admin"));
-      choices.appendChild(choice("I'm using a shared one", "member"));
+      choices.appendChild(choice("I'm using my own accounts here", "using"));
+      choices.appendChild(choice("I'm sharing an account with others", "admin"));
+      choices.appendChild(choice("I'm using one someone shared", "member"));
       card.appendChild(choices);
       foot(card, 0);
       positionCard(null);

@@ -194,6 +194,32 @@ func SharedSessionsFile() (string, error) {
 	return filepath.Join(base, "shared-sessions.tsv"), nil
 }
 
+// SessionsDir is where each supervised Claude Code session publishes itself
+// while it runs: one small file per session naming the process, the
+// conversation, and the account it is on. It is what lets the page show what
+// is running and move a conversation to another account without the person
+// having to know the command for it.
+//
+// Facts about processes, never credentials, and never what is being said.
+func SessionsDir() (string, error) {
+	base, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "sessions"), nil
+}
+
+// NewSessionDefaultFile records the account new sessions start as — every chat
+// an editor opens and a plain `claude` in a terminal. `clawdh <name>` names an
+// account outright and is unaffected.
+func NewSessionDefaultFile() (string, error) {
+	base, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "new-sessions.json"), nil
+}
+
 // WindowsFile is where a machine caches the gateway's captured 5h/weekly
 // utilisation for the accounts shared with it (from each check-in), so the page
 // can show usage for a login the gateway holds without touching that login's

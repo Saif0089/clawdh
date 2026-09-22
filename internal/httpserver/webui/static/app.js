@@ -133,6 +133,11 @@ async function loadLogins() {
   }
 }
 
+// currentAccounts is the last list the server gave, kept so the sessions block
+// can offer the same accounts the cards below show — one page, one answer to
+// "which accounts are there".
+let currentAccounts = [];
+
 let accountsGeneration = 0;
 async function loadAccounts() {
   const generation = accountsGeneration;
@@ -158,6 +163,7 @@ function listSignature(accounts) {
 let renderedSignature = null;
 
 function renderAccounts(accounts) {
+  currentAccounts = accounts;
   const signature = listSignature(accounts);
   if (signature === renderedSignature && accountsList.children.length === accounts.length) {
     refreshVisibleUsage(accounts);
@@ -798,6 +804,8 @@ async function poll() {
     await loadLogins();
     await loadAccounts();
     await refreshPanel();
+    // Last: it offers the accounts and shares the two reads above just loaded.
+    if (typeof refreshSessions === "function") await refreshSessions();
     refreshedLabel.textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   } catch (err) {
     refreshedLabel.textContent = "could not refresh: " + err.message;

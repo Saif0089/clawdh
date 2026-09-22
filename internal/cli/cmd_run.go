@@ -18,6 +18,7 @@ import (
 	"clawdh/internal/claudebin"
 	"clawdh/internal/config"
 	"clawdh/internal/service"
+	"clawdh/internal/sessions"
 	"clawdh/internal/statusline"
 	"clawdh/internal/switching"
 	"clawdh/panel"
@@ -113,6 +114,13 @@ func cmdRun(args []string) int {
 	}
 	acct, ok := switching.ResolveAccount(list, startName)
 	if auto {
+		// A plain `claude` starts on whatever new sessions are set to, which may
+		// be an account shared through the gateway — a target no local account
+		// lookup can express, so it is run the way `clawdh shared` runs it, and
+		// supervised just the same.
+		if sh, ok := autoShare(); ok {
+			return launchSharedSupervised(sh.Gateway, sh.Key, sh.Slug, passthrough)
+		}
 		acct, ok = autoAccount(list)
 		if !ok {
 			// Nothing to supervise (no default account registered yet): let
@@ -210,6 +218,7 @@ type sessionTarget struct {
 	display   string   // for the switch message and the revocation notice
 	env       []string // the environment to launch claude with (before the supervisor vars)
 	accountID string   // for the revocation poll; "" for a share (never locally revoked)
+	slug      string   // the name it is run by: an account's slug, or a share's
 	ownerDir  string   // the usage-ledger owner (an account's ConfigDir), recorded only when local
 	local     bool     // a local account (record ownership, apply identity, poll for revocation) vs a share
 	applyID   func()   // point ~/.claude.json at this account for /status; nil for a share
@@ -222,6 +231,7 @@ func localTarget(acct accounts.Account, accountsDir, claudeJSON string) sessionT
 		display:   displayName(acct),
 		env:       accounts.EnvForSharedConfig(acct.ConfigDir),
 		accountID: acct.ID,
+		slug:      acct.Slug,
 		ownerDir:  acct.ConfigDir,
 		local:     true,
 		applyID:   func() { applyIdentity(acct, accountsDir, claudeJSON) },
@@ -264,6 +274,20 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 	// the one thing remote help may ever look at. Personal sessions never enter it.
 	recordSharedSession(target, sessionID)
 
+	// Publish this session so the page can show it and move it. The nonce goes
+	// with it: a switch staged from the page carries the nonce of the session it
+	// was aimed at, so one aimed at a session that has since ended can never be
+	// picked up by an unrelated supervisor that inherited its pid.
+	registerDir, _ := config.SessionsDir()
+	nonce := sessions.NewNonce()
+	publish := func(t sessionTarget, id string) {
+		if registerDir == "" {
+			return
+		}
+		_ = sessions.Publish(registerDir, describeSession(t, id, nonce, handoff))
+	}
+	defer sessions.Withdraw(registerDir, os.Getpid())
+
 	// One signal channel for the life of the supervisor, not one per launch. A
 	// signal that landed between two launches — during a switch, while the
 	// hook's message was still on its way to the screen — met Go's default
@@ -288,6 +312,7 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 	assertIdentity := true
 	sessionArgs := launchArgs
 	for {
+		publish(target, sessionID)
 		if target.applyID != nil && assertIdentity {
 			target.applyID()
 		}
@@ -320,6 +345,9 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		// runs, so a write here corrupts the TUI mid-paint; the reply goes back
 		// through the outcome file to the hook that staged the switch.
 		code, switched := claudeRunner(claudeBin, sessionArgs, env, handoff, target.accountID, func(h switching.Handoff) bool {
+			if h.For != "" && h.For != nonce {
+				return true // staged for a session that has ended, not for this one
+			}
 			next, err := resolve(h)
 			if err != nil {
 				switching.WriteOutcome(handoff, switching.Outcome{Message: err.Error()})
@@ -508,16 +536,29 @@ func sharedClaudeDir(home string) string {
 	return filepath.Join(home, ".claude")
 }
 
-// autoAccount is the account a plain `claude` would have run as: the one whose
-// directory the shell already points at (someone who exported
-// CLAUDE_SECURESTORAGE_CONFIG_DIR by hand, or one of clawdh's own aliases), and
-// otherwise the default login — which is exactly what `claude` does with no
-// variables set at all.
+// autoAccount is the account a plain `claude` runs as, in the order that
+// respects what the person most recently and most specifically said:
+//
+//   - the account the shell already points at, because someone exported
+//     CLAUDE_SECURESTORAGE_CONFIG_DIR by hand or is inside a `clawdh <name>`
+//     session — naming an account outright always wins;
+//   - whatever new sessions are set to on the page, when its login is still
+//     here. A login that has gone (handed to the gateway, signed out) falls
+//     through rather than starting a session that can do nothing;
+//   - the machine's default login, which is what `claude` does with no
+//     variables set at all.
 func autoAccount(list []accounts.Account) (accounts.Account, bool) {
 	if dir := strings.TrimSpace(os.Getenv(accounts.SecureStorageEnvVar)); dir != "" {
 		want := filepath.Clean(dir)
 		for _, a := range list {
 			if a.ConfigDir != "" && strings.EqualFold(filepath.Clean(a.ConfigDir), want) {
+				return a, true
+			}
+		}
+	}
+	if rec := newSessionDefault(); rec.AccountID != "" {
+		for _, a := range list {
+			if a.ID == rec.AccountID && hasLogin(a) {
 				return a, true
 			}
 		}
@@ -528,6 +569,26 @@ func autoAccount(list []accounts.Account) (accounts.Account, bool) {
 		}
 	}
 	return accounts.Account{}, false
+}
+
+// autoShare is the gateway share a plain `claude` runs as, when new sessions
+// are set to one and it is still shared with this machine. A shell that
+// already points at a local account has named one outright, so it wins — the
+// same order autoAccount reads in.
+func autoShare() (panel.GatewayShare, bool) {
+	if strings.TrimSpace(os.Getenv(accounts.SecureStorageEnvVar)) != "" {
+		return panel.GatewayShare{}, false
+	}
+	rec := newSessionDefault()
+	if rec.Shared == "" {
+		return panel.GatewayShare{}, false
+	}
+	for _, sh := range sharedAccounts() {
+		if strings.EqualFold(sh.Slug, rec.Shared) {
+			return sh, true
+		}
+	}
+	return panel.GatewayShare{}, false
 }
 
 // runPlainClaude is the last resort for --auto: hand the terminal to Claude
@@ -698,4 +759,36 @@ func hasSessionArgs(args []string) bool {
 		}
 	}
 	return false
+}
+
+// describeSession is this session as the register holds it: what is running,
+// as whom, and where it is being typed. A local account is named by its id and
+// a share by its slug, which is also how a reader tells the two apart.
+func describeSession(t sessionTarget, sessionID, nonce, handoff string) sessions.Session {
+	s := sessions.Session{
+		PID:       os.Getpid(),
+		Nonce:     nonce,
+		SessionID: sessionID,
+		Account:   t.display,
+		Slug:      t.slug,
+		Handoff:   handoff,
+		StartedAt: time.Now(),
+		Host:      sessions.HostTerminal,
+	}
+	if t.local {
+		s.AccountID = t.accountID
+	} else {
+		s.Shared = true
+		if s.Slug == "" {
+			s.Slug = t.display // a share is run by its slug, which is its display name
+		}
+	}
+	if hostedByEditor {
+		s.Host = sessions.HostEditor
+		s.Editor = sessions.EditorName()
+	}
+	if dir, err := os.Getwd(); err == nil {
+		s.Dir = dir
+	}
+	return s
 }
