@@ -88,8 +88,30 @@ func pollAccountUsage(ctx context.Context, u *dbUpstream, client *usage.Client, 
 	if !ok {
 		return errors.New("the usage reply carried no session or weekly window")
 	}
-	u.RecordWindows(acct.ID, w)
+	u.RecordWindowsAndModels(acct.ID, w, modelsFromReport(report))
 	return nil
+}
+
+// modelsFromReport lifts the per-model weekly allowances out of a usage report.
+//
+// These are the bars the headers can never produce, so this poller is the only
+// place they enter the system — and the reason a shared account's page used to
+// show two bars where /usage shows three. An empty slice (not nil) when the
+// plan meters no model separately, so a stored reading is replaced rather than
+// left standing after a plan change.
+func modelsFromReport(r *usage.Report) []panel.ModelWindow {
+	out := []panel.ModelWindow{}
+	for _, l := range r.Limits {
+		if l.Kind != "weekly_scoped" {
+			continue
+		}
+		m := panel.ModelWindow{Label: l.Label, Percent: l.Percent}
+		if l.ResetsAt != nil {
+			m.ResetsAt = *l.ResetsAt
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // windowsFromReport lifts the two rolling windows the boards show — the

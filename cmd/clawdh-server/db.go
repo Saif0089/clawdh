@@ -180,8 +180,16 @@ func (u *dbUpstream) Record(ev gateway.Event) {
 // RecordWindows stores an account's real 5h / weekly utilisation, read by the
 // gateway off Anthropic's headers. Implements gateway.WindowRecorder, so the
 // same dbUpstream that meters usage also captures the window snapshot.
+// Nil models: a forwarded response's headers carry the two totals and nothing
+// per-model, so this leaves whatever the usage poller last stored standing.
 func (u *dbUpstream) RecordWindows(accountID string, w gateway.Windows) {
-	u.pg.RecordWindows(accountID, w.FiveH, w.SevenD, w.FiveHReset, w.SevenDReset)
+	u.pg.RecordWindows(accountID, w.FiveH, w.SevenD, w.FiveHReset, w.SevenDReset, nil)
+}
+
+// RecordWindowsAndModels stores a reading from the usage endpoint, which —
+// unlike the headers — reports each model's own weekly allowance too.
+func (u *dbUpstream) RecordWindowsAndModels(accountID string, w gateway.Windows, models []panel.ModelWindow) {
+	u.pg.RecordWindows(accountID, w.FiveH, w.SevenD, w.FiveHReset, w.SevenDReset, models)
 }
 
 // Status reports a person's quota standing (over the cap, and how close), cached

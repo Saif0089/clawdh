@@ -235,14 +235,29 @@ function renderAccounts(accounts) {
 
     accountsList.appendChild(node);
     refreshUsage(account, card);
+    renderAccountPeople(account, card);
   }
 }
 
 function refreshVisibleUsage(accounts) {
   for (const account of accounts) {
     const card = accountsList.querySelector(`.card[data-id="${CSS.escape(account.id)}"]`);
-    if (card) refreshUsage(account, card);
+    if (card) { refreshUsage(account, card); renderAccountPeople(account, card); }
   }
+}
+
+// A login this machine handed to the panel is being spent by other people too,
+// and its card is where its owner looks. The gateway sends who, keyed by the
+// login's email — the same pairing the server uses to put the gateway's
+// numbers on this card in the first place.
+function renderAccountPeople(account, card) {
+  const login = loginsByDir[account.configDir || ""];
+  const box = card.querySelector(".people");
+  if (!box) return;
+  if (!login || !login.email) { box.replaceChildren(); return; }
+  const share = currentShares.find((sh) =>
+    sh.window && sh.window.email && sh.window.email.toLowerCase() === login.email.toLowerCase());
+  renderPeople(box, share && share.window ? share.window.people : null);
 }
 
 // --- status ------------------------------------------------------------
@@ -437,12 +452,73 @@ function renderShared(shares) {
         { label: "Current session", percent: (w.fiveH || 0) * 100, resetsAt: w.fiveHReset },
         { label: "This week, all models", percent: (w.sevenD || 0) * 100, resetsAt: w.sevenDReset },
       ];
+      // The per-model weeks Claude meters separately — the bar that usually
+      // runs out first, and the one a shared card could not show at all until
+      // the gateway started sending it.
+      for (const m of (w.models || [])) {
+        limits.push({ label: m.label, percent: m.percent || 0, resetsAt: m.resetsAt });
+      }
       for (const limit of limits) meters.appendChild(buildMeter(limit, false));
-      const note = node.querySelector(".usage-note");
-      if (note) { note.hidden = false; note.textContent = "Read through the gateway."; }
+      renderPeople(node.querySelector(".people"), w.people);
     }
     sharedList.appendChild(node);
   }
+}
+
+// --- who spent the week ------------------------------------------------
+
+// A shared account is a shared cost, so the machine using it shows who has
+// been spending it — not only the panel's admin. The number is each person's
+// slice of the real weekly allowance, the same unit as the week's own bar
+// above it, so 100% can only ever mean the plan is gone.
+
+// Eight hues, picked by a stable hash of the name, so a colleague keeps the
+// same colour on every card and every machine. Colour identifies a person
+// here; it never carries how full anything is — the meters above do that.
+const PERSON_HUES = ["#6366F1", "#22C55E", "#F59E0B", "#EC4899", "#06B6D4", "#A855F7", "#14B8A6", "#F97316"];
+function personColor(name) {
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) >>> 0;
+  return PERSON_HUES[h % PERSON_HUES.length];
+}
+
+function renderPeople(box, people) {
+  if (!box) return;
+  box.replaceChildren();
+  if (!people || !people.length) return;
+  for (const p of people) {
+    const row = document.createElement("div");
+    row.className = "person";
+
+    const dot = document.createElement("span");
+    dot.className = "person-dot";
+    dot.style.background = personColor(p.name || "");
+
+    const name = document.createElement("span");
+    name.className = "person-name";
+    name.textContent = p.name || "Someone";
+
+    const bar = document.createElement("span");
+    bar.className = "person-bar";
+    const fill = document.createElement("span");
+    fill.className = "person-fill";
+    fill.style.width = Math.min(1, Math.max(0, p.ofWeekly || 0)) * 100 + "%";
+    fill.style.background = personColor(p.name || "");
+    bar.appendChild(fill);
+
+    const pct = document.createElement("span");
+    pct.className = "person-pct";
+    pct.textContent = formatPercent((p.ofWeekly || 0) * 100);
+
+    row.append(dot, name, bar, pct);
+    row.title = `${p.name} used ${pct.textContent} of this account's week`;
+    box.appendChild(row);
+  }
+}
+
+function formatPercent(p) {
+  if (p > 0 && p < 1) return p.toFixed(1) + "%";
+  return Math.round(p) + "%";
 }
 
 // --- join / connected --------------------------------------------------

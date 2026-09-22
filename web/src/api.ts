@@ -27,6 +27,10 @@ export interface AccountUsage {
   fiveHReset?: string; sevenDReset?: string; updatedAt: string; hasReading: boolean;
   people: { id: string; name: string; weighted: number; byModel: ModelUsage[]; ofWeekly: number }[];
   weighted: number; byModel: ModelUsage[];
+  // Per-model weekly allowances. Claude meters the top models separately, so an
+  // account can have half its week left and almost none of its Fable — which is
+  // the limit people actually hit.
+  models?: { label: string; percent: number; resetsAt?: string }[];
 }
 // A ceiling: a 0..1 share of the weekly window past which the subject is turned away.
 export interface Limit { id: string; subjectType: string; subjectId: string; maxPercent: number }

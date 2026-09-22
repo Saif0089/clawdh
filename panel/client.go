@@ -194,6 +194,43 @@ type ShareWindow struct {
 	FiveHReset  time.Time `json:"fiveHReset,omitempty"`
 	SevenDReset time.Time `json:"sevenDReset,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// Models are the per-model weekly allowances — the "This week, Fable" bar
+	// that /usage shows beside the two totals. See ModelWindow.
+	Models []ModelWindow `json:"models,omitempty"`
+	// People is who spent this account's week, largest first. A shared account
+	// is a shared cost: someone about to start a long run should be able to see
+	// that a colleague has already taken most of the week, without having to
+	// ask an admin to look at the panel for them. Nobody's own private login
+	// ever appears here — only accounts the panel is lending out.
+	People []SharePerson `json:"people,omitempty"`
+}
+
+// SharePerson is one person's slice of a shared account's real weekly
+// allowance: a share of the plan, not of each other, so it can be read against
+// the same bar as the week itself.
+type SharePerson struct {
+	Name     string  `json:"name"`
+	OfWeekly float64 `json:"ofWeekly"`
+	Weighted float64 `json:"weighted"`
+}
+
+// ModelWindow is one model's own weekly allowance on a plan: Claude meters the
+// top-tier models separately from the all-models week, so a subscription can
+// have plenty of its week left and none of its Fable.
+//
+// It reaches a machine only through the gateway. The utilisation headers that
+// ride on forwarded traffic carry the 5-hour and all-models windows and nothing
+// else, so for a shared login this bar was structurally absent — the page drew
+// two bars where /usage draws three, and the missing one was the one that runs
+// out first. The gateway holds the login, so it is the one place that can ask
+// the usage endpoint for the full set and pass it down.
+type ModelWindow struct {
+	// Label is Claude's own display name for the model, as the usage endpoint
+	// gives it ("Fable 5.1") — never a name clawdh invents, so the bar matches
+	// what /usage says.
+	Label    string    `json:"label"`
+	Percent  float64   `json:"percent"` // 0..100, as the endpoint reports it
+	ResetsAt time.Time `json:"resetsAt,omitzero"`
 }
 
 // Notice is one short, self-contained thing to tell the person at a machine.

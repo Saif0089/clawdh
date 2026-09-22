@@ -446,6 +446,18 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 		var limited *RateLimited
 		switch {
 		case errors.Is(err, ErrLoginRejected):
+			// A login the gateway holds is expected to be refused here: the
+			// copy on this machine is deliberately never refreshed, so its
+			// token is dead while the account itself is fine. Normally the
+			// clock catches that before a request is ever sent, but a skewed
+			// clock or a token that merely looks fresh lands here instead —
+			// and "reconnect it" is advice that breaks a shared login.
+			if report, note, ok := s.gatewayReading(configDir); ok {
+				snapshot.Usage = report
+				snapshot.Note = note
+				snapshot.Error = ""
+				return snapshot, shortTTL
+			}
 			snapshot.State = StateExpired
 		case errors.As(err, &limited):
 			// A refusal for asking too often says the login is fine —

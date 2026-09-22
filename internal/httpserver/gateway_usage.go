@@ -69,6 +69,21 @@ func windowReport(w panel.ShareWindow) *usage.Report {
 	}
 	add("session", "session", "Current session", w.FiveH, w.FiveHReset)
 	add("weekly_all", "weekly", "This week, all models", w.SevenD, w.SevenDReset)
+	// The per-model weeks Claude meters separately. Without these the card drew
+	// two bars where /usage draws three, and the absent one — the top model's —
+	// is the one that runs out first, so a person could be told they had half
+	// their week left by a page that could not see the limit stopping them.
+	for _, m := range w.Models {
+		l := usage.Limit{
+			Kind: "weekly_scoped", Group: "weekly", Label: m.Label,
+			Percent: m.Percent, Severity: severityFor(m.Percent / 100), Active: true,
+		}
+		if !m.ResetsAt.IsZero() {
+			t := m.ResetsAt
+			l.ResetsAt = &t
+		}
+		r.Limits = append(r.Limits, l)
+	}
 	return r
 }
 

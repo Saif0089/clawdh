@@ -128,10 +128,22 @@ function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
       </div>
 
       {a.hasReading ? (
-        <div className="mt-3.5 flex flex-col gap-4 sm:flex-row sm:gap-8">
-          <WindowMeter label="5-hour window" frac={a.fiveH} reset={a.fiveHReset} />
-          <WindowMeter label="Weekly window" frac={a.sevenD} reset={a.sevenDReset} />
-        </div>
+        <>
+          <div className="mt-3.5 flex flex-col gap-4 sm:flex-row sm:gap-8">
+            <WindowMeter label="5-hour window" frac={a.fiveH} reset={a.fiveHReset} />
+            <WindowMeter label="Weekly window" frac={a.sevenD} reset={a.sevenDReset} />
+          </div>
+          {/* The per-model weeks, which usually run out well before the week
+              itself does — an account can read 40% here and still refuse the
+              only model someone wants. */}
+          {(a.models || []).length > 0 && (
+            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:gap-8">
+              {(a.models || []).map((m) => (
+                <WindowMeter key={m.label} label={m.label.replace(/^This week,\s*/i, "")} frac={(m.percent || 0) / 100} reset={m.resetsAt} />
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <div className="mt-3 text-[13.5px] text-muted">No window reading yet — the gateway reads each login every few minutes.</div>
       )}

@@ -154,9 +154,14 @@ func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []
 			continue
 		}
 		acct, _ := d.Account(sh.AccountID)
+		var people []SharePerson
+		for _, p := range s.weeklyShares(ctx, d, acct.ID, w.SevenD, w.SevenDReset) {
+			people = append(people, SharePerson{Name: p.Name, OfWeekly: p.OfWeekly, Weighted: p.Weighted})
+		}
 		out = append(out, ShareWindow{
 			Slug: slugs[acct.ID], Email: acct.Email,
-			FiveH: w.FiveH, SevenD: w.SevenD, FiveHReset: w.FiveHReset, SevenDReset: w.SevenDReset, UpdatedAt: w.UpdatedAt,
+			FiveH: w.FiveH, SevenD: w.SevenD, FiveHReset: w.FiveHReset, SevenDReset: w.SevenDReset,
+			Models: w.Models, People: people, UpdatedAt: w.UpdatedAt,
 		})
 	}
 	return out

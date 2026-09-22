@@ -74,6 +74,10 @@ type AccountWindow struct {
 	FiveHReset  time.Time `json:"fiveHReset,omitempty"`
 	SevenDReset time.Time `json:"sevenDReset,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// Models are the per-model weekly allowances Claude meters separately from
+	// the all-models week — the one that usually runs out first (see
+	// ModelWindow).
+	Models []ModelWindow `json:"models,omitempty"`
 	// HasReading is false for an account the gateway has not read yet: the
 	// board lists it with "no reading yet" instead of a 0% that looks like idle.
 	HasReading bool `json:"hasReading"`
@@ -226,24 +230,37 @@ const weeklyWindow = 7 * 24 * time.Hour
 // at Anthropic's reset. So this asks a second time, scoped to that window, and
 // splits the utilisation across the people in it.
 func (s *Server) attributeWeekly(ctx context.Context, d Data, row *AccountWindow) {
-	if !row.HasReading || row.SevenD <= 0 || row.SevenDReset.IsZero() || len(row.People) == 0 {
+	if !row.HasReading || len(row.People) == 0 {
 		return
 	}
-	inWindow := s.ranBy(ctx, d, row.AccountID, row.SevenDReset.Add(-weeklyWindow))
+	share := map[string]float64{}
+	for _, p := range s.weeklyShares(ctx, d, row.AccountID, row.SevenD, row.SevenDReset) {
+		share[p.ID] = p.OfWeekly
+	}
+	for i := range row.People {
+		row.People[i].OfWeekly = share[row.People[i].ID]
+	}
+}
+
+// weeklyShares is who spent an account's current week, and how much of the
+// whole plan each of them accounts for. Empty when there is no weekly reading
+// to divide, or nothing was metered inside the window.
+func (s *Server) weeklyShares(ctx context.Context, d Data, accountID string, sevenD float64, sevenDReset time.Time) []PersonShare {
+	if s.usage == nil || sevenD <= 0 || sevenDReset.IsZero() {
+		return nil
+	}
+	inWindow := s.ranBy(ctx, d, accountID, sevenDReset.Add(-weeklyWindow))
 	var total float64
 	for _, p := range inWindow {
 		total += p.Weighted
 	}
 	if total <= 0 {
-		return
+		return nil
 	}
-	share := make(map[string]float64, len(inWindow))
-	for _, p := range inWindow {
-		share[p.ID] = row.SevenD * (p.Weighted / total)
+	for i := range inWindow {
+		inWindow[i].OfWeekly = sevenD * (inWindow[i].Weighted / total)
 	}
-	for i := range row.People {
-		row.People[i].OfWeekly = share[row.People[i].ID]
-	}
+	return inWindow
 }
 
 // accountTotals sums the people who ran an account into the account's own

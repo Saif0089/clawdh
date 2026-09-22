@@ -105,7 +105,7 @@ func TestACeilingIsCheckedAgainstTheAccountsWeeklyWindow(t *testing.T) {
 	}
 
 	reset := time.Now().Add(40 * time.Hour).UTC().Truncate(time.Second)
-	b.RecordWindows("a1", 0.1, 0.45, time.Time{}, reset)
+	b.RecordWindows("a1", 0.1, 0.45, time.Time{}, reset, nil)
 	st, err = b.MemberLimitStatus(ctx, "p1", "a1")
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestACeilingIsCheckedAgainstTheAccountsWeeklyWindow(t *testing.T) {
 		t.Errorf("message = %q", st.Message)
 	}
 
-	b.RecordWindows("a1", 0.1, 0.55, time.Time{}, reset)
+	b.RecordWindows("a1", 0.1, 0.55, time.Time{}, reset, nil)
 	st, _ = b.MemberLimitStatus(ctx, "p1", "a1")
 	if !st.Over {
 		t.Errorf("at 55%% of a 50%% ceiling, status = %+v, want over", st)
@@ -145,7 +145,7 @@ func TestWipingMeteringLeavesCeilingsAlone(t *testing.T) {
 	if err := b.RecordUsage(ctx, UsageEvent{PersonID: "p1", AccountID: "a1", Model: "claude-opus-5", Input: 10, Weighted: 50}); err != nil {
 		t.Fatal(err)
 	}
-	b.RecordWindows("a1", 0.1, 0.2, time.Time{}, time.Time{})
+	b.RecordWindows("a1", 0.1, 0.2, time.Time{}, time.Time{}, nil)
 	if err := b.SetLimit(ctx, panel.Limit{SubjectType: "account", SubjectID: "a1", MaxPercent: 0.7}); err != nil {
 		t.Fatal(err)
 	}
