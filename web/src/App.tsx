@@ -507,7 +507,7 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                           {/* A machine reports its build on every check-in; one that never has is on a
                               build from before that, which is exactly the thing worth knowing here. */}
                           {d.version ? (
-                            <span className="font-mono text-[12px] text-faint" title="The clawdh build this machine runs">{d.version}</span>
+                            <span className="min-w-0 max-w-[20rem] truncate font-mono text-[12px] text-faint" title={`The clawdh build this machine runs — ${d.version}`}>{d.version}</span>
                           ) : (
                             <span className="text-[12px] text-faint" title="This machine's clawdh predates build reporting; its build shows once it updates">older build</span>
                           )}

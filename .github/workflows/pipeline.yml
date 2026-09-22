@@ -290,7 +290,16 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
           name="clawdh_${{ matrix.goos }}_${{ matrix.goarch }}${ext}"
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w -X clawdh/internal/buildinfo.Version=${{ github.ref_name }} -X clawdh/internal/buildinfo.Commit=${{ github.sha }}" \
+          # What this build covers, for the notification and the badges.
+          # Subjects here are English sentences full of possessives, so ' turns
+          # into a typographic ’ rather than being dropped ("nginx's" must not
+          # ship as "nginxs"); ’ is a single rune with no meaning to the shell.
+          # The octal set then strips " ` $ \ — what is left that would end the
+          # ldflag's quoting or be expanded — so an ordinary subject survives
+          # intact and a hostile one cannot inject anything. No length cut here:
+          # cutting bytes splits UTF-8, and Headline already trims by rune.
+          summary="$(git log -1 --pretty=%s | sed "s/'/’/g" | tr -d '\042\140\044\134')"
+          go build -trimpath -ldflags "-s -w -X clawdh/internal/buildinfo.Version=${{ github.ref_name }} -X clawdh/internal/buildinfo.Commit=${{ github.sha }} -X 'clawdh/internal/buildinfo.Summary=${summary}'" \
             -o "dist/${name}" ./cmd/clawdh
           echo "ASSET_NAME=${name}" >> "$GITHUB_ENV"
 
@@ -325,14 +334,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The release title is what the update notification says ("Updated to
+          # …"), so it carries the commit subject: a tag and a sha say which
+          # build you got, not what it changed, which is the thing a person
+          # actually wants from a notification that arrives unprompted.
+          summary="$(git log -1 --pretty=%s | sed "s/'/’/g" | tr -d '\042\140\044\134')"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             gh release create "${{ github.ref_name }}" dist/* \
-              --title "${{ github.ref_name }}" \
+              --title "${{ github.ref_name }} — ${summary}" \
               --generate-notes
           else
             gh release delete latest --yes --cleanup-tag 2>/dev/null || true
             gh release create latest dist/* \
-              --title "latest (main@$(git rev-parse --short HEAD))" \
+              --title "latest (main@$(git rev-parse --short HEAD)) — ${summary}" \
               --notes "Continuously published from main — install.sh/install.ps1 default to this. For a pinned version, use a vX.Y.Z release instead." \
               --latest
           fi

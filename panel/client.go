@@ -97,7 +97,7 @@ func Enroll(ctx context.Context, server, code, machine string) (ClientConfig, er
 		Error      string `json:"error"`
 	}
 	if err := post(ctx, http.DefaultClient, server+"/api/v1/enroll", "",
-		map[string]string{"code": code, "machine": machine, "version": buildinfo.Tag()}, &out); err != nil {
+		map[string]string{"code": code, "machine": machine, "version": buildinfo.Describe()}, &out); err != nil {
 		return ClientConfig{}, err
 	}
 	if out.Error != "" {
@@ -250,7 +250,7 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 	body := struct {
 		Remote  bool   `json:"remote"`
 		Version string `json:"version"`
-	}{Remote: c.Config.Remote, Version: buildinfo.Tag()}
+	}{Remote: c.Config.Remote, Version: buildinfo.Describe()}
 	err := post(ctx, httpc, c.Config.Server+"/api/v1/checkin", c.Config.Token, body, &out)
 	if errors.Is(err, errUnauthorized) {
 		// Cut off: forget every shared account, then say so.
