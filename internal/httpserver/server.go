@@ -193,6 +193,8 @@ func Serve(ctx context.Context, srv *Server, port int) error {
 		if err := configureEditors(home); err != nil {
 			log.Printf("editors: could not configure: %v", err)
 		}
+
+		ensureAutostart(actualPort)
 	}()
 
 	httpSrv := &http.Server{Handler: srv.Handler()}
@@ -341,4 +343,38 @@ func configureEditors(home string) error {
 		log.Printf("editors: %s now launches Claude through clawdh", ed.Name)
 	}
 	return nil
+}
+
+// ensureAutostart puts back the "start clawdh at login" entry when it has gone
+// missing, while clawdh is running and can still do it.
+//
+// This is the failure that hides. Nothing supervises clawdh on any of the three
+// platforms — the entry starts it once at login and that is all — so a machine
+// whose entry has been removed looks completely normal until the next reboot,
+// when clawdh simply is not there. And a machine without clawdh running is a
+// machine that never checks for updates, so it freezes on whatever build it had
+// and cannot even receive the fix for the thing that broke it. Windows makes
+// this likeliest: the entry is a file in the Startup folder, which a redirected
+// profile can move out from under it and which Windows itself lets a person
+// switch off in Task Manager.
+//
+// Writing it again costs one stat when it is already there, which is the
+// ordinary case. It cannot help a machine where clawdh is not running at all —
+// only re-running the installer does that — but it stops one from getting
+// there.
+func ensureAutostart(port int) {
+	binaryPath, err := service.SelfPath()
+	if err != nil {
+		return
+	}
+	svc := service.New(binaryPath, port)
+	installed, err := svc.IsInstalled()
+	if err != nil || installed {
+		return
+	}
+	if _, err := svc.Install(binaryPath, port); err != nil {
+		log.Printf("autostart: it was missing and could not be put back: %v", err)
+		return
+	}
+	log.Print("autostart: the start-at-login entry was missing and has been put back")
 }

@@ -237,7 +237,7 @@ func TestBadge(t *testing.T) {
 	}{
 		{"no supervisor", map[string]string{}, "main@abc1234", ""},
 		{"a session", map[string]string{VersionEnvVar: "main@abc1234", AccountEnvVar: "HassanDH"}, "main@abc1234", "clawdh main@abc1234 · HassanDH"},
-		{"updated underneath", map[string]string{VersionEnvVar: "main@abc1234", AccountEnvVar: "HassanDH"}, "main@def5678", "clawdh main@abc1234 (update ready) · HassanDH"},
+		{"updated underneath", map[string]string{VersionEnvVar: "main@abc1234", AccountEnvVar: "HassanDH"}, "main@def5678", "clawdh main@abc1234 (new build · restart) · HassanDH"},
 		{"a share", map[string]string{VersionEnvVar: "v1.2.0", AccountEnvVar: "hassanyasin"}, "v1.2.0", "clawdh v1.2.0 · hassanyasin"},
 	} {
 		if got := Badge(env(tc.env), tc.installed); got != tc.want {

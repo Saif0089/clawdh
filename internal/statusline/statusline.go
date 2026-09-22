@@ -155,10 +155,16 @@ func Saved(savePath string) (map[string]any, bool) {
 
 // Badge is what clawdh adds to the line: the build that launched this session
 // and the account it runs as, from the environment a supervisor exported.
-// installed is the build of the clawdh binary answering now; when it differs
-// from the one that launched the session, an update has landed underneath the
-// running supervisor and takes effect on the next session, so the badge says
-// so. "" outside a supervised session.
+//
+// installed is the build of the clawdh binary answering now. When it differs
+// from the one that launched this session, the update is already on disk and
+// this session is the only thing still on the old build — it picks the new one
+// up when it restarts.
+//
+// That used to read "(update ready)", which says the opposite of what is true:
+// people took it for an update waiting to be installed, saw it sit there
+// session after session, and concluded updating was broken. It had already
+// worked every time. "" outside a supervised session.
 func Badge(env func(string) string, installed string) string {
 	version, account := env(VersionEnvVar), env(AccountEnvVar)
 	if version == "" && account == "" {
@@ -169,7 +175,7 @@ func Badge(env func(string) string, installed string) string {
 	if version != "" {
 		b.WriteString(" " + version)
 		if installed != "" && installed != version {
-			b.WriteString(" (update ready)")
+			b.WriteString(" (new build · restart)")
 		}
 	}
 	if account != "" {
