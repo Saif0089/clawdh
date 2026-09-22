@@ -50,6 +50,9 @@ type deviceView struct {
 	LastSeen *time.Time `json:"lastSeen,omitempty"`
 	Remote   bool       `json:"remote,omitempty"`
 	Version  string     `json:"version,omitempty"` // the clawdh build it last checked in with
+	// UpdateError is why this machine cannot move off that build, when it has
+	// been trying and failing.
+	UpdateError string `json:"updateError,omitempty"`
 }
 
 type personView struct {
@@ -114,7 +117,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 			if dev.PersonID != p.ID {
 				continue
 			}
-			dv := deviceView{ID: dev.ID, Name: dev.Name, Remote: dev.Remote, Version: dev.Version}
+			dv := deviceView{ID: dev.ID, Name: dev.Name, Remote: dev.Remote, Version: dev.Version, UpdateError: dev.UpdateError}
 			if !dev.LastSeen.IsZero() {
 				seen := dev.LastSeen
 				dv.LastSeen = &seen
@@ -624,8 +627,9 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 	// never offered for a job and is served nothing to run. It also says which
 	// clawdh build it runs, so the People tab can show a machine that is behind.
 	var in struct {
-		Remote  bool   `json:"remote"`
-		Version string `json:"version"`
+		Remote      bool   `json:"remote"`
+		Version     string `json:"version"`
+		UpdateError string `json:"updateError"`
 	}
 	_ = readJSON(r, &in)
 
@@ -638,6 +642,9 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 				if v := strings.TrimSpace(in.Version); v != "" {
 					d.Devices[i].Version = v
 				}
+				// Recorded even when empty: a machine that has started
+				// updating again must stop being reported as stuck.
+				d.Devices[i].UpdateError = strings.TrimSpace(in.UpdateError)
 			}
 		}
 		return nil

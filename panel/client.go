@@ -119,6 +119,10 @@ type Client struct {
 	// shared account without the key ever touching a dotfile. Empty on a machine
 	// that only ever runs its own accounts.
 	SharesPath string
+	// UpdateError is why this machine's last attempt to update itself failed,
+	// reported on every check-in so the panel can say which machines are stuck
+	// and why. Empty when updating is working.
+	UpdateError string
 }
 
 // GatewayShare is one shared account this machine may run through the gateway:
@@ -285,9 +289,10 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 	// Report this machine's remote-help consent every check-in — the panel only
 	// hands back jobs when it is on — and the build it runs, for the People tab.
 	body := struct {
-		Remote  bool   `json:"remote"`
-		Version string `json:"version"`
-	}{Remote: c.Config.Remote, Version: buildinfo.Describe()}
+		Remote      bool   `json:"remote"`
+		Version     string `json:"version"`
+		UpdateError string `json:"updateError,omitempty"`
+	}{Remote: c.Config.Remote, Version: buildinfo.Describe(), UpdateError: c.UpdateError}
 	err := post(ctx, httpc, c.Config.Server+"/api/v1/checkin", c.Config.Token, body, &out)
 	if errors.Is(err, errUnauthorized) {
 		// Cut off: forget every shared account, then say so.

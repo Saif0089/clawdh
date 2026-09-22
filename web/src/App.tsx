@@ -564,6 +564,9 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                           ) : (
                             <span className="text-[12px] text-faint" title="This machine's clawdh predates build reporting; its build shows once it updates">older build</span>
                           )}
+                          {d.updateError && (
+                            <span title={`This machine cannot update itself — ${d.updateError}`} className="rounded-full bg-crit/12 px-1.5 py-px text-[11px] font-medium text-crit">can't update</span>
+                          )}
                           <span className="text-faint">{when(d.lastSeen)}</span>
                           <div className="ml-auto flex gap-1">
                             {d.remote && <button onClick={() => setJobsFor(d)} className="rounded px-1.5 py-0.5 text-[13px] text-primary transition-colors hover:bg-primary/12">Remote help</button>}

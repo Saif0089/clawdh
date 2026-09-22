@@ -113,7 +113,7 @@ func (s *Server) handlePanelConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	// Pull anything already assigned, now, so the page fills immediately.
 	sharesPath, _ := config.SharesFile()
-	client := &panel.Client{Config: cfg, Accounts: s.manager, SharesPath: sharesPath, AfterChange: func() { _ = s.syncAliases() }}
+	client := &panel.Client{Config: cfg, Accounts: s.manager, SharesPath: sharesPath, UpdateError: s.updateHealth().Error, AfterChange: func() { _ = s.syncAliases() }}
 	_, _ = client.CheckIn(ctx)
 
 	writeJSON(w, http.StatusOK, s.currentPanelStatus())

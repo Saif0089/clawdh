@@ -57,6 +57,9 @@ type Server struct {
 	// the page and `clawdh update` can do what the poll timer does. Nil
 	// when automatic updates are off (see SetUpdater).
 	update UpdateFunc
+	// updateHealthFn reports how the last update attempt went (see
+	// SetUpdateHealth). Nil when automatic updates are off.
+	updateHealthFn func() UpdateHealth
 
 	mu     sync.Mutex
 	logins map[string]*loginBroadcast // accountID -> in-progress/last login, if any

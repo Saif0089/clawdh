@@ -202,6 +202,10 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 	// never be downloading over each other.
 	srv.SetUpdater(func(ctx context.Context) (httpserver.UpdateOutcome, error) {
 		release, err := up.CheckAndApply(ctx)
+		// Recorded like the timer's own attempt: pressing the button on a
+		// machine that cannot update is exactly when the reason matters, and
+		// the panel should hear it on the next check-in either way.
+		up.Note(err)
 		if err != nil {
 			return httpserver.UpdateOutcome{}, err
 		}
@@ -215,6 +219,14 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 			Message:   "Updated to " + release.Name + ". clawdh is restarting into it now.",
 		}, nil
 	})
+
+	// How updating is actually going on this machine, so a build that never
+	// moves can say why instead of looking like a build nobody superseded.
+	srv.SetUpdateHealth(func() httpserver.UpdateHealth {
+		h := up.Health()
+		return httpserver.UpdateHealth{CheckedAt: h.CheckedAt, Error: h.Error}
+	})
+	setUpdateTrouble(func() string { return up.Health().Error })
 
 	go up.Run(ctx, onUpdated)
 }

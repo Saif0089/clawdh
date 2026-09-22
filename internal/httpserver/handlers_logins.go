@@ -38,7 +38,7 @@ func (s *Server) panelClient() (*panel.Client, error) {
 		return nil, errors.New("This machine isn't connected to a panel yet. Paste your invite link under “Got an invite?” first — then adding takes one click.")
 	}
 	sharesPath, _ := config.SharesFile()
-	return &panel.Client{Config: cfg, Accounts: s.manager, SharesPath: sharesPath, AfterChange: func() { _ = s.syncAliases() }}, nil
+	return &panel.Client{Config: cfg, Accounts: s.manager, SharesPath: sharesPath, UpdateError: s.updateHealth().Error, AfterChange: func() { _ = s.syncAliases() }}, nil
 }
 
 // handleAddLoginToPanel captures a discovered login and hands it up to the

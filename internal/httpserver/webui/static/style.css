@@ -176,13 +176,25 @@ header .spacer { flex: 1; }
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
+/* The build tag is also the update button: clicking a version to check for a
+   newer one is the one idiom everybody already knows from an About box. */
 #build-tag {
   color: var(--faint);
   font-size: 12px;
   font-family: var(--mono);
   white-space: nowrap;
-  margin-left: 12px;
+  margin-left: 8px;
+  background: none;
+  border: 0;
+  padding: 3px 7px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: color .15s var(--ease), background .15s var(--ease);
 }
+#build-tag:hover { color: var(--ink); background: var(--raised-2); }
+#build-tag:disabled { cursor: progress; }
+/* Stuck on an old build, and it knows why — the one state worth a colour. */
+#build-tag.stuck { color: var(--crit); }
 
 main { padding-top: 12px; padding-bottom: 72px; }
 

@@ -39,7 +39,8 @@ export interface Account { id: string; name: string; email?: string; plan?: stri
 // (`latest · 7b506ea — feat(usage): the board is per account`); a release stamps the
 // subject, an ad-hoc build is just the tag. Absent for a machine still on a build
 // older than version reporting, which is itself the news.
-export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean; version?: string }
+// updateError is why the machine could not move off that build, when it knows.
+export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean; version?: string; updateError?: string }
 export interface Person { id: string; name: string; email?: string; can?: string[]; canUntil?: string[]; devices?: Device[] }
 export interface Job {
   id: string; kind: string; params?: string; status: string; result?: string;

@@ -327,6 +327,12 @@ test("names the running build in the header", async ({ page }) => {
 
   const status = await (await fetch(`${baseURL}/api/status`)).json();
   await expect(tag).toHaveText(status.tag);
+
+  // And it is the update control: the machine that never updates is the one
+  // whose owner needs to press this, so it has to answer when pressed —
+  // whether that answer is a new build, "newest build", or why it cannot.
+  await tag.click();
+  await expect(tag).not.toHaveText(status.tag, { timeout: 15000 });
 });
 
 // An account clawdh knows about but has no login for must say so, rather

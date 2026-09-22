@@ -33,6 +33,24 @@ type UpdateFunc func(ctx context.Context) (UpdateOutcome, error)
 // endpoint says so plainly rather than pretending to have tried.
 func (s *Server) SetUpdater(fn UpdateFunc) { s.update = fn }
 
+// SetUpdateHealth gives the server a way to report how this machine's updating
+// is actually going, so a machine stuck on an old build can say why.
+func (s *Server) SetUpdateHealth(fn func() UpdateHealth) { s.updateHealthFn = fn }
+
+// UpdateHealth is the last update attempt: when, and what went wrong if
+// anything. An empty Error means it worked, which includes finding nothing new.
+type UpdateHealth struct {
+	CheckedAt time.Time
+	Error     string
+}
+
+func (s *Server) updateHealth() UpdateHealth {
+	if s.updateHealthFn == nil {
+		return UpdateHealth{}
+	}
+	return s.updateHealthFn()
+}
+
 func (s *Server) handleUpdateNow(w http.ResponseWriter, r *http.Request) {
 	if s.update == nil {
 		writeError(w, http.StatusServiceUnavailable,

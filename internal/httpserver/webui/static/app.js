@@ -952,9 +952,59 @@ window.addEventListener("pagehide", () => {
 async function loadServerInfo() {
   try {
     const status = await api("/api/status");
-    if (status && status.tag) buildTag.textContent = status.tag;
+    if (status && !updating) paintBuild(status);
   } catch (_) {}
 }
+
+// The build tag says which build is answering, and — when updating is failing —
+// that it is failing, with the reason on hover. A machine that quietly never
+// updates looks exactly like one nobody has released to, which is the trap the
+// Windows laptops fell into.
+function paintBuild(status) {
+  const tag = status.tag || "";
+  if (status.updateError) {
+    buildTag.textContent = tag ? tag + " · can't update" : "can't update";
+    buildTag.classList.add("stuck");
+    buildTag.title = "This machine could not update itself — " + status.updateError + ". Click to try now.";
+    return;
+  }
+  buildTag.textContent = tag;
+  buildTag.classList.remove("stuck");
+  const checked = status.updateCheckedAt ? Date.parse(status.updateCheckedAt) : 0;
+  buildTag.title = "The build answering on this port"
+    + (checked ? ", last checked for a newer one at " + clockTime(new Date(checked)) : "")
+    + ". Click to check now.";
+}
+
+// Checking on request. The timer does this every couple of minutes on its own;
+// this is for the machine where that has not been happening.
+let updating = false;
+buildTag.addEventListener("click", async () => {
+  if (updating) return;
+  updating = true;
+  buildTag.disabled = true;
+  buildTag.classList.remove("stuck");
+  buildTag.textContent = "checking…";
+  buildTag.title = "Asking GitHub for a newer build";
+  try {
+    const out = await api("/api/update", { method: "POST" });
+    buildTag.textContent = out.installed ? "restarting into " + (out.release || "the new build") + "…" : "newest build";
+    buildTag.title = out.message || "";
+    // An installed update restarts the service underneath this page, so leave
+    // the word standing; the next poll after it comes back repaints it.
+    if (!out.installed) setTimeout(release, 2500);
+  } catch (err) {
+    buildTag.classList.add("stuck");
+    buildTag.textContent = "update failed";
+    buildTag.title = err.message;
+    setTimeout(release, 5000);
+  }
+  function release() {
+    updating = false;
+    buildTag.disabled = false;
+    loadServerInfo();
+  }
+});
 
 let polling = false;
 async function poll() {

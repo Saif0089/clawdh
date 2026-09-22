@@ -108,6 +108,46 @@ type Updater struct {
 	cached *Release
 	// rateLimitedUntil is when it is worth asking again after a refusal.
 	rateLimitedUntil time.Time
+
+	// lastCheck and lastErr are how the most recent attempt went. Until
+	// they existed a machine that could not install anything said so once
+	// per cycle into a log file on that machine and nowhere else: the only
+	// visible symptom was a build that never moved, which looks identical
+	// to a machine nobody has pushed to. One laptop sat like that for days.
+	lastCheck time.Time
+	lastErr   string
+}
+
+// Health is the last thing the updater tried and how it went, for anything
+// that reports on a machine rather than acting on it.
+type Health struct {
+	// CheckedAt is zero before the first attempt.
+	CheckedAt time.Time `json:"checkedAt,omitzero"`
+	// Error is empty when the last attempt succeeded, which includes the
+	// ordinary case of finding nothing new.
+	Error string `json:"error,omitempty"`
+}
+
+// Health reports the last attempt.
+func (u *Updater) Health() Health {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return Health{CheckedAt: u.lastCheck, Error: u.lastErr}
+}
+
+// Note records how an attempt went, for Health. Run calls it for the timer's
+// checks; whoever drives a check on request (the page's button, `clawdh
+// update`) calls it for theirs. It must not be called while CheckAndApply is
+// running on the same goroutine — that holds the same lock.
+func (u *Updater) Note(err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.lastCheck = u.now()
+	if err != nil {
+		u.lastErr = err.Error()
+		return
+	}
+	u.lastErr = ""
 }
 
 // ErrRateLimited is a refusal from GitHub rather than a failure: asking
@@ -207,6 +247,7 @@ func (u *Updater) Run(ctx context.Context, onUpdated func(Release)) {
 		}
 
 		release, err := u.CheckAndApply(ctx)
+		u.Note(err)
 		if err != nil {
 			log.Printf("update check: %v", err)
 		} else if release != nil {

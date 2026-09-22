@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"clawdh/internal/accounts"
@@ -189,6 +190,34 @@ func enrollMachine(server, code string) int {
 	return panelCheck(nil)
 }
 
+// updateTrouble reports why this machine's last attempt to update itself
+// failed, so the check-in can tell the panel which machines are stuck and why
+// instead of leaving an old version number to be read as neglect. Only the
+// running service knows — every other process leaves this nil and says
+// nothing rather than claiming updating is fine.
+var updateTrouble struct {
+	sync.Mutex
+	why func() string
+}
+
+// setUpdateTrouble hands the check-in a way to ask the updater how it is going.
+func setUpdateTrouble(why func() string) {
+	updateTrouble.Lock()
+	updateTrouble.why = why
+	updateTrouble.Unlock()
+}
+
+// updateErrorNow is the current answer, or "" when nobody is updating here.
+func updateErrorNow() string {
+	updateTrouble.Lock()
+	why := updateTrouble.why
+	updateTrouble.Unlock()
+	if why == nil {
+		return ""
+	}
+	return why()
+}
+
 // panelClient builds the check-in client over this machine's real accounts.
 func panelClient() (*panel.Client, error) {
 	_, _, clientPath, err := panelPaths()
@@ -213,9 +242,10 @@ func panelClient() (*panel.Client, error) {
 	}
 	mgr := accounts.NewManager(accounts.NewStore(accountsFile), accountsDir)
 	return &panel.Client{
-		Config:     cfg,
-		Accounts:   mgr,
-		SharesPath: sharesPath,
+		Config:      cfg,
+		Accounts:    mgr,
+		SharesPath:  sharesPath,
+		UpdateError: updateErrorNow(),
 		AfterChange: func() {
 			// Nothing per-account is written to shell rc files any more — every
 			// account runs as `clawdh <name>` / `clawdh shared <name>` — but the

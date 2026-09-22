@@ -41,6 +41,12 @@ type Device struct {
 	// page shows it ("main · 7b506ea"), so the panel can say which machines are
 	// behind. "" until a build that reports it checks in.
 	Version string `json:"version,omitempty"`
+	// UpdateError is why this machine's last attempt to update itself failed,
+	// empty when it did not. A machine that cannot install a release is
+	// otherwise indistinguishable from one nobody has superseded — both just
+	// sit on an old build — and the reason only ever appeared in a log file on
+	// the machine itself, which is the one place nobody looks.
+	UpdateError string `json:"updateError,omitempty"`
 }
 
 // Account is one Claude login the panel lends out.
