@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"clawdh/internal/config"
 	"clawdh/internal/gateway"
 	"clawdh/panel"
 )
@@ -120,7 +121,58 @@ func runDiagnose(ctx context.Context, dsn, keyB64 string) error {
 		fmt.Printf("  %s: key resolves=%v  gateway said HTTP %s  %s\n",
 			nameOf(d.People, sh.PersonID), found, status, snippet)
 	}
+	reportBodyLimit(ctx)
 	return nil
+}
+
+// bodyLimitProbe is how big a request the edge has to accept. A Claude Code
+// request carries the whole conversation, so a session with a couple of
+// screenshots in it clears a megabyte easily; nginx's default client_max_body_size
+// is 1m, and the 413 it returns is an HTML page that Claude Code shows as
+// "Request too large (max 32MB) … run /compact". Probing 127.0.0.1 can never
+// see that, because the proxy is the thing being skipped — so this probe goes
+// through the public URL on purpose.
+const bodyLimitProbe = 2 << 20 // 2MiB: over nginx's 1m default, far under Anthropic's 32MB
+
+// reportBodyLimit checks that the public edge forwards a request bigger than a
+// reverse proxy's default cap. It needs the outside URL (CLAWDH_PUBLIC_URL,
+// e.g. https://clawdh-gw.<ip>.sslip.io); with none set there is nothing to test
+// that the local probe above hasn't already covered.
+func reportBodyLimit(ctx context.Context) {
+	base := strings.TrimRight(config.Env("CLAWDH_PUBLIC_URL"), "/")
+	fmt.Println("\nedge body limit:")
+	if base == "" {
+		fmt.Println("  skipped: set CLAWDH_PUBLIC_URL to the address members reach (this is the only probe that sees the proxy in front)")
+		return
+	}
+	// An unauthenticated request is enough: the gateway turns it away with a
+	// JSON 401, which already proves the body arrived. A proxy that refuses the
+	// size answers first, and with HTML.
+	body := append([]byte(`{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"`),
+		append(bytes.Repeat([]byte("x"), bodyLimitProbe), []byte(`"}]}`)...)...)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/messages", bytes.NewReader(body))
+	if err != nil {
+		fmt.Printf("  %s: %v\n", base, err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer clawdh-body-limit-probe")
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	if err != nil {
+		fmt.Printf("  %s: %v\n", base, err)
+		return
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 200)
+	n, _ := resp.Body.Read(buf)
+	got := strings.TrimSpace(string(buf[:n]))
+	if resp.StatusCode == http.StatusRequestEntityTooLarge && !strings.HasPrefix(got, "{") {
+		fmt.Printf("  %s REFUSED %dMiB with a non-JSON 413 — a proxy in front is capping the body, not the gateway.\n", base, bodyLimitProbe>>20)
+		fmt.Println("  Members will see \"Request too large (max 32MB)\" on any conversation this size. Set `client_max_body_size 64m;` in the nginx server block and reload.")
+		return
+	}
+	fmt.Printf("  %s carried %dMiB through to the gateway (HTTP %s) — no proxy cap in the way.\n", base, bodyLimitProbe>>20, resp.Status)
 }
 
 // probeGateway sends the smallest possible message through the local gateway
