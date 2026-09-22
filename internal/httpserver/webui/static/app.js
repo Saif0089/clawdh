@@ -5,13 +5,10 @@
 const accountsList = document.getElementById("accounts-list");
 const accountsEmpty = document.getElementById("accounts-empty");
 const rowTemplate = document.getElementById("account-row-template");
-const sharedRowTemplate = document.getElementById("shared-row-template");
 const meterTemplate = document.getElementById("meter-template");
 const refreshedLabel = document.getElementById("refreshed");
 const buildTag = document.getElementById("build-tag");
 
-const sharedBlock = document.getElementById("shared-block");
-const sharedList = document.getElementById("shared-list");
 const connectBlock = document.getElementById("connect-block");
 const connectedNote = document.getElementById("connected-note");
 
@@ -173,91 +170,193 @@ function listSignature(accounts) {
 }
 let renderedSignature = null;
 
+// mergedAccounts is every account this machine can run, once each.
+//
+// A login you lend to the panel exists twice as far as the API is concerned —
+// as a local account with a config directory, and as a share of that same
+// login coming back down — and the page used to draw both, side by side, with
+// identical bars read from the identical gateway reading. They are one account
+// and they are paired the way the server pairs them: by the login's email.
+function mergedAccounts(accounts, shares) {
+  const out = [];
+  const claimed = new Set();
+  for (const account of accounts) {
+    const login = loginsByDir[account.configDir || ""];
+    const email = login && login.email ? login.email.toLowerCase() : "";
+    const share = email ? shares.find((sh) => shareEmail(sh) === email) : null;
+    if (share) claimed.add(share.slug);
+    out.push({ account, share, email: (login && login.email) || "", name: account.name });
+  }
+  // A share of somebody else's login has no local account behind it.
+  for (const share of shares) {
+    if (claimed.has(share.slug)) continue;
+    out.push({ account: null, share, email: shareEmail(share), name: share.account });
+  }
+  return out;
+}
+
+function shareEmail(share) {
+  const e = (share.window && share.window.email) || share.email || "";
+  return e.toLowerCase();
+}
+
 function renderAccounts(accounts) {
   currentAccounts = accounts;
+  const rows = mergedAccounts(accounts, currentShares);
   const signature = listSignature(accounts);
-  if (signature === renderedSignature && accountsList.children.length === accounts.length) {
-    refreshVisibleUsage(accounts);
+  if (signature === renderedSignature && accountsList.children.length === rows.length) {
+    refreshVisibleUsage(rows);
     return;
   }
   renderedSignature = signature;
   accountsList.innerHTML = "";
-  accountsEmpty.hidden = accounts.length > 0;
+  accountsEmpty.hidden = rows.length > 0;
 
-  for (const account of accounts) {
-    const node = rowTemplate.content.cloneNode(true);
-    const card = node.querySelector(".card");
-    card.dataset.id = account.id;
-    const isDefault = account.kind === "default";
-    const login = loginsByDir[account.configDir || ""];
+  for (const row of rows) {
+    accountsList.appendChild(buildAccountCard(row));
+  }
+}
 
-    node.querySelector(".account-name").textContent = account.name;
-    node.querySelector(".account-email").textContent = login && login.email ? login.email : "";
+function buildAccountCard(row) {
+  const { account, share } = row;
+  const node = rowTemplate.content.cloneNode(true);
+  const card = node.querySelector(".card");
+  card.dataset.id = account ? account.id : "share:" + share.slug;
+  if (share) card.dataset.slug = share.slug;
 
+  node.querySelector(".account-name").textContent = row.name;
+  node.querySelector(".account-email").textContent = row.email;
+  node.querySelector(".shared-chip").hidden = !share;
+
+  // A login the gateway holds runs through the gateway; the copy still on this
+  // machine is dead by design, so `clawdh <name>` would only fail.
+  const cmd = share ? sharedRunCommand(share.slug) : runCommand(account);
+  node.querySelector(".run-cmd").textContent = cmd;
+  const copyBtn = node.querySelector(".copy-cmd");
+  copyBtn.addEventListener("click", () => copyToClipboard(cmd, copyBtn));
+
+  buildCardMenu(node, row);
+
+  if (account) {
     setStatus(node.querySelector(".status-pill"), account.status);
-
-    const cmd = runCommand(account);
-    node.querySelector(".run-cmd").textContent = cmd;
-    const copyBtn = node.querySelector(".copy-cmd");
-    copyBtn.addEventListener("click", () => copyToClipboard(cmd, copyBtn));
-
-    const connectBtn = node.querySelector(".connect-btn");
-    connectBtn.textContent = account.status === "linked" ? "Reconnect" : "Connect";
-    connectBtn.addEventListener("click", () => startLogin(account));
-
-    // Add to panel: only meaningful once there is a login on this machine to
-    // hand over. Kept visible but disabled otherwise, so the path is
-    // discoverable without pretending an empty account can be shared. A login
-    // already on the panel (a share of it under this address) re-adds as a
-    // refresh, which is how a broken login is mended.
-    const shareBtn = node.querySelector(".share-btn");
-    if (login) {
-      const there = login.email && currentShares.find((sh) => sh.email && sh.email.toLowerCase() === login.email.toLowerCase());
-      if (there) {
-        shareBtn.textContent = "Refresh on panel";
-        shareBtn.title = `Already on the panel as ${there.account}; this hands up a fresh login.`;
-      }
-      shareBtn.addEventListener("click", () => openShareDialog(account, login, there));
-    } else {
-      shareBtn.disabled = true;
-      shareBtn.title = "Sign this account in first, then it can be shared.";
-    }
-
-    node.querySelector(".rename-btn").addEventListener("click", () => {
-      document.getElementById("rename-id").value = account.id;
-      document.getElementById("rename-name").value = account.name;
-      renameDialog.showModal();
-    });
-
-    const removeBtn = node.querySelector(".remove-btn");
-    removeBtn.textContent = isDefault ? "Forget" : "Remove";
-    removeBtn.addEventListener("click", () => removeAccount(account, isDefault));
-
-    accountsList.appendChild(node);
     refreshUsage(account, card);
-    renderAccountPeople(account, card);
+  } else {
+    setStatus(node.querySelector(".status-pill"), "linked");
+    renderShareWindow(card, share);
   }
+  renderPeople(card.querySelector(".people"), share && share.window ? share.window.people : null);
+  return node;
 }
 
-function refreshVisibleUsage(accounts) {
-  for (const account of accounts) {
-    const card = accountsList.querySelector(`.card[data-id="${CSS.escape(account.id)}"]`);
-    if (card) { refreshUsage(account, card); renderAccountPeople(account, card); }
-  }
-}
+// buildCardMenu fills the kebab with the things that apply to this account,
+// and hides the button outright when none of them do — an empty menu is worse
+// than no menu.
+function buildCardMenu(node, row) {
+  const { account, share } = row;
+  const menu = node.querySelector(".kebab");
+  const connectBtn = node.querySelector(".connect-btn");
+  const shareBtn = node.querySelector(".share-btn");
+  const withdrawBtn = node.querySelector(".withdraw-btn");
+  const renameBtn = node.querySelector(".rename-btn");
+  const removeBtn = node.querySelector(".remove-btn");
 
-// A login this machine handed to the panel is being spent by other people too,
-// and its card is where its owner looks. The gateway sends who, keyed by the
-// login's email — the same pairing the server uses to put the gateway's
-// numbers on this card in the first place.
-function renderAccountPeople(account, card) {
+  if (!account) {
+    // Somebody else's login. The only thing that could be yours to do is take
+    // it back, and only if you were the one who put it there.
+    connectBtn.remove();
+    shareBtn.remove();
+    renameBtn.remove();
+    removeBtn.remove();
+    if (share.contributed && share.accountId) {
+      withdrawBtn.hidden = false;
+      withdrawBtn.addEventListener("click", () => withdrawFromPanel(share));
+    } else {
+      menu.remove();
+      return;
+    }
+    wireMenu(menu);
+    return;
+  }
+
   const login = loginsByDir[account.configDir || ""];
-  const box = card.querySelector(".people");
-  if (!box) return;
-  if (!login || !login.email) { box.replaceChildren(); return; }
-  const share = currentShares.find((sh) =>
-    sh.window && sh.window.email && sh.window.email.toLowerCase() === login.email.toLowerCase());
-  renderPeople(box, share && share.window ? share.window.people : null);
+  const isDefault = account.kind === "default";
+
+  connectBtn.textContent = account.status === "linked" ? "Reconnect" : "Connect";
+  connectBtn.addEventListener("click", () => startLogin(account));
+
+  if (login) {
+    shareBtn.textContent = share ? "Refresh on the panel" : "Add to panel";
+    if (share) shareBtn.title = "Hands up a fresh login, which is how a broken one is mended.";
+    shareBtn.addEventListener("click", () => openShareDialog(account, login, share));
+  } else {
+    shareBtn.disabled = true;
+    shareBtn.title = "Sign this account in first, then it can be shared.";
+  }
+
+  if (share && share.contributed && share.accountId) {
+    withdrawBtn.hidden = false;
+    withdrawBtn.addEventListener("click", () => withdrawFromPanel(share));
+  }
+
+  renameBtn.addEventListener("click", () => {
+    document.getElementById("rename-id").value = account.id;
+    document.getElementById("rename-name").value = account.name;
+    renameDialog.showModal();
+  });
+
+  removeBtn.textContent = isDefault ? "Forget" : "Remove";
+  removeBtn.addEventListener("click", () => removeAccount(account, isDefault));
+  wireMenu(menu);
+}
+
+// One menu open at a time, closing on a click away or Escape — the behaviour
+// the shape already promises.
+function wireMenu(menu) {
+  const btn = menu.querySelector(".kebab-btn");
+  const pop = menu.querySelector(".kebab-pop");
+  const close = () => { pop.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const opening = pop.hidden;
+    document.querySelectorAll(".kebab-pop").forEach((p) => { p.hidden = true; });
+    document.querySelectorAll(".kebab-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+    if (opening) { pop.hidden = false; btn.setAttribute("aria-expanded", "true"); }
+  });
+  pop.addEventListener("click", close);
+}
+document.addEventListener("click", () => {
+  document.querySelectorAll(".kebab-pop").forEach((p) => { p.hidden = true; });
+  document.querySelectorAll(".kebab-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  document.querySelectorAll(".kebab-pop").forEach((p) => { p.hidden = true; });
+});
+
+// renderShareWindow draws the gateway's reading for an account with no local
+// login behind it — the same bars a local card gets, from the same numbers.
+function renderShareWindow(card, share) {
+  const meters = card.querySelector(".meters");
+  const w = share.window;
+  if (!meters || !w) return;
+  meters.replaceChildren();
+  const limits = [
+    { label: "Current session", percent: (w.fiveH || 0) * 100, resetsAt: w.fiveHReset },
+    { label: "This week, all models", percent: (w.sevenD || 0) * 100, resetsAt: w.sevenDReset },
+  ];
+  for (const m of (w.models || [])) limits.push({ label: m.label, percent: m.percent || 0, resetsAt: m.resetsAt });
+  for (const limit of limits) meters.appendChild(buildMeter(limit, false));
+}
+
+function refreshVisibleUsage(rows) {
+  for (const row of rows) {
+    const id = row.account ? row.account.id : "share:" + row.share.slug;
+    const card = accountsList.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+    if (!card) continue;
+    if (row.account) refreshUsage(row.account, card);
+    else renderShareWindow(card, row.share);
+    renderPeople(card.querySelector(".people"), row.share && row.share.window ? row.share.window.people : null);
+  }
 }
 
 // --- status ------------------------------------------------------------
@@ -361,17 +460,27 @@ function buildMeter(limit, animate) {
   const meter = node.querySelector(".meter");
   const percent = Math.max(0, Math.min(100, limit.percent || 0));
   meter.classList.add(levelFor(percent, limit.severity));
-  node.querySelector(".meter-label").textContent = limit.label;
-  node.querySelector(".meter-pct").textContent = Math.round(percent) + "% used";
+  // "This week, Fable 5.1" beside "This week, all models" repeated four words
+  // out of five; the section is the week, so the bar only has to say which.
+  node.querySelector(".meter-label").textContent = limit.label.replace(/^This week,\s*/i, "");
+  node.querySelector(".meter-pct").textContent = Math.round(percent) + "%";
   const bar = node.querySelector(".bar");
   bar.setAttribute("aria-valuenow", Math.round(percent));
   bar.setAttribute("aria-label", limit.label);
+  // Set straight away rather than inside a frame callback. The width IS the
+  // reading, and a bar whose fill waits on rAF is a bar that renders empty
+  // wherever that callback is throttled or never runs. The CSS transition
+  // still animates every later change, which is the one worth seeing.
   const fill = node.querySelector(".bar-fill");
-  if (animate) requestAnimationFrame(() => { fill.style.width = percent + "%"; });
-  else fill.style.width = percent + "%";
+  fill.style.width = percent + "%";
   const reset = node.querySelector(".meter-reset");
   if (limit.resetsAt) {
-    countdown(reset, limit.resetsAt, (ms, at) => (ms > 0 ? `resets in ${formatLeft(ms)} (${formatWhen(at)})` : "resetting now"));
+    // On the line, not under it: how long is left is the useful half, and the
+    // exact moment is one hover away.
+    countdown(reset, limit.resetsAt, (ms, at) => {
+      reset.title = ms > 0 ? "Resets " + formatWhen(at) : "";
+      return ms > 0 ? formatLeft(ms) + " left" : "resetting";
+    });
   } else {
     reset.remove();
   }
@@ -416,53 +525,14 @@ async function removeAccount(account, isDefault) {
 // so an account card can tell whether its login is already up there.
 let currentShares = [];
 
+// renderShared takes the shares the panel last sent and redraws the one
+// account list they belong in. There is no separate shared section any more:
+// a share either pairs with a login on this machine or stands as its own card,
+// and both are decided in mergedAccounts.
 function renderShared(shares) {
   currentShares = shares || [];
-  sharedBlock.hidden = !(shares && shares.length);
-  sharedList.innerHTML = "";
-  for (const sh of shares || []) {
-    const node = sharedRowTemplate.content.cloneNode(true);
-    node.querySelector(".account-name").textContent = sh.account;
-    // A login this person handed up is theirs to take back; nobody else's
-    // card offers it.
-    if (sh.contributed && sh.accountId) {
-      const mine = node.querySelector(".mine-actions");
-      mine.hidden = false;
-      mine.querySelector(".withdraw-btn").addEventListener("click", () => withdrawFromPanel(sh));
-    }
-    const cmd = sharedRunCommand(sh.slug);
-    node.querySelector(".run-cmd").textContent = cmd;
-    const copyBtn = node.querySelector(".copy-cmd");
-    copyBtn.addEventListener("click", () => copyToClipboard(cmd, copyBtn));
-    // Access lent for a while says so on its pill: "Ready · 6h left".
-    if (sh.expiresAt && !String(sh.expiresAt).startsWith("0001")) {
-      const pill = node.querySelector(".status-pill");
-      const left = new Date(sh.expiresAt).getTime() - Date.now();
-      const mins = Math.max(0, Math.round(left / 60000));
-      const word = mins < 60 ? mins + "m" : mins < 48 * 60 ? Math.round(mins / 60) + "h" : Math.round(mins / 1440) + "d";
-      pill.textContent = "Ready · " + word + " left";
-      pill.title = "This access ends on its own at " + dateAndTime(new Date(sh.expiresAt));
-    }
-    // The gateway's own reading of this account's windows — the same bars a
-    // local card draws, so every account shows usage the same way.
-    const meters = node.querySelector(".meters");
-    if (meters && sh.window) {
-      const w = sh.window;
-      const limits = [
-        { label: "Current session", percent: (w.fiveH || 0) * 100, resetsAt: w.fiveHReset },
-        { label: "This week, all models", percent: (w.sevenD || 0) * 100, resetsAt: w.sevenDReset },
-      ];
-      // The per-model weeks Claude meters separately — the bar that usually
-      // runs out first, and the one a shared card could not show at all until
-      // the gateway started sending it.
-      for (const m of (w.models || [])) {
-        limits.push({ label: m.label, percent: m.percent || 0, resetsAt: m.resetsAt });
-      }
-      for (const limit of limits) meters.appendChild(buildMeter(limit, false));
-      renderPeople(node.querySelector(".people"), w.people);
-    }
-    sharedList.appendChild(node);
-  }
+  renderedSignature = null; // the shares changed, so the merged list must be rebuilt
+  renderAccounts(currentAccounts);
 }
 
 // --- who spent the week ------------------------------------------------

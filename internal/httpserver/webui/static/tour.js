@@ -161,7 +161,9 @@
   }
   function start() {
     addFab();
-    if (seen()) return;
+    // ?notour=1 skips the first-run intro without marking it seen — the escape
+    // hatch for looking at the page itself rather than the welcome over it.
+    if (seen() || location.search.includes("notour")) return;
     // First run: open once the claw-slash opening has lifted (intro.js says so),
     // or right away if it already has / never played.
     var go = function () { setTimeout(open, reduce ? 200 : 350); };

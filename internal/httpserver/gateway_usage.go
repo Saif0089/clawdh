@@ -37,7 +37,9 @@ func gatewayUsageFor(configDir string) (*usage.Report, string, bool) {
 	}
 	for _, w := range panel.LoadWindows() {
 		if strings.EqualFold(w.Email, email) && time.Since(w.UpdatedAt) < windowStaleAfter {
-			return windowReport(w), "Read through the gateway — this login is shared, so it's the gateway that refreshes it now.", true
+			// The "Shared" chip on the card already says where these came from;
+			// a sentence repeating it was a third line of chrome under numbers.
+			return windowReport(w), "", true
 		}
 	}
 	return nil, "", false

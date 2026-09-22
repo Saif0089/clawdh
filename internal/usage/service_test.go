@@ -538,12 +538,12 @@ func TestBackoffGrowsThroughOtherFailures(t *testing.T) {
 	}
 }
 
-// "These numbers are from 15:04" was not enough to go on: read an hour
+// "These numbers are from 10:23 am" was not enough to go on: read an hour
 // later, or just after midnight, it looks like a moment ago.
 func TestPausedNoteSaysHowOldTheNumbersAre(t *testing.T) {
 	now := time.Date(2026, 9, 15, 10, 30, 0, 0, time.Local)
 	last := &Report{FetchedAt: now.Add(-7 * time.Minute)}
-	want := "Anthropic is rate-limiting plan usage. These numbers are from 10:23, 7 min ago; trying again at 10:34."
+	want := "Anthropic is rate-limiting plan usage. These numbers are from 10:23 am, 7 min ago; trying again at 10:34 am."
 	if got := pausedNote(now.Add(4*time.Minute), last, now); got != want {
 		t.Errorf("note = %q\nwant   %q", got, want)
 	}
@@ -552,7 +552,7 @@ func TestPausedNoteSaysHowOldTheNumbersAre(t *testing.T) {
 	now = time.Date(2026, 9, 15, 0, 20, 0, 0, time.Local)
 	last = &Report{FetchedAt: time.Date(2026, 9, 14, 22, 5, 0, 0, time.Local)}
 	got := pausedNote(now.Add(time.Minute), last, now)
-	for _, part := range []string{"from Sep 14 22:05, 2 h 15 min ago", "trying again at 00:21"} {
+	for _, part := range []string{"from Sep 14, 10:05 pm, 2 h 15 min ago", "trying again at 12:21 am"} {
 		if !strings.Contains(got, part) {
 			t.Errorf("note = %q, want it to contain %q", got, part)
 		}
@@ -619,9 +619,9 @@ func TestStaleAccessTokenKeepsTheLastNumbers(t *testing.T) {
 	if got.Usage == nil {
 		t.Fatal("want the last numbers kept on the card, not an empty one")
 	}
-	for _, part := range []string{"refreshes", "2 h ago"} {
+	for _, part := range []string{"updates", "2 h ago"} {
 		if !strings.Contains(got.Error, part) {
-			t.Errorf("note = %q, want it to say why the numbers are old and how old (%q)", got.Error, part)
+			t.Errorf("note = %q, want it to say how old the numbers are and when they update (%q)", got.Error, part)
 		}
 	}
 	if n := stub.calls.Load(); n != 1 {
@@ -939,7 +939,8 @@ func TestLastGoodNumbersSurviveARestart(t *testing.T) {
 		t.Errorf("note = %q, want it to say why they are not fresh", got.Error)
 	}
 	// And the note has to say how old they are, or they read as current.
-	if !strings.Contains(got.Error, got.Usage.FetchedAt.Local().Format("15:04")) {
+	// 12-hour, like every clock clawdh shows.
+	if !strings.Contains(got.Error, strings.ToLower(got.Usage.FetchedAt.Local().Format("3:04 pm"))) {
 		t.Errorf("note = %q, want it to name when the numbers were read", got.Error)
 	}
 }

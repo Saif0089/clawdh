@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -420,11 +421,10 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 			snapshot.Note = note
 			return snapshot, shortTTL
 		}
-		snapshot.Error = "Plan usage will show again once Claude Code refreshes this account's token — run it once."
+		snapshot.Error = "Usage updates next time you run this account."
 		if last := s.lastGood(accountID); last != nil {
 			snapshot.Usage = last
-			snapshot.Error = readAt(last, s.now()) +
-				"; they will update once Claude Code refreshes this account's token — run it once."
+			snapshot.Error = readAt(last, s.now()) + " · updates next time you run it"
 		}
 		return snapshot, shortTTL
 	}
@@ -542,10 +542,13 @@ func clock(t, now time.Time) string {
 	t, now = t.Local(), now.Local()
 	ty, tm, td := t.Date()
 	ny, nm, nd := now.Date()
+	// 12-hour with am/pm, matching every other time clawdh shows. This one is
+	// formatted here rather than in the browser, so it was the last 24-hour
+	// clock left on a page that had gone over to am/pm everywhere else.
 	if ty == ny && tm == nm && td == nd {
-		return t.Format("15:04")
+		return t.Format("3:04") + strings.ToLower(t.Format(" PM"))
 	}
-	return t.Format("Jan 2 15:04")
+	return t.Format("Jan 2, 3:04") + strings.ToLower(t.Format(" PM"))
 }
 
 // ago is how long before now t was, in minutes and hours: numbers any
