@@ -399,7 +399,7 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
         action={<button onClick={howAccountsArrive} className="rounded-lg px-3 py-2 text-[14px] font-medium text-primary transition-colors hover:bg-primary/12">How do I add one?</button>}
       />
       {data.accounts.length === 0 ? (
-        <Empty>No accounts yet. On a machine that has joined this panel, open its clawdh page and choose “Add to panel” on a signed-in account — it shows up here, ready to share.</Empty>
+        <Empty>No accounts yet. On any machine that has joined, open its clawdh page and choose “Add to panel”.</Empty>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {data.accounts.map((a) => (
@@ -514,7 +514,7 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
         action={<PrimaryButton onClick={inviteSomeone}>Invite someone</PrimaryButton>}
       />
       {data.people.length === 0 ? (
-        <Empty>Nobody yet. Invite someone — they get a link, join in a click, and whatever you share appears on their machine.</Empty>
+        <Empty>Nobody yet. Invite someone and they join in a click.</Empty>
       ) : (
         <div className="flex flex-col gap-3">
           {data.people.map((p: Person) => (

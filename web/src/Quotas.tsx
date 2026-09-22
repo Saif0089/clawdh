@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { api, Limit } from "./api";
 import { untilReset } from "./format";
@@ -35,6 +35,27 @@ function tone(frac: number): { color: string; label: string } {
   if (frac >= 1) return { color: "#E05C53", label: "past the ceiling — turned away" };
   if (frac >= 0.9) return { color: "#E0A83E", label: "nearly at the ceiling" };
   return { color: "#46C08A", label: "under the ceiling" };
+}
+
+// Explain is a "?" that opens a short paragraph beneath it. The detail used to
+// sit permanently under the heading, so the first thing anyone met on this tab
+// was five lines of definition they had already read once.
+function Explain({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="What a quota is"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line text-[11px] font-bold text-faint transition-colors hover:border-muted hover:text-ink"
+      >
+        ?
+      </button>
+      {open && <div className="mt-2 basis-full text-[14px] leading-relaxed text-muted">{children}</div>}
+    </>
+  );
 }
 
 export function Quotas() {
@@ -94,10 +115,16 @@ export function Quotas() {
 
   return (
     <div>
-      <h1 className="text-[28px] font-bold tracking-tight">Quotas</h1>
-      <div className="mt-1 text-[15px] leading-relaxed text-muted">
-        A quota is a <b className="text-ink">ceiling</b> on how full an account's weekly window may be — Claude's own number — before the gateway turns someone away. On a person, it holds whichever account they are using: lend an account with a 60% ceiling and they can never eat into the top 40%. On an account, it holds everyone using it — a reserve. Nothing is blocked until the gateway has a reading.
+      <div className="flex flex-wrap items-center gap-2.5">
+        <h1 className="text-[28px] font-bold tracking-tight">Quotas</h1>
+        <Explain>
+          A ceiling is a share of an account's weekly window — Claude's own number — past which the
+          gateway turns someone away. Set on a person it follows them onto whichever account they
+          use; set on an account it holds everyone on it, as a reserve. Nothing is blocked until the
+          gateway has read that account at least once.
+        </Explain>
       </div>
+      <div className="mt-1 text-[15px] text-muted">How much of a week someone may spend before the gateway says no.</div>
 
       <h2 className="mb-2.5 mt-8 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted">In effect</h2>
       {rows.length === 0 && (

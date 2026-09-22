@@ -78,7 +78,7 @@ export function DeviceJobs({ deviceId, deviceName, onClose }: { deviceId: string
             <div className="text-[12.5px] font-semibold uppercase tracking-[0.06em] text-primary">Remote help</div>
             <h2 className="mt-0.5 truncate text-xl font-semibold tracking-tight">{deviceName}</h2>
             <p className="mt-1 text-[13.5px] leading-snug text-muted">
-              Its owner turned remote help on. It only ever shares what ran on a <span className="text-ink">shared</span> account — the owner's own sessions stay private — and anything sent here waits for their OK first.
+              Only sessions that ran on a <span className="text-ink">shared</span> account, never the owner's own — and anything sent here waits for their OK.
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="ml-auto shrink-0 rounded-lg px-2 py-1 text-[15px] text-faint hover:bg-raised-2 hover:text-ink">
