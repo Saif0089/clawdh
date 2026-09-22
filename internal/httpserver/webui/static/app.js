@@ -163,10 +163,17 @@ function refreshAccounts() {
 // The list is rebuilt only when one of these moves, so a poll every few
 // seconds doesn't throw away a "Copied" button or restart a countdown.
 function listSignature(accounts) {
-  return JSON.stringify(accounts.map((a) => {
-    const l = loginsByDir[a.configDir || ""] || {};
-    return [a.id, a.name, a.alias, a.slug, a.status, a.kind, l.email || ""];
-  }));
+  return JSON.stringify([
+    accounts.map((a) => {
+      const l = loginsByDir[a.configDir || ""] || {};
+      return [a.id, a.name, a.alias, a.slug, a.status, a.kind, l.email || ""];
+    }),
+    // The shares belong in here too, now that they decide which cards exist
+    // and what each one is called. Left out, the list had to be rebuilt on
+    // every poll to pick them up — which threw away an open menu, a half-made
+    // choice and a "Copied" button every few seconds.
+    currentShares.map((sh) => [sh.slug, sh.account, shareEmail(sh), !!sh.contributed]),
+  ]);
 }
 let renderedSignature = null;
 
@@ -460,9 +467,7 @@ function buildMeter(limit, animate) {
   const meter = node.querySelector(".meter");
   const percent = Math.max(0, Math.min(100, limit.percent || 0));
   meter.classList.add(levelFor(percent, limit.severity));
-  // "This week, Fable 5.1" beside "This week, all models" repeated four words
-  // out of five; the section is the week, so the bar only has to say which.
-  node.querySelector(".meter-label").textContent = limit.label.replace(/^This week,\s*/i, "");
+  node.querySelector(".meter-label").textContent = limit.label;
   node.querySelector(".meter-pct").textContent = Math.round(percent) + "%";
   const bar = node.querySelector(".bar");
   bar.setAttribute("aria-valuenow", Math.round(percent));
@@ -531,7 +536,6 @@ let currentShares = [];
 // and both are decided in mergedAccounts.
 function renderShared(shares) {
   currentShares = shares || [];
-  renderedSignature = null; // the shares changed, so the merged list must be rebuilt
   renderAccounts(currentAccounts);
 }
 

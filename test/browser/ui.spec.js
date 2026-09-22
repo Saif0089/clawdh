@@ -15,6 +15,8 @@ const exe = (name) => (isWindows ? `${name}.exe` : name);
 
 let server;
 let baseURL;
+// pageURL is baseURL with the first-run intro turned off (see beforeEach).
+let pageURL;
 let workDir;
 let usageServer;
 
@@ -179,6 +181,7 @@ test.beforeAll(async () => {
   });
 
   await waitForServer(baseURL, 30_000);
+  pageURL = `${baseURL}/?notour=1`;
 });
 
 test.afterAll(async () => {
@@ -190,15 +193,11 @@ test.afterAll(async () => {
 // prompted these tests surfaced first as a thrown SyntaxError.
 test.beforeEach(async ({ page }) => {
   // The first-run intro auto-opens over the page and blocks clicks (a real user
-  // dismisses it). These tests drive the page directly, so mark the intro already
-  // seen before any page script runs.
-  await page.addInitScript(() => {
-    try {
-      localStorage.setItem("clawdh:intro:v1", "1");
-    } catch (e) {
-      /* private mode */
-    }
-  });
+  // dismisses it). These tests drive the page directly, so every goto below
+  // carries ?notour=1 — see pageURL. It used to be suppressed by writing the
+  // "seen" key into localStorage, but that key carries a version, and when the
+  // version was bumped the tests went on writing the old one: the overlay came
+  // back and every click in this file landed on it instead of the page.
   page.on("pageerror", (err) => {
     throw new Error(`uncaught page error: ${err.message}`);
   });
@@ -210,7 +209,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("adds an account, shows the full OAuth URL, and links it", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
 
   await page.click("#signin-btn");
   await page.fill("#name-input", "Work");
@@ -237,7 +236,7 @@ test("adds an account, shows the full OAuth URL, and links it", async ({ page })
 });
 
 test("shows plan usage and reset countdowns", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
 
   const meters = page.locator(".meter");
   await expect(meters).toHaveCount(3);
@@ -246,9 +245,9 @@ test("shows plan usage and reset countdowns", async ({ page }) => {
   await expect(meters.nth(1).locator(".meter-label")).toHaveText("This week, all models");
   await expect(meters.nth(2).locator(".meter-label")).toHaveText("This week, Fable");
 
-  await expect(meters.nth(0).locator(".meter-pct")).toHaveText("12% used");
-  await expect(meters.nth(1).locator(".meter-pct")).toHaveText("94% used");
-  await expect(meters.nth(2).locator(".meter-pct")).toHaveText("71% used");
+  await expect(meters.nth(0).locator(".meter-pct")).toHaveText("12%");
+  await expect(meters.nth(1).locator(".meter-pct")).toHaveText("94%");
+  await expect(meters.nth(2).locator(".meter-pct")).toHaveText("71%");
 
   // Colour carries one meaning on this page: how much headroom is left.
   // If these classes stop tracking the numbers, a nearly-exhausted week
@@ -264,8 +263,10 @@ test("shows plan usage and reset countdowns", async ({ page }) => {
     .poll(() => meters.nth(1).locator(".bar-fill").evaluate((el) => el.getBoundingClientRect().width), { timeout: 5000 })
     .toBeGreaterThan(0);
 
-  await expect(meters.nth(0).locator(".meter-reset")).toHaveText(/resets in \d+h \d+m \(.+\)/);
-  await expect(meters.nth(1).locator(".meter-reset")).toHaveText(/resets in 2d \d+h \(.+\)/);
+  // One line per window now: how long is left sits beside the percent, and
+  // the exact moment is the title.
+  await expect(meters.nth(0).locator(".meter-reset")).toHaveText(/\d+h \d+m left/);
+  await expect(meters.nth(1).locator(".meter-reset")).toHaveText(/2d \d+h left/);
 
   // A working login says so with the Ready pill and nothing more: the old
   // pair of ticking clocks (a long "login session" and a short "access
@@ -290,7 +291,7 @@ test("re-reads usage on its own, with no button to press", async ({ page }) => {
     if (req.url().includes(`/accounts/${account.id}/usage`)) usageRequests.push(req.url());
   });
 
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   await expect(page.locator("#refresh-btn")).toHaveCount(0);
 
   const card = page.locator(".card", { hasText: "Polling" });
@@ -318,7 +319,7 @@ test("re-reads usage on its own, with no button to press", async ({ page }) => {
 // way to tell a fix that shipped from a fix that is actually running —
 // the question that comes up every time an update lands silently.
 test("names the running build in the header", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   const tag = page.locator("#build-tag");
   await expect(tag).toBeVisible();
   // A version, a commit, or both — never empty.
@@ -338,7 +339,7 @@ test("reports a signed-out account instead of claiming it is linked", async ({ p
   });
   expect(created.ok).toBeTruthy();
 
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   const card = page.locator(".card", { hasText: "Never Connected" });
   await expect(card.locator(".status-pill")).toHaveText("Signed out");
   await expect(card.locator(".meter")).toHaveCount(0);
@@ -361,11 +362,11 @@ test("calls an account with a stale access token linked, not expired", async ({ 
   // one is: the fix is that clawdh never sends it in the first place.
   writeCredentials(account.configDir, { accessToken: REJECTED_TOKEN, accessInHours: -1, refreshInDays: 27 });
 
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   const card = page.locator(".card", { hasText: "Stale Token" });
   await expect(card.locator(".status-pill")).toHaveText("Ready");
   await expect(card.locator(".meter")).toHaveCount(0);
-  await expect(card.locator(".usage-note")).toContainText("refreshes");
+  await expect(card.locator(".usage-note")).toContainText("updates next time you run");
   // Ready, so nothing tells the person to reconnect — the login is fine, it
   // is only the short-lived access token that lapsed, and that renews itself.
   await expect(card.locator(".session-line")).toBeHidden();
@@ -379,7 +380,7 @@ test("tells you to reconnect a login the API has rejected", async ({ page }) => 
   const account = await createAccount("Revoked Login");
   writeCredentials(account.configDir, { accessToken: REJECTED_TOKEN, accessInHours: 8, refreshInDays: 27 });
 
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   const card = page.locator(".card", { hasText: "Revoked Login" });
   await expect(card.locator(".status-pill")).toHaveText("Sign-in expired");
   await expect(card.locator(".usage-note")).toContainText("rejected");
@@ -406,7 +407,7 @@ test("a slow account does not hold up the other cards", async ({ page }) => {
   });
 
   const loaded = Date.now();
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   const quickCard = page.locator(".card", { hasText: "Quick Answer" });
   await expect(quickCard.locator(".meter").first()).toBeVisible();
 
@@ -453,7 +454,7 @@ test("says how old a card's numbers are once they fall behind", async ({ page })
   );
 
   await page.clock.install();
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   const card = page.locator(".card", { hasText: "Aging Numbers" });
   const age = card.locator(".usage-age");
   await expect(card.locator(".meter").first()).toBeVisible();
@@ -503,7 +504,7 @@ test("says how old a card's numbers are once they fall behind", async ({ page })
 // window came back out of date and stayed that way until its next tick.
 test("reads everything again as soon as a hidden tab is shown", async ({ page }) => {
   await page.clock.install();
-  await page.goto(baseURL);
+  await page.goto(pageURL);
   // The first poll has come back; no account is needed for that.
   await expect(page.locator("#refreshed")).toContainText("updated");
 
@@ -534,8 +535,9 @@ test("reads everything again as soon as a hidden tab is shown", async ({ page })
 // symptom is a dialog that opens showing a stale error and never renders
 // the new URL.
 test("can start another login after closing one mid-flight", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
 
+  await page.click(".kebab-btn");
   await page.click(".connect-btn");
   await expect(page.locator("#login-status")).toContainText("Open this link");
   await page.click("#login-close");
@@ -543,6 +545,7 @@ test("can start another login after closing one mid-flight", async ({ page }) =>
   await page.waitForTimeout(1000);
   await expect(page.locator("#login-dialog")).not.toBeVisible();
 
+  await page.click(".kebab-btn");
   await page.click(".connect-btn");
   await expect(page.locator("#login-status")).toContainText("Open this link");
   const url = await page.locator("#login-url").textContent();
@@ -552,8 +555,9 @@ test("can start another login after closing one mid-flight", async ({ page }) =>
 });
 
 test("renaming an account changes its name but keeps its run command (the slug is stable)", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
 
+  await page.click(".kebab-btn");
   await page.click(".rename-btn");
   await page.fill("#rename-name", "Side Project");
   await page.click("#rename-form button[type=submit]");
@@ -566,7 +570,7 @@ test("renaming an account changes its name but keeps its run command (the slug i
 });
 
 test("rejects a whitespace-only name instead of silently doing nothing", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
 
   let alerted = "";
   page.on("dialog", async (dialog) => {
@@ -586,9 +590,10 @@ test("rejects a whitespace-only name instead of silently doing nothing", async (
 });
 
 test("removes an account and returns to the empty state", async ({ page }) => {
-  await page.goto(baseURL);
+  await page.goto(pageURL);
 
   page.on("dialog", (dialog) => dialog.accept());
+  await page.click(".kebab-btn");
   await page.click(".remove-btn");
 
   await expect(page.locator("#accounts-empty")).toBeVisible();
