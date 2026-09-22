@@ -44,6 +44,22 @@ type PersonShare struct {
 	Name     string       `json:"name"`
 	Weighted float64      `json:"weighted"`
 	ByModel  []ModelUsage `json:"byModel"`
+	// OfWeekly is how much of the account's real weekly allowance this person
+	// accounts for, as a fraction of the whole plan — not of what was metered.
+	//
+	// The difference is the whole point. A person's token count divided by the
+	// account's token count says "you were 100% of who used it", which on a
+	// card beside a window meter reads as "you have used up the plan". One
+	// person working alone is always 100% of that, however little they ran.
+	// This is Anthropic's own weekly utilisation multiplied by that person's
+	// slice of the tokens metered inside the same window, so it answers the
+	// question people actually ask — how much of our week did you spend —
+	// and every percentage on the card means one thing.
+	//
+	// Zero when the gateway has no window reading yet, when the weekly reset
+	// time is unknown (there is then no window to scope the tokens to), or
+	// when nothing was metered in the window.
+	OfWeekly float64 `json:"ofWeekly"`
 }
 
 // AccountWindow is a subscription's real utilisation of its rolling usage
@@ -168,6 +184,7 @@ func (s *Server) handleAccountsUsage(w http.ResponseWriter, r *http.Request) {
 		row.AccountID, row.Name, row.HasReading = a.ID, a.Name, ok
 		row.People = s.ranBy(ctx, d, a.ID, since)
 		row.Weighted, row.ByModel = accountTotals(row.People)
+		s.attributeWeekly(ctx, d, &row)
 		out = append(out, row)
 	}
 	asOf, _ := s.usage.LatestEventAt(ctx)
@@ -194,6 +211,39 @@ func (s *Server) ranBy(ctx context.Context, d Data, accountID string, since time
 		out = append(out, PersonShare{ID: row.SubjectID, Name: name, Weighted: row.Weighted, ByModel: row.ByModel})
 	}
 	return out
+}
+
+// weeklyWindow is 7 days back from the reset Anthropic reports, which is the
+// span its weekly utilisation figure covers.
+const weeklyWindow = 7 * 24 * time.Hour
+
+// attributeWeekly works out how much of the account's real weekly allowance
+// each person accounts for (see PersonShare.OfWeekly).
+//
+// The tokens have to be counted over the same span the percentage covers, or
+// the two do not divide: the board's own period is the reader's choice — a
+// day, a week, a month — while the weekly utilisation is a fixed window ending
+// at Anthropic's reset. So this asks a second time, scoped to that window, and
+// splits the utilisation across the people in it.
+func (s *Server) attributeWeekly(ctx context.Context, d Data, row *AccountWindow) {
+	if !row.HasReading || row.SevenD <= 0 || row.SevenDReset.IsZero() || len(row.People) == 0 {
+		return
+	}
+	inWindow := s.ranBy(ctx, d, row.AccountID, row.SevenDReset.Add(-weeklyWindow))
+	var total float64
+	for _, p := range inWindow {
+		total += p.Weighted
+	}
+	if total <= 0 {
+		return
+	}
+	share := make(map[string]float64, len(inWindow))
+	for _, p := range inWindow {
+		share[p.ID] = row.SevenD * (p.Weighted / total)
+	}
+	for i := range row.People {
+		row.People[i].OfWeekly = share[row.People[i].ID]
+	}
 }
 
 // accountTotals sums the people who ran an account into the account's own

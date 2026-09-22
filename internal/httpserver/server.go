@@ -53,6 +53,11 @@ type Server struct {
 	restart     chan struct{}
 	restartOnce sync.Once
 
+	// update checks for and installs a published release on request, so
+	// the page and `clawdh update` can do what the poll timer does. Nil
+	// when automatic updates are off (see SetUpdater).
+	update UpdateFunc
+
 	mu     sync.Mutex
 	logins map[string]*loginBroadcast // accountID -> in-progress/last login, if any
 	// startMu serialises login starts, which span a subprocess spawn

@@ -188,14 +188,35 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 		return
 	}
 
-	go up.Run(ctx, func(release updater.Release) {
+	onUpdated := func(release updater.Release) {
 		if err := notify.Send("Updated to " + release.Name + " — restarting in the background. Nothing you need to do."); err != nil {
 			// A desktop that shows nothing is not a reason to keep
 			// running the old binary.
 			log.Printf("update: %v", err)
 		}
 		srv.RequestRestart()
+	}
+
+	// The same check the timer makes, on request — from the page's Update
+	// now, or from `clawdh update`. It shares the updater, so the two can
+	// never be downloading over each other.
+	srv.SetUpdater(func(ctx context.Context) (httpserver.UpdateOutcome, error) {
+		release, err := up.CheckAndApply(ctx)
+		if err != nil {
+			return httpserver.UpdateOutcome{}, err
+		}
+		if release == nil {
+			return httpserver.UpdateOutcome{Message: "This machine is already on the newest build."}, nil
+		}
+		onUpdated(*release)
+		return httpserver.UpdateOutcome{
+			Installed: true,
+			Release:   release.Name,
+			Message:   "Updated to " + release.Name + ". clawdh is restarting into it now.",
+		}, nil
 	})
+
+	go up.Run(ctx, onUpdated)
 }
 
 // isTerminal reports whether f is a character device — a real terminal

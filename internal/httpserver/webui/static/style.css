@@ -166,7 +166,9 @@ header {
   padding: 3px 10px; white-space: nowrap;
 }
 .tagline { color: var(--faint); font-size: 15px; }
-@media (max-width: 560px) { .tagline { display: none; } }
+/* The wordmark, the badge and the build tag are the header's job; the tagline
+   is the first thing to go rather than wrap the row onto three lines. */
+@media (max-width: 900px) { .tagline { display: none; } }
 header .spacer { flex: 1; }
 
 #refreshed {
@@ -325,7 +327,7 @@ select:disabled { opacity: .55; cursor: default; }
 .start-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .start-text { display: flex; flex-direction: column; gap: 3px; margin-right: auto; min-width: 0; }
 .start-label { color: var(--muted); font-size: 13.5px; }
-.start-account { font-size: 22px; font-weight: 660; letter-spacing: -0.02em; }
+.start-account { font-size: 24px; font-weight: 660; letter-spacing: -0.02em; }
 .start-account.unset { color: var(--muted); font-weight: 560; }
 .start-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .start-note { margin: 14px 0 0; color: var(--faint); font-size: 13px; max-width: 70ch; }
@@ -358,7 +360,7 @@ select:disabled { opacity: .55; cursor: default; }
   background: var(--sunken); border: 1px solid var(--line); border-radius: 9px;
   padding: 9px 13px; font-family: var(--mono); font-size: 14px; color: var(--ink);
 }
-.lane-foot { margin-top: 12px !important; color: var(--faint) !important; font-size: 12.5px !important; }
+.lane-foot { margin-top: 9px !important; color: var(--faint) !important; font-size: 12.5px !important; }
 
 .editor-list { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .editor-list:empty { display: none; }
@@ -376,8 +378,15 @@ select:disabled { opacity: .55; cursor: default; }
 
 /* ---- what is running right now -------------------------------------- */
 
+.live-title { display: flex; align-items: center; gap: 9px; }
+.help-dot {
+  width: 20px; height: 20px; padding: 0; border-radius: 50%;
+  font-size: 12px; font-weight: 700; line-height: 1;
+  color: var(--faint); background: transparent; border: 1px solid var(--line);
+}
+.help-dot:hover { color: var(--ink); background: var(--raised-2); transform: none; }
 .live-head { display: flex; align-items: center; gap: 18px 24px; flex-wrap: wrap; }
-.live-head > div:first-child { flex: 1 1 22rem; min-width: 0; }
+.live-head > div:first-child { flex: 1 1 auto; min-width: 0; }
 /* Pushed right whether or not it wrapped onto its own line, so it sits over
    the per-session pickers below rather than floating loose under the text. */
 .live-all { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }

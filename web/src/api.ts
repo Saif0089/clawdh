@@ -25,7 +25,7 @@ export interface Board { window: string; asOf: string; subjects: Subject[] }
 export interface AccountUsage {
   accountId: string; name: string; fiveH: number; sevenD: number;
   fiveHReset?: string; sevenDReset?: string; updatedAt: string; hasReading: boolean;
-  people: { id: string; name: string; weighted: number; byModel: ModelUsage[] }[];
+  people: { id: string; name: string; weighted: number; byModel: ModelUsage[]; ofWeekly: number }[];
   weighted: number; byModel: ModelUsage[];
 }
 // A ceiling: a 0..1 share of the weekly window past which the subject is turned away.

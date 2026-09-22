@@ -75,20 +75,43 @@ function WindowMeter({ label, frac, reset }: { label: string; frac: number; rese
   );
 }
 
-// ShareRow is one labelled row with a neutral bar: a person's part of a total.
-function ShareRow({ name, detail, value, total }: { name: string; detail: string; value: number; total: number }) {
-  const share = total > 0 ? value / total : 0;
+// TokenRow is one person across every account: a token count with a bar
+// relative to the busiest person. Deliberately no percentage — these accounts
+// have separate plans and separate weeks, so there is nothing a percentage
+// here could honestly be a percentage of.
+function TokenRow({ name, detail, value, most }: { name: string; detail: string; value: number; most: number }) {
+  const rel = most > 0 ? value / most : 0;
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_88px] items-center gap-x-4 py-2 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_88px]">
+    <div className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-x-4 py-2 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_96px]">
       <div className="col-start-1 row-start-1 min-w-0">
         <div className="truncate text-[14.5px] font-medium text-ink">{name}</div>
         {detail && <div className="truncate text-[12px] text-faint">{detail}</div>}
       </div>
-      <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0" title={`${name} · ${pct(share)}`}>
-        <motion.div className="h-full rounded-full" style={{ background: SHARE }} initial={{ width: 0 }} animate={{ width: `${share * 100}%` }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }} />
+      <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0">
+        <motion.div className="h-full rounded-full" style={{ background: SHARE }} initial={{ width: 0 }} animate={{ width: `${rel * 100}%` }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }} />
+      </div>
+      <div className="col-start-2 row-start-1 text-right text-[14.5px] font-semibold tabular-nums text-ink sm:col-start-3">{fmtNum(value)}</div>
+    </div>
+  );
+}
+
+// ShareRow is one person on an account: how much of the plan's week they
+// account for. The bar is drawn against the whole week, not against the other
+// people, so the rows stack up to the weekly meter above them and a short bar
+// means "barely touched it" rather than "less than the others".
+function ShareRow({ name, detail, ofWeekly, value }: { name: string; detail: string; ofWeekly: number; value: number }) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-x-4 py-2 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_96px]">
+      <div className="col-start-1 row-start-1 min-w-0">
+        <div className="truncate text-[14.5px] font-medium text-ink">{name}</div>
+        {detail && <div className="truncate text-[12px] text-faint">{detail}</div>}
+      </div>
+      <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0"
+           title={`${name} · ${pct(ofWeekly)} of this week · ${fmtNum(value)} tokens`}>
+        <motion.div className="h-full rounded-full" style={{ background: SHARE }} initial={{ width: 0 }} animate={{ width: `${Math.min(ofWeekly, 1) * 100}%` }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }} />
       </div>
       <div className="col-start-2 row-start-1 text-right sm:col-start-3">
-        <span className="text-[14.5px] font-semibold tabular-nums text-ink">{pct(share)}</span>
+        <span className="text-[14.5px] font-semibold tabular-nums text-ink">{pct(ofWeekly)}</span>
         <span className="ml-2 text-[12px] tabular-nums text-faint">{fmtNum(value)}</span>
       </div>
     </div>
@@ -115,18 +138,15 @@ function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
 
       <div className="mt-5 border-t border-line pt-3.5">
         <div className="flex items-baseline justify-between gap-3">
-          <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-faint">Who ran it · {PERIOD_LABEL[period]}</div>
-          {a.weighted > 0 && <div className="text-[12px] tabular-nums text-faint">{fmtNum(a.weighted)} total</div>}
+          <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-faint">Who spent the week</div>
+          {a.weighted > 0 && <div className="text-[12px] tabular-nums text-faint">{fmtNum(a.weighted)} tokens · {PERIOD_LABEL[period]}</div>}
         </div>
         {people.length === 0 ? (
-          <div className="mt-2 text-[13.5px] text-muted">Nobody ran it through the gateway in the {PERIOD_LABEL[period]}.</div>
+          <div className="mt-2 text-[13.5px] text-muted">Nobody ran it in the {PERIOD_LABEL[period]}.</div>
         ) : (
-          <>
-            <div className="mt-1 divide-y divide-line/60">
-              {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} value={p.weighted} total={a.weighted} />)}
-            </div>
-            {people.length > 1 && <div className="mt-2 text-[12.5px] text-muted">On this account overall: {modelSplit(a.byModel)}</div>}
-          </>
+          <div className="mt-1 divide-y divide-line/60">
+            {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} ofWeekly={p.ofWeekly} value={p.weighted} />)}
+          </div>
         )}
       </div>
     </div>
@@ -200,11 +220,10 @@ export function UsageBoard() {
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-faint">
-        <span>Window bars:</span>
-        {([["#46C08A", "room"], ["#E0A83E", "75%+"], ["#E05C53", "95%+"]] as const).map(([c, l]) => (
+        {([["#46C08A", "room left"], ["#E0A83E", "75% used"], ["#E05C53", "95% used"]] as const).map(([c, l]) => (
           <span key={l} className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full" style={{ background: c }} />{l}</span>
         ))}
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full" style={{ background: SHARE }} />a person's share — not a status</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 rounded-full" style={{ background: SHARE }} />one person's slice</span>
       </div>
 
       {ranked.length > 0 && (
@@ -216,15 +235,13 @@ export function UsageBoard() {
               <span className="tabular-nums">{fmtNum(teamTotal)} total</span>
             </div>
             <div className="divide-y divide-line/60">
-              {ranked.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} value={p.weighted} total={teamTotal} />)}
+              {ranked.map((p) => <TokenRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} value={p.weighted} most={ranked[0]?.weighted || 0} />)}
             </div>
           </div>
         </>
       )}
 
-      <div className="mt-3 text-[12px] leading-relaxed text-faint">
-        A window's % is Claude's own figure for the account. Shares are what the gateway metered — tokens weighted to Sonnet-input equivalents so Opus-heavy and Haiku-heavy work compare fairly — and say who used the account, not how much of its window each person took.
-      </div>
+      <div className="mt-3 text-[12px] text-faint">Every % is a share of that account's real weekly allowance, as Claude reports it.</div>
     </div>
   );
 }

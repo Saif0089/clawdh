@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,16 +46,24 @@ const DefaultRepo = "Saif0089/clawdh"
 const DefaultAPIBase = "https://api.github.com"
 
 const (
-	// CheckInterval is how often the running service looks. A check is
-	// one unauthenticated GitHub API call, so twelve an hour sits well
-	// inside the 60/hour limit — and the point of this is that a fix
-	// pushed to main is running on the machine minutes later, not at
-	// some point tomorrow.
-	CheckInterval = 5 * time.Minute
-	// FirstCheckDelay keeps the check away from startup, where the
-	// machine is busy with login items and the person is waiting for
-	// the page to paint.
-	FirstCheckDelay = time.Minute
+	// CheckInterval is how often the running service looks.
+	//
+	// Frequent polling is only affordable because a check that finds
+	// nothing new costs nothing: the release is asked for with the ETag
+	// of the last answer, and GitHub does not count a 304 against the
+	// unauthenticated 60/hour limit. Without that, thirty checks an hour
+	// from each machine would rate-limit a household — the limit is per
+	// IP, so a few machines behind one router share it.
+	CheckInterval = 2 * time.Minute
+	// FirstCheckDelay is how long after startup the first check runs. It
+	// is short on purpose: a machine that has just booted is the case
+	// this whole package exists for, and the old minute meant someone
+	// who started their computer, saw the page and went to work was on
+	// yesterday's build for the first thing they did.
+	FirstCheckDelay = 15 * time.Second
+	// rateLimitBackoff is how long to wait after GitHub says no. Asking
+	// again two minutes later cannot succeed and only deepens the hole.
+	rateLimitBackoff = 20 * time.Minute
 	// maxDownloadBytes bounds what a release asset is allowed to be, so
 	// a wrong URL cannot fill the disk.
 	maxDownloadBytes = 200 << 20
@@ -87,7 +96,24 @@ type Updater struct {
 	// for a machine that has just logged in.
 	FirstCheck time.Duration
 	Interval   time.Duration
+
+	// mu serialises checks. The background loop is not the only caller
+	// any more — someone can press Update now on the page — and two
+	// downloads racing to replace the same binary is not something to
+	// leave to luck.
+	mu sync.Mutex
+	// etag and cached are the last answer GitHub gave, so the next ask
+	// can be conditional (see CheckInterval).
+	etag   string
+	cached *Release
+	// rateLimitedUntil is when it is worth asking again after a refusal.
+	rateLimitedUntil time.Time
 }
+
+// ErrRateLimited is a refusal from GitHub rather than a failure: asking
+// again shortly cannot succeed, and the caller should say so rather than
+// report the update as broken.
+var ErrRateLimited = errors.New("GitHub is rate-limiting update checks from this network; it will try again shortly")
 
 // New returns an Updater for the running binary.
 func New(binaryPath string) *Updater {
@@ -200,6 +226,9 @@ func (u *Updater) Run(ctx context.Context, onUpdated func(Release)) {
 // running binary and its checksum matches. It returns the release that
 // was installed, or nil when there was nothing to do.
 func (u *Updater) CheckAndApply(ctx context.Context) (*Release, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	release, err := u.Latest(ctx)
 	if err != nil {
 		return nil, err
@@ -259,7 +288,15 @@ func (u *Updater) CheckAndApply(ctx context.Context) (*Release, error) {
 
 // Latest reports the release GitHub marks as latest, which for this
 // repository is either a vX.Y.Z tag or the rolling build from main.
+//
+// The ask carries the ETag of the last answer. Nothing published since
+// comes back as a 304 with no body — which GitHub does not charge
+// against the rate limit, and which is what makes checking every couple
+// of minutes affordable.
 func (u *Updater) Latest(ctx context.Context) (*Release, error) {
+	if !u.rateLimitedUntil.IsZero() && u.now().Before(u.rateLimitedUntil) {
+		return nil, ErrRateLimited
+	}
 	url := fmt.Sprintf("%s/repos/%s/releases/latest", u.apiBase(), u.repo())
 
 	var payload struct {
@@ -271,12 +308,15 @@ func (u *Updater) Latest(ctx context.Context) (*Release, error) {
 			URL  string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	body, err := u.get(ctx, url)
+	resp, err := u.fetch(ctx, url, u.etag)
 	if err != nil {
 		return nil, err
 	}
-	defer body.Close()
-	if err := json.NewDecoder(body).Decode(&payload); err != nil {
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified && u.cached != nil {
+		return u.cached, nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("reading the published release: %w", err)
 	}
 
@@ -292,6 +332,7 @@ func (u *Updater) Latest(ctx context.Context) (*Release, error) {
 	for _, asset := range payload.Assets {
 		release.Assets[asset.Name] = asset.URL
 	}
+	u.etag, u.cached = resp.Header.Get("ETag"), release
 	return release, nil
 }
 
@@ -399,6 +440,22 @@ func (u *Updater) apply(ctx context.Context, release *Release, expected string) 
 }
 
 func (u *Updater) get(ctx context.Context, url string) (io.ReadCloser, error) {
+	resp, err := u.fetch(ctx, url, "")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
+	}
+	return resp.Body, nil
+}
+
+// fetch performs one request, optionally conditional on an ETag, and hands
+// back the response for the caller to interpret. A rate-limit refusal is
+// turned into ErrRateLimited and remembered, so the next few checks do not
+// walk into the same wall.
+func (u *Updater) fetch(ctx context.Context, url, etag string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -406,6 +463,9 @@ func (u *Updater) get(ctx context.Context, url string) (io.ReadCloser, error) {
 	// GitHub answers unauthenticated API calls, and asks for this.
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "clawdh-updater")
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
 
 	client := u.HTTPClient
 	if client == nil {
@@ -415,11 +475,21 @@ func (u *Updater) get(ctx context.Context, url string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	// 403 with the remaining count at zero, or 429, is GitHub saying the
+	// limit is per IP and this network has spent it. It is not a broken
+	// update, and asking again in two minutes cannot help.
+	if resp.StatusCode == http.StatusTooManyRequests ||
+		(resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0") {
+		resp.Body.Close()
+		u.rateLimitedUntil = u.now().Add(rateLimitBackoff)
+		return nil, ErrRateLimited
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotModified {
 		resp.Body.Close()
 		return nil, fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
 	}
-	return resp.Body, nil
+	u.rateLimitedUntil = time.Time{}
+	return resp, nil
 }
 
 func (u *Updater) apiBase() string {

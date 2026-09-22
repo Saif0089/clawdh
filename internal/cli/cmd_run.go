@@ -91,6 +91,10 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
+	// Someone is using clawdh, so its service should be up (see
+	// servicehealth.go). Off to the side; nothing below waits for it.
+	ensureServiceRunning()
+
 	store := accounts.NewStore(accountsFile)
 	claudeBin := claudebin.Resolve()
 	claudeDir := sharedClaudeDir(home)

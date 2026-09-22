@@ -36,6 +36,11 @@ func cmdShared(args []string) int {
 	}
 	slug, rest := args[0], args[1:]
 
+	// The service is what keeps this machine's shares current and its build
+	// up to date. Running a shared account with it dead is exactly the state
+	// that goes unnoticed for weeks, so this is where it gets noticed.
+	ensureServiceRunning()
+
 	path, err := config.SharesFile()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)

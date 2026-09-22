@@ -46,6 +46,11 @@ func cmdExec(args []string) int {
 	}
 	bin, passthrough := args[0], args[1:]
 
+	// An editor chat is a clawdh session like any other, and someone who only
+	// ever works in an editor may not run a clawdh command for weeks — so this
+	// is the one place their service gets looked in on.
+	ensureServiceRunning()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return runPlainClaude(bin, passthrough)

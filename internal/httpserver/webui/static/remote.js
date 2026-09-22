@@ -44,10 +44,11 @@
     if (d < 45) return "just now";
     if (d < 3600) return Math.round(d / 60) + " min ago";
     if (d < 86400) return Math.round(d / 3600) + " h ago";
-    return new Date(iso).toLocaleDateString();
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
+  // 12-hour with am/pm, like every other time on this page (see clockTime).
   function clock(iso) {
-    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
   }
   function leftUntil(iso) {
     var m = Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 60000));

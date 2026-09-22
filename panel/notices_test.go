@@ -50,14 +50,23 @@ type fakeUsage struct {
 	people     []SubjectUsage       // everyone's usage, whatever the window
 	ranBy      map[string][]SubjectUsage
 	latest     time.Time
-	since      map[string]time.Time // subject asked about ("people" or an account id) -> since
+	since      map[string]time.Time // subject asked about ("people" or an account id) -> the last since
+	// asks is every `since` the board requested per subject. An account is read
+	// twice now — once for the period on screen, once scoped to the weekly
+	// window that the per-person percentages are a share of — so the single
+	// `since` above keeps the first (the period) and this keeps both.
+	asks map[string][]time.Time
 }
 
 func (f *fakeUsage) asked(key string, since time.Time) {
 	if f.since == nil {
 		f.since = map[string]time.Time{}
 	}
+	if f.asks == nil {
+		f.asks = map[string][]time.Time{}
+	}
 	f.since[key] = since
+	f.asks[key] = append(f.asks[key], since)
 }
 
 func (f *fakeUsage) ListLimits(context.Context) ([]Limit, error) { return f.limits, nil }

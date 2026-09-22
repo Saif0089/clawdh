@@ -84,14 +84,12 @@
        with VS Code could not tell whether clawdh applied to them at all. -->
   <section class="block" id="run-block">
     <div class="block-head">
-      <h2>Running Claude here</h2>
-      <p class="block-sub">There are two places to use an account — a terminal, or an editor. They work the same way. Choose where new work starts, and move anything already running.</p>
+      <h2>Start sessions as</h2>
     </div>
 
     <div class="start-panel">
       <div class="start-row">
         <div class="start-text">
-          <span class="start-label">New sessions start as</span>
           <span id="start-account" class="start-account">your default login</span>
         </div>
         <div class="start-controls">
@@ -102,25 +100,23 @@
       </div>
       <p id="start-problem" class="start-problem" hidden></p>
       <p id="start-result" class="start-result" aria-live="polite" hidden></p>
-      <p class="start-note">Applies to every new chat in an editor and a plain <code>claude</code> in a terminal. Running <code>clawdh &lt;name&gt;</code> still names an account outright and is unaffected.</p>
     </div>
 
     <div class="lanes">
       <article class="lane">
-        <h3><svg viewBox="0 0 16 16" aria-hidden="true" class="lane-icon"><path d="M2 3.5h12v9H2z" fill="none" stroke="currentColor" stroke-width="1.3" rx="1"/><path d="M4.5 6.5 6.5 8l-2 1.5M8 10h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>In a terminal</h3>
-        <p>Start an account by name, in any terminal:</p>
+        <h3><svg viewBox="0 0 16 16" aria-hidden="true" class="lane-icon"><path d="M2 3.5h12v9H2z" fill="none" stroke="currentColor" stroke-width="1.3" rx="1"/><path d="M4.5 6.5 6.5 8l-2 1.5M8 10h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>Terminal</h3>
         <div class="lane-cmd">
           <code id="lane-cmd-text">clawdh &lt;name&gt;</code>
           <button id="lane-cmd-copy" class="copy-cmd" type="button">Copy</button>
         </div>
-        <p class="lane-foot">Each account's own command is on its card below. Typing plain <code>claude</code> works too — it starts on the account set above.</p>
+        <p class="lane-foot">or just <code>claude</code></p>
       </article>
 
       <article class="lane" id="editor-lane">
-        <h3><svg viewBox="0 0 16 16" aria-hidden="true" class="lane-icon"><path d="M2 3h12v10H2z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 3v10" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>In VS Code, Cursor and the rest</h3>
-        <p id="editor-state" class="lane-state">Looking for editors…</p>
+        <h3><svg viewBox="0 0 16 16" aria-hidden="true" class="lane-icon"><path d="M2 3h12v10H2z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 3v10" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>Editor</h3>
+        <p id="editor-state" class="lane-state">Looking…</p>
         <div id="editor-list" class="editor-list"></div>
-        <p class="lane-foot">Nothing to run and no command to remember: open a chat as you always do and it starts on the account set above. Chats that are already open keep the account they started with until you move them.</p>
+        <p class="lane-foot">nothing to run — just open a chat</p>
       </article>
     </div>
   </section>
@@ -130,9 +126,9 @@
        this is the same thing with a name on it. -->
   <section class="block" id="live-block">
     <div class="block-head live-head">
-      <div>
+      <div class="live-title">
         <h2>Running now</h2>
-        <p class="block-sub">Sessions clawdh is supervising on this machine. Change the account beside one to move that conversation.</p>
+        <button type="button" id="live-help" class="help-dot" aria-label="What moving a session does" aria-expanded="false">?</button>
       </div>
       <div id="live-all" class="live-all" hidden>
         <label for="live-all-picker">Move every session to</label>
@@ -141,16 +137,16 @@
       </div>
     </div>
     <div id="live-list" class="live-list"></div>
-    <p id="live-empty" class="empty" hidden>Nothing running right now. Sessions show up here as you start them — in a terminal or in an editor.</p>
+    <p id="live-empty" class="empty" hidden>Nothing running right now.</p>
     <p id="live-result" class="start-result" aria-live="polite" hidden></p>
-    <p class="live-note">Moving a session restarts it on the other account with the conversation resumed. Anything running inside it at that moment — a subagent, a background task — does not survive. Sessions started before clawdh was installed, or outside it, can't be moved.</p>
+    <p id="live-note" class="live-note" hidden>Moving a session restarts it on the other account, conversation and all. Anything running inside it at that moment does not survive.</p>
   </section>
 
   <!-- Accounts signed in on this machine. -->
   <section class="block">
     <div class="block-head">
       <h2>On this machine</h2>
-      <p class="block-sub">Claude logins here. Sign one in, then add it to a panel to share it with other people.</p>
+      <p class="block-sub">Claude logins on this computer.</p>
     </div>
     <div id="accounts-list"></div>
     <p id="accounts-empty" class="empty" hidden>
@@ -165,7 +161,7 @@
   <section id="shared-block" class="block" hidden>
     <div class="block-head">
       <h2>Shared with you</h2>
-      <p class="block-sub">Accounts you can run through the gateway. Nothing is stored here — access ends the moment it's taken back.</p>
+      <p class="block-sub">Shared with you through the gateway.</p>
     </div>
     <div id="shared-list"></div>
   </section>

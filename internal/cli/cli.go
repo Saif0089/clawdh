@@ -54,6 +54,8 @@ func Run(args []string) int {
 		return cmdRemote(args[1:])
 	case "panel":
 		return cmdPanel(args[1:])
+	case "update", "upgrade":
+		return cmdUpdate(args[1:])
 	case "prune":
 		return cmdPrune(args[1:])
 	case "exec":
@@ -125,6 +127,7 @@ SHARING one account with other people (needs a panel + gateway):
   clawdh panel <command>       Run or manage the panel — see `+"`clawdh panel help`"+`
 
 OTHER
+  clawdh update [--check]      Install the newest published build now (--check: just say what's out)
   clawdh uninstall             Remove the service, autostart, shell aliases, and the status-line badge
   clawdh serve [--port N]      Run the server in the foreground (what the service runs)
   clawdh statusline            What Claude Code's status line runs in a clawdh session (your line + the badge)

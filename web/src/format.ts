@@ -34,6 +34,25 @@ export function agoFrom(iso: string): { text: string; stale: boolean } {
   return { text: "as of " + when(iso), stale: mins > 2 };
 }
 
+// Every clock time in the panel is 12-hour with am/pm, whatever locale the
+// browser would otherwise pick, so a machine set to a 24-hour locale does not
+// read "15:52" here and "3:52 pm" everywhere else on the same screen.
+export function clockTime(iso?: string | Date): string {
+  if (!iso) return "";
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
+}
+
+// dateAndTime is the same instant with its date, for a tooltip or anything
+// that may not be today.
+export function dateAndTime(iso?: string | Date): string {
+  if (!iso) return "";
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${clockTime(d)}`;
+}
+
 // when renders a past instant in plain words ("3 min ago", "2 days ago"), the
 // same phrasing the activity feed and device rows use everywhere.
 export function when(iso?: string): string {
@@ -46,7 +65,7 @@ export function when(iso?: string): string {
   if (hrs < 24) return `${hrs} ${hrs === 1 ? "hour" : "hours"} ago`;
   const days = Math.round(hrs / 24);
   if (days < 7) return `${days} ${days === 1 ? "day" : "days"} ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 // untilReset says how long until a usage window rolls over ("in 2h 14m"),

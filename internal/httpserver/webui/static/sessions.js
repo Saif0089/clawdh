@@ -140,27 +140,25 @@
     editorList.replaceChildren();
 
     if (list.length === 0) {
-      editorState.textContent = "No VS Code-family editor found on this machine. Nothing to set up.";
+      editorState.textContent = "No editor found";
       editorState.className = "lane-state";
       return;
     }
     if (withExt.length === 0) {
-      editorState.textContent = "Found " + list.map((e) => e.name).join(" and ") +
-        ", but without the Claude Code extension there is nothing for clawdh to point at an account.";
+      editorState.textContent = "Claude Code extension not installed";
       editorState.className = "lane-state";
       return;
     }
     if (managed.length === withExt.length) {
-      editorState.textContent = "Set up already — clawdh runs Claude for " +
-        plural(managed.length, "this editor", "these editors") + ", so every chat is its own session.";
+      editorState.textContent = "Ready";
       editorState.className = "lane-state ok";
     } else {
-      editorState.textContent = "Not set up yet. Until then, chats run on your default login and can't be moved.";
+      editorState.textContent = "Not set up";
       editorState.className = "lane-state warn";
       const fix = document.createElement("button");
       fix.type = "button";
       fix.className = "editor-fix";
-      fix.textContent = "Set up editors";
+      fix.textContent = "Set up";
       fix.addEventListener("click", () => setUpEditors(fix));
       editorList.appendChild(fix);
     }
@@ -182,7 +180,7 @@
     liveEmpty.hidden = live.length > 0;
     if (!supported) {
       liveEmpty.hidden = false;
-      liveEmpty.textContent = "clawdh can't read its session register on this machine, so nothing can be listed or moved from here.";
+      liveEmpty.textContent = "Can't read this machine's sessions.";
     }
     liveAll.hidden = live.length < 2 || list.length === 0;
     if (!liveAll.hidden) fillPicker(liveAllPicker, list, "");
@@ -331,6 +329,16 @@
   }
 
   laneCopy.addEventListener("click", () => copyToClipboard(laneCmd.textContent, laneCopy));
+
+  // The caveat about what a move costs is worth knowing once, not worth a
+  // paragraph on the page for ever after.
+  const liveHelp = document.getElementById("live-help");
+  const liveNote = document.getElementById("live-note");
+  liveHelp.addEventListener("click", () => {
+    const show = liveNote.hidden;
+    liveNote.hidden = !show;
+    liveHelp.setAttribute("aria-expanded", String(show));
+  });
 
   // --- polling ---------------------------------------------------------
 

@@ -379,7 +379,23 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 
 	// A refresh token that has run out is the one case where the login
 	// really is over; the short-lived access token expiring is routine.
+	//
+	// Except for a login the gateway holds, where this file is not the login
+	// any more. Handing an account to the panel leaves a copy here that stops
+	// being refreshed on purpose — the gateway refreshes centrally, and a
+	// second refresher would rotate the token out from under it. That copy
+	// carries the expiry stamped at the original browser sign-in, roughly four
+	// weeks out, and nothing local moves it. So on the day it passes, every
+	// machine still holding one would have announced "This login has expired.
+	// Reconnect the account" about an account that was working perfectly, and
+	// the fix it advises — signing in again — is the one thing that actually
+	// breaks a shared login. The gateway is asked first, and its answer stands.
 	if !creds.RefreshExpiresAt.IsZero() && s.now().After(creds.RefreshExpiresAt) {
+		if report, note, ok := s.gatewayReading(configDir); ok {
+			snapshot.Usage = report
+			snapshot.Note = note
+			return snapshot, shortTTL
+		}
 		snapshot.State = StateExpired
 		snapshot.Error = "This login has expired. Reconnect the account to use it again."
 		return snapshot, shortTTL
@@ -399,12 +415,10 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 		// A login the gateway holds: its token going stale here is expected, and
 		// the gateway's reading is the real one. Never tell someone to "run it
 		// once" — that refreshes the token locally and invalidates the gateway's.
-		if s.Gateway != nil {
-			if report, note, ok := s.Gateway(configDir); ok && report != nil {
-				snapshot.Usage = report
-				snapshot.Note = note
-				return snapshot, shortTTL
-			}
+		if report, note, ok := s.gatewayReading(configDir); ok {
+			snapshot.Usage = report
+			snapshot.Note = note
+			return snapshot, shortTTL
 		}
 		snapshot.Error = "Plan usage will show again once Claude Code refreshes this account's token — run it once."
 		if last := s.lastGood(accountID); last != nil {
@@ -472,6 +486,20 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 // machine: no network yet after waking, a name that did not resolve, a
 // connection refused. Anthropic heard nothing, so asking again soon
 // costs nothing against its limit.
+// gatewayReading is the gateway's own numbers for a login it holds, when it
+// holds one. The single place that asks, so "is this login the gateway's?" is
+// answered the same way everywhere it matters.
+func (s *Service) gatewayReading(configDir string) (*Report, string, bool) {
+	if s.Gateway == nil {
+		return nil, "", false
+	}
+	report, note, ok := s.Gateway(configDir)
+	if !ok || report == nil {
+		return nil, "", false
+	}
+	return report, note, true
+}
+
 func neverSent(err error) bool {
 	var op *net.OpError
 	return errors.As(err, &op) && op.Op == "dial"

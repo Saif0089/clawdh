@@ -7,7 +7,7 @@ import { UsageBoard } from "./UsageBoard";
 import { Quotas } from "./Quotas";
 import { useDialog } from "./Dialog";
 import { DeviceJobs } from "./DeviceJobs";
-import { when, untilExpiry, accessLeft } from "./format";
+import { when, untilExpiry, accessLeft, dateAndTime } from "./format";
 
 type Ask = ReturnType<typeof useDialog>["ask"];
 
@@ -379,7 +379,7 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
                     {(a.shared || []).map((sh) => (
                       <span key={sh.shareId} className="group inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised-2 py-1 pl-2.5 pr-1.5 text-[13.5px]">
                         {sh.personName}
-                        {sh.expiresAt && <span className="text-[12px] text-faint" title={`Ends ${new Date(sh.expiresAt).toLocaleString()}`}>· {accessLeft(sh.expiresAt)}</span>}
+                        {sh.expiresAt && <span className="text-[12px] text-faint" title={`Ends ${dateAndTime(sh.expiresAt)}`}>· {accessLeft(sh.expiresAt)}</span>}
                         <button onClick={() => revoke(a, sh)} className="rounded text-faint transition-colors hover:text-crit" title="Take access away">×</button>
                       </span>
                     ))}
@@ -488,7 +488,7 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                       (p.can || []).map((c, i) => (
                         <span key={c + i} className="rounded-lg border border-line bg-raised-2 px-2.5 py-1 text-[13.5px]">
                           {c}
-                          {p.canUntil?.[i] && <span className="ml-1.5 text-[12px] text-faint" title={`Ends ${new Date(p.canUntil[i]).toLocaleString()}`}>· {accessLeft(p.canUntil[i])}</span>}
+                          {p.canUntil?.[i] && <span className="ml-1.5 text-[12px] text-faint" title={`Ends ${dateAndTime(p.canUntil[i])}`}>· {accessLeft(p.canUntil[i])}</span>}
                         </span>
                       ))
                     ) : (
@@ -550,7 +550,7 @@ function Activity({ data }: { data: Panel }) {
               <div className="text-[15px] leading-snug">
                 <b className="font-semibold">{e.who}</b> <span className="text-muted">{e.what}</span>
               </div>
-              <time className="text-[13px] text-faint">{when(e.at) || new Date(e.at).toLocaleString()}</time>
+              <time className="text-[13px] text-faint">{when(e.at) || dateAndTime(e.at)}</time>
             </div>
           ))}
         </div>

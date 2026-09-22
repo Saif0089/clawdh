@@ -63,15 +63,26 @@ function formatLeft(ms) {
   if (hours > 0) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
   return `${mins}m`;
 }
+// Every clock time on this page is 12-hour with am/pm, whatever the browser's
+// locale would otherwise pick. A machine set to a 24-hour locale used to show
+// "15:52" here and "3:52 pm" in the menu bar beside it; one of the two had to
+// win, and the one people read the rest of their day in is this one.
+function clockTime(date) {
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
+}
+// The same instant with its date, for anything that may not be today.
+function dateAndTime(date) {
+  return `${fullDate(date)}, ${clockTime(date)}`;
+}
 function formatWhen(date) {
-  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const time = clockTime(date);
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
   const dayIndex = Math.floor((date - midnight) / 86400000);
   if (dayIndex === 0) return `today ${time}`;
   if (dayIndex === 1) return `tomorrow ${time}`;
-  if (dayIndex > 1 && dayIndex < 7) return `${date.toLocaleDateString([], { weekday: "long" })} ${time}`;
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (dayIndex > 1 && dayIndex < 7) return `${date.toLocaleDateString("en-US", { weekday: "long" })} ${time}`;
+  return fullDate(date);
 }
 function formatAgo(ms) {
   const minutes = Math.floor(ms / 60000);
@@ -81,7 +92,7 @@ function formatAgo(ms) {
   if (hours === 0) return `${mins} min ago`;
   return mins > 0 ? `${hours} h ${mins} min ago` : `${hours} h ago`;
 }
-function fullDate(date) { return date.toLocaleDateString([], { month: "short", day: "numeric" }); }
+function fullDate(date) { return date.toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
 
 // Countdowns tick in the browser from the absolute timestamps the server
 // sent, so the page stays honest while it sits open without polling.
@@ -321,8 +332,8 @@ function tickAge(card) {
   if (label.hidden) return;
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
-  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const when = at >= midnight ? time : `${fullDate(at)} ${time}`;
+  const time = clockTime(at);
+  const when = at >= midnight ? time : dateAndTime(at);
   label.textContent = `as of ${when} · ${formatAgo(age)}`;
 }
 
@@ -415,7 +426,7 @@ function renderShared(shares) {
       const mins = Math.max(0, Math.round(left / 60000));
       const word = mins < 60 ? mins + "m" : mins < 48 * 60 ? Math.round(mins / 60) + "h" : Math.round(mins / 1440) + "d";
       pill.textContent = "Ready · " + word + " left";
-      pill.title = "This access ends on its own at " + new Date(sh.expiresAt).toLocaleString();
+      pill.title = "This access ends on its own at " + dateAndTime(new Date(sh.expiresAt));
     }
     // The gateway's own reading of this account's windows — the same bars a
     // local card draws, so every account shows usage the same way.
@@ -806,7 +817,7 @@ async function poll() {
     await refreshPanel();
     // Last: it offers the accounts and shares the two reads above just loaded.
     if (typeof refreshSessions === "function") await refreshSessions();
-    refreshedLabel.textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    refreshedLabel.textContent = "updated " + clockTime(new Date());
   } catch (err) {
     refreshedLabel.textContent = "could not refresh: " + err.message;
   } finally {

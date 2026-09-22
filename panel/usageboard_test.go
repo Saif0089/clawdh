@@ -57,10 +57,34 @@ func TestTheBoardShowsEachAccountWithWhoRanItAndOnWhat(t *testing.T) {
 			t.Errorf("model %v = %v, want 200", mm["model"], mm["weighted"])
 		}
 	}
+	// Each account is read for the period on screen first. An account with a
+	// window reading is then read a second time, scoped to its weekly window,
+	// because that is the span the per-person percentages are a share of.
 	for _, id := range []string{teamID, spareID} {
-		if got, want := usage.since[id], h.clock.Add(-30*24*time.Hour); !got.Equal(want) {
+		asks := usage.asks[id]
+		if len(asks) == 0 {
+			t.Errorf("account %s was never read", id)
+			continue
+		}
+		if got, want := asks[0], h.clock.Add(-30*24*time.Hour); !got.Equal(want) {
 			t.Errorf("account %s read since %v, want the last 30 days (%v)", id, got, want)
 		}
+	}
+	// Team Max has a weekly reading, so its people carry a share of the real
+	// weekly allowance — not a share of each other, which is 100% for whoever
+	// ran it alone and says nothing about the plan.
+	if len(usage.asks[teamID]) != 2 {
+		t.Errorf("Team Max read %d times, want the period and its weekly window", len(usage.asks[teamID]))
+	}
+	for _, p := range people {
+		pm := p.(map[string]any)
+		of, _ := pm["ofWeekly"].(float64)
+		if of <= 0 || of > 0.61 {
+			t.Errorf("%v ofWeekly = %v, want a slice of the account's 61%% week", pm["name"], of)
+		}
+	}
+	if len(usage.asks[spareID]) != 1 {
+		t.Errorf("Spare read %d times, want only the period — it has no window to attribute", len(usage.asks[spareID]))
 	}
 
 	spare := accounts[1].(map[string]any)

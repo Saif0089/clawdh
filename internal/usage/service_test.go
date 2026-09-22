@@ -1052,3 +1052,61 @@ func TestStaleTokenUsesTheGatewayReading(t *testing.T) {
 		t.Errorf("without a gateway reading the stale-token note should remain, got %+v", got)
 	}
 }
+
+// A login handed to the gateway stops being refreshed on this machine on
+// purpose, so the copy left here carries the expiry stamped at the original
+// browser sign-in — about four weeks out — and nothing local ever moves it.
+//
+// On the day that passed, every machine holding one announced that the login
+// had expired and told the person to reconnect the account. The account was
+// working perfectly, the gateway was refreshing it centrally, and reconnecting
+// is the one action that actually breaks a shared login. The gateway's reading
+// has to win.
+func TestGatewayHeldLoginNeverReadsAsExpired(t *testing.T) {
+	fileCredentials(t)
+	dir := t.TempDir()
+	past := time.Now().Add(-time.Hour)
+	writeCredsFile(t, dir, past, past) // both clocks run out: the local copy is dead
+
+	svc := NewServiceWithClient(&Client{})
+	svc.Gateway = func(configDir string) (*Report, string, bool) {
+		if configDir != dir {
+			t.Errorf("gateway asked about %q, want %q", configDir, dir)
+		}
+		return &Report{
+			FetchedAt: time.Now(),
+			Limits:    []Limit{{Kind: "session", Label: "Current session", Percent: 28, Active: true}},
+		}, "Read through the gateway.", true
+	}
+
+	got := svc.Get(context.Background(), "a", dir)
+	if got.State == StateExpired {
+		t.Fatalf("State = %q: a login the gateway holds was reported as expired", got.State)
+	}
+	if got.State != StateLinked {
+		t.Errorf("State = %q, want %q", got.State, StateLinked)
+	}
+	if got.Usage == nil || len(got.Usage.Limits) == 0 {
+		t.Error("want the gateway's own numbers on the card")
+	}
+	if got.Error != "" {
+		t.Errorf("Error = %q, want none — nothing is wrong with this account", got.Error)
+	}
+}
+
+// Without a gateway holding it, an expired refresh token still means what it
+// always meant: this login is over and has to be signed in again.
+func TestExpiredLoginWithNoGatewayStillReadsAsExpired(t *testing.T) {
+	fileCredentials(t)
+	dir := t.TempDir()
+	past := time.Now().Add(-time.Hour)
+	writeCredsFile(t, dir, past, past)
+
+	svc := NewServiceWithClient(&Client{})
+	svc.Gateway = func(string) (*Report, string, bool) { return nil, "", false }
+
+	got := svc.Get(context.Background(), "a", dir)
+	if got.State != StateExpired {
+		t.Errorf("State = %q, want %q", got.State, StateExpired)
+	}
+}
