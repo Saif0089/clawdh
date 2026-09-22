@@ -177,6 +177,66 @@ function Gate({ setup, onIn }: { setup: boolean; onIn: (name: string) => void })
   );
 }
 
+// AccountMenu is the header's one control: who you are, and the few things
+// that belong to you rather than to the page under it.
+//
+// Those used to sit loose in the header — your name, the build serving the
+// panel, a "Sign out" link — three pieces of chrome competing with the tabs
+// for the eye, and the build tag simply disappeared on a phone. An avatar that
+// opens a menu is a shape people already know, so it needs no label to explain
+// it and gives the things inside it somewhere to live at any width.
+function AccountMenu({ actor, tag, onSignOut }: { actor: string; tag: string; onSignOut: () => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+
+  const initial = (actor || "?").slice(0, 1).toUpperCase();
+  return (
+    <div className="relative" ref={box}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={actor ? `Signed in as ${actor}` : "Account"}
+        className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary/25"
+      >
+        {initial}
+      </button>
+      {open && (
+        <motion.div
+          role="menu"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.14 }}
+          className="absolute right-0 z-30 mt-2 w-60 overflow-hidden rounded-xl border border-line bg-raised shadow-xl"
+        >
+          <div className="border-b border-line px-4 py-3">
+            <div className="truncate text-[14px] font-medium text-ink">{actor || "Signed in"}</div>
+            <div className="text-[12px] text-faint">Changes are recorded under this name</div>
+          </div>
+          {tag && (
+            <div className="border-b border-line px-4 py-2.5">
+              <div className="text-[12px] text-faint">This panel is running</div>
+              <div className="truncate font-mono text-[12px] text-muted" title={tag}>{tag}</div>
+            </div>
+          )}
+          <button role="menuitem" onClick={onSignOut} className="w-full px-4 py-2.5 text-left text-[14px] text-muted transition-colors hover:bg-raised-2 hover:text-ink">
+            Sign out
+          </button>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
 function Shell({ tab, setTab, actor, tag, onSignOut }: { tab: Tab; setTab: (t: Tab) => void; actor: string; tag: string; onSignOut: () => void }) {
   const signOut = async () => {
     try {
@@ -193,17 +253,10 @@ function Shell({ tab, setTab, actor, tag, onSignOut }: { tab: Tab; setTab: (t: T
         <Logo />
         <span className="text-[22px] font-bold tracking-tight">clawdh</span>
         <span className="rounded-full border border-line bg-raised px-2.5 py-0.5 text-[12px] font-medium text-muted">Team panel</span>
-        {/* The build serving the panel, the way the local page's corner names its own —
-            so "is the panel behind my machines?" is answered without leaving the header. */}
-        {tag && <span className="hidden whitespace-nowrap font-mono text-[12px] text-faint sm:inline" title="The build serving this panel">{tag}</span>}
+        {/* The build serving the panel now lives in the account menu, where it is
+            there at every width rather than vanishing on a phone. */}
         <div className="ml-auto flex min-w-0 items-center gap-3">
-          {actor && (
-            <span className="hidden min-w-0 items-center gap-1.5 text-[13.5px] text-muted sm:flex" title="Your changes are recorded under this name">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11.5px] font-semibold text-primary">{actor.slice(0, 1).toUpperCase()}</span>
-              <span className="truncate">{actor}</span>
-            </span>
-          )}
-          <button onClick={signOut} className="shrink-0 text-[14px] text-faint transition-colors hover:text-ink">Sign out</button>
+          <AccountMenu actor={actor} tag={tag} onSignOut={signOut} />
         </div>
       </header>
       {/* On a phone the strip scrolls sideways under the finger (no page overflow); the
