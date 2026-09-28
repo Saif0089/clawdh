@@ -66,7 +66,12 @@ func runDiagnose(ctx context.Context, dsn, keyB64 string) error {
 			fmt.Println()
 			continue
 		}
-		u.persist(a.ID, fresh)
+		if err := u.storeCredential(a.ID, fresh); err != nil {
+			fmt.Printf("  REFRESH OK but the new credential could NOT be stored: %v\n", err)
+			fmt.Println("  -> the old refresh token is spent now, so this login has to be added again.")
+			fmt.Println()
+			continue
+		}
 		fmt.Printf("  REFRESH OK; new token expires %s — persisted. This account should serve now.\n", fresh.ExpiresAt.Format(time.RFC3339))
 		fmt.Println()
 	}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"clawdh/internal/gateway"
-	"clawdh/internal/meter"
 	"clawdh/panel"
 	"clawdh/panelpg"
 )
@@ -18,23 +17,54 @@ import (
 // A member's key maps (by hash) to a share, a share to an account, and an
 // account to a live, self-refreshing token. Many members' keys can point at one
 // account — that is how one login serves the whole team at once.
+//
+// Nothing a member's request does waits for the database. It is served from the
+// panel state last read, which is re-read in the background; its quota standing
+// is read in the background too; and every write goes through the background
+// writer (dbwriter.go). The one exception is a key the state does not know yet,
+// which gets one bounded fresh read (see freshRead).
 type dbUpstream struct {
 	store  *panel.Store
-	pg     *panelpg.Backend // the concrete backend, for metering writes
+	pg     panelDB // metering, windows, collisions and quota standings
 	secret *panel.Secret
+	w      *writer
 
-	mu         sync.Mutex
-	data       panel.Data
-	dataAt     time.Time
-	managers   map[string]*gateway.Manager // accountID -> token manager
-	limitCache map[string]limitCacheEntry  // personID -> recent quota standing
+	mu           sync.Mutex
+	data         panel.Data
+	dataAt       time.Time                   // when data was last read successfully
+	flight       *flight                     // the re-read in progress, if any
+	loadFailures int                         // consecutive failed re-reads
+	retryAt      time.Time                   // no re-read starts before this after a failure
+	managers     map[string]*gateway.Manager // accountID -> token manager
+	limitCache   map[string]limitCacheEntry  // person+account -> recent quota standing
 }
 
-// limitCacheEntry is a person's cached quota standing, so the gateway checks the
-// database at most every limitCacheTTL per person rather than every request.
+// panelDB is the part of the panel database the gateway uses besides the panel
+// state itself. *panelpg.Backend is the real one; tests stand in a database
+// that is slow, or failing, on demand — the only conditions that matter here.
+type panelDB interface {
+	RecordWindows(accountID string, fiveH, sevenD float64, fiveHReset, sevenDReset time.Time, models []panel.ModelWindow)
+	RecordUsage(ctx context.Context, ev panelpg.UsageEvent) error
+	RecordCollision(ctx context.Context, accountID, note string) error
+	MemberLimitStatus(ctx context.Context, personID, accountID string) (panelpg.LimitStatus, error)
+	AccountWindows(ctx context.Context) ([]panel.AccountWindow, error)
+	UsageBySubject(ctx context.Context, subjectType string, since time.Time) ([]panel.SubjectUsage, error)
+	LatestEventAt(ctx context.Context) (time.Time, error)
+}
+
+// flight is one read of the panel state, which anyone who needs it waits on
+// rather than starting another.
+type flight struct {
+	done chan struct{}
+	data panel.Data
+	err  error
+}
+
+// limitCacheEntry is a person's quota standing on an account as last read.
 type limitCacheEntry struct {
-	status gateway.QuotaStatus
-	at     time.Time
+	status  gateway.QuotaStatus
+	at      time.Time // when it was last read, successfully or not
+	reading bool      // a background read is in flight
 }
 
 const limitCacheTTL = 20 * time.Second
@@ -48,52 +78,148 @@ func newDBUpstream(ctx context.Context, dsn, keyB64 string) (*dbUpstream, error)
 	if err != nil {
 		return nil, err
 	}
-	return &dbUpstream{
-		store:    panel.NewStoreWithBackend(back),
-		pg:       back,
-		secret:   secret,
-		managers: map[string]*gateway.Manager{},
-	}, nil
+	u, err := newUpstream(panel.NewStoreWithBackend(back), back, secret)
+	if err != nil {
+		return nil, err
+	}
+	go u.runWriter(ctx)
+	return u, nil
 }
 
-// dataTTL is how long the loaded panel state is reused before re-reading, so a
-// new share or a removed one takes effect within a few seconds without a DB hit
-// per request.
+// newUpstream builds the upstream over a store and database and reads the panel
+// state once. Every later read happens in the background, so this is the only
+// one a start-up waits for. The background writer is not started here.
+func newUpstream(store *panel.Store, db panelDB, secret *panel.Secret) (*dbUpstream, error) {
+	u := &dbUpstream{
+		store:      store,
+		pg:         db,
+		secret:     secret,
+		w:          newWriter(),
+		managers:   map[string]*gateway.Manager{},
+		limitCache: map[string]limitCacheEntry{},
+	}
+	d, err := store.Load()
+	if err != nil {
+		return nil, fmt.Errorf("reading the panel: %w", err)
+	}
+	u.data, u.dataAt = d, time.Now()
+	return u, nil
+}
+
+// dataTTL is how long the panel state is served before a background re-read
+// starts, so a new share or a removed one takes effect within seconds.
 const dataTTL = 15 * time.Second
 
+// snapshot is the panel state a request is served from, and it never waits for
+// the database: when the state is older than dataTTL it starts a re-read in the
+// background and answers with what it has.
+//
+// It used to re-read in line, holding the one lock every request needs, and it
+// only moved its clock on a successful read. So once the database became
+// unreachable, every request from every member made a connection attempt of
+// its own — about 2.8s each, one at a time.
 func (u *dbUpstream) snapshot() panel.Data {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if time.Since(u.dataAt) < dataTTL {
-		return u.data
-	}
-	return u.reloadLocked()
-}
-
-// reloadLocked re-reads the panel now, ignoring the TTL. u.mu must be held.
-func (u *dbUpstream) reloadLocked() panel.Data {
-	if d, err := u.store.Load(); err == nil {
-		u.data = d
-		u.dataAt = time.Now()
+	if time.Since(u.dataAt) >= dataTTL && !time.Now().Before(u.retryAt) {
+		u.reloadLocked()
 	}
 	return u.data
 }
 
+// current is the state last read, without starting anything.
+func (u *dbUpstream) current() panel.Data {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.data
+}
+
+// reloadLocked starts a background re-read unless one is running, and returns
+// it to wait on. u.mu must be held.
+func (u *dbUpstream) reloadLocked() *flight {
+	if u.flight != nil {
+		return u.flight
+	}
+	f := &flight{done: make(chan struct{})}
+	u.flight = f
+	go func() {
+		d, err := u.store.Load()
+		u.mu.Lock()
+		u.noteLoadLocked(d, err)
+		u.flight = nil
+		u.mu.Unlock()
+		f.data, f.err = d, err
+		close(f.done)
+	}()
+	return f
+}
+
+// noteLoadLocked keeps a successful read, or backs off after a failed one while
+// the state already read goes on being served. u.mu must be held.
+func (u *dbUpstream) noteLoadLocked(d panel.Data, err error) {
+	if err != nil {
+		u.loadFailures++
+		u.retryAt = time.Now().Add(backoff(u.loadFailures))
+		if u.loadFailures == 1 {
+			log.Printf("gateway: re-reading the panel failed; serving the state read %s ago and retrying in the background: %v",
+				time.Since(u.dataAt).Round(time.Second), err)
+		}
+		return
+	}
+	if u.loadFailures > 0 {
+		log.Printf("gateway: re-reading the panel works again after %d failed attempts", u.loadFailures)
+	}
+	u.data, u.dataAt = d, time.Now()
+	u.loadFailures, u.retryAt = 0, time.Time{}
+}
+
+// freshReadWait bounds how long a request waits on a fresh read — the one case
+// in which a request reads the database at all — and freshReadEvery how often
+// one may start, so a withdrawn member's session retrying in a loop cannot turn
+// into a stream of reads.
+const (
+	freshReadWait  = 3 * time.Second
+	freshReadEvery = 2 * time.Second
+)
+
+// freshRead waits, briefly, for a read newer than the state being served. It
+// reports false without waiting when the state was read moments ago or the
+// database is failing, and false after freshReadWait if it has not answered.
+func (u *dbUpstream) freshRead() (panel.Data, bool) {
+	u.mu.Lock()
+	f := u.flight
+	if f == nil {
+		if time.Now().Before(u.retryAt) || time.Since(u.dataAt) < freshReadEvery {
+			u.mu.Unlock()
+			return panel.Data{}, false
+		}
+		f = u.reloadLocked()
+	}
+	u.mu.Unlock()
+	select {
+	case <-f.done:
+		return f.data, f.err == nil
+	case <-time.After(freshReadWait):
+		return panel.Data{}, false
+	}
+}
+
 // Resolve maps a member key to the account's current access token.
 //
-// A key that is not in the cached snapshot triggers one fresh read before it is
-// declared unknown, so a share created moments ago works on the first request
-// rather than after the cache's TTL — the window that produced a spurious
-// "access has been withdrawn" right after granting access.
+// A key that is not in the state being served gets one fresh read before it is
+// declared unknown, so a share created moments ago works on its first request
+// rather than after the next background re-read — the window that produced a
+// spurious "access has been withdrawn" right after granting access.
 func (u *dbUpstream) Resolve(memberKey string) (gateway.Resolution, error) {
 	keyHash := panel.HashToken(memberKey)
 	d := u.snapshot()
 	share, found := d.ShareByKeyHash(keyHash)
 	if !found {
-		u.mu.Lock()
-		d = u.reloadLocked()
-		u.mu.Unlock()
-		if share, found = d.ShareByKeyHash(keyHash); !found {
+		if fresh, ok := u.freshRead(); ok {
+			d = fresh
+			share, found = d.ShareByKeyHash(keyHash)
+		}
+		if !found {
 			return gateway.Resolution{}, gateway.ErrUnknownKey
 		}
 	}
@@ -116,7 +242,7 @@ func (u *dbUpstream) Resolve(memberKey string) (gateway.Resolution, error) {
 		// and record the collision so the panel can warn that this account is
 		// being used outside the gateway.
 		u.forget(acct.ID)
-		u.recordCollision(acct.ID)
+		u.w.collision(acct.ID)
 		return gateway.Resolution{}, fmt.Errorf("refreshing the shared login for %s: %w", acct.Name, err)
 	}
 	return gateway.Resolution{
@@ -128,9 +254,9 @@ func (u *dbUpstream) Resolve(memberKey string) (gateway.Resolution, error) {
 }
 
 // Renew replaces an access token Anthropic just refused (gateway.Renewer): the
-// manager adopts what the database holds now, or spends the refresh token. If
-// neither works the login is dead — drop the cached manager so a re-added
-// login is picked up, and record the collision for the panel to show.
+// manager adopts a newer credential the database holds, or spends the refresh
+// token. If neither works the login is dead — drop the cached manager so a
+// re-added login is picked up, and record the collision for the panel to show.
 func (u *dbUpstream) Renew(accountID, bad string) (string, error) {
 	u.mu.Lock()
 	m := u.managers[accountID]
@@ -144,95 +270,66 @@ func (u *dbUpstream) Renew(accountID, bad string) (string, error) {
 	if err != nil {
 		log.Printf("gateway: renewing the login for account %s after a 401: %v", accountID, err)
 		u.forget(accountID)
-		u.recordCollision(accountID)
+		u.w.collision(accountID)
 		return "", err
 	}
 	log.Printf("gateway: renewed the login for account %s after Anthropic refused its token", accountID)
 	return tok, nil
 }
 
-// Record meters one forwarded response. It prices the raw token counts here
-// (weighted tokens + USD, via the model-weight table) so the gateway data plane
-// stays free of pricing, then stores it. An unknown model is recorded under a
-// visible "unknown:" label with no fabricated weight or cost. Best-effort: a
-// metering failure is logged, never surfaced, and never blocks a request.
-func (u *dbUpstream) Record(ev gateway.Event) {
-	m := meter.Measure(ev.Model, meter.Usage{
-		Input: ev.Input, Output: ev.Output,
-		CacheCreation: ev.CacheCreation, CacheRead: ev.CacheRead,
-	})
-	model := ev.Model
-	if !m.Known {
-		model = "unknown:" + ev.Model
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := u.pg.RecordUsage(ctx, panelpg.UsageEvent{
-		PersonID: ev.PersonID, AccountID: ev.AccountID, Model: model,
-		Input: ev.Input, Output: ev.Output,
-		CacheCreation: ev.CacheCreation, CacheRead: ev.CacheRead,
-		Weighted: m.Weighted, CostUSD: m.CostUSD, RequestID: ev.RequestID,
-	}); err != nil {
-		log.Printf("metering: recording usage for account %s: %v", ev.AccountID, err)
-	}
-}
+// Record meters one forwarded response (gateway.Recorder). It is queued, never
+// written in line: a request must not wait on the database to finish.
+func (u *dbUpstream) Record(ev gateway.Event) { u.w.event(ev) }
 
-// RecordWindows stores an account's real 5h / weekly utilisation, read by the
-// gateway off Anthropic's headers. Implements gateway.WindowRecorder, so the
-// same dbUpstream that meters usage also captures the window snapshot.
-// Nil models: a forwarded response's headers carry the two totals and nothing
-// per-model, so this leaves whatever the usage poller last stored standing.
-func (u *dbUpstream) RecordWindows(accountID string, w gateway.Windows) {
-	u.pg.RecordWindows(accountID, w.FiveH, w.SevenD, w.FiveHReset, w.SevenDReset, nil)
-}
+// RecordWindows keeps an account's real 5h / weekly utilisation, read off
+// Anthropic's headers (gateway.WindowRecorder). Queued, like Record — it used
+// to be written before a response's first byte went back to the member. Nil
+// models: a response's headers carry the two totals and nothing per-model, so
+// whatever the usage poller last stored stands.
+func (u *dbUpstream) RecordWindows(accountID string, w gateway.Windows) { u.w.window(accountID, w) }
 
 // RecordWindowsAndModels stores a reading from the usage endpoint, which —
-// unlike the headers — reports each model's own weekly allowance too.
+// unlike the headers — reports each model's own weekly allowance too. It is
+// called only by the usage poller, never on a member's request.
 func (u *dbUpstream) RecordWindowsAndModels(accountID string, w gateway.Windows, models []panel.ModelWindow) {
 	u.pg.RecordWindows(accountID, w.FiveH, w.SevenD, w.FiveHReset, w.SevenDReset, models)
 }
 
-// Status reports a person's quota standing (over the cap, and how close), cached
-// briefly so it costs at most one DB read per person per limitCacheTTL. It fails
-// open: if the quota check itself errors, the member is served unconstrained — a
-// metering hiccup must never lock the whole team out of a subscription they are
-// entitled to.
+// Status reports a person's quota standing on an account (over the cap, and how
+// close) without waiting for the database: the standing is re-read in the
+// background at most every limitCacheTTL, and a request is judged on the one
+// last read. The very first request of a person on an account has none yet and
+// is let through — the same fail-open rule as ever, since a metering hiccup must
+// never lock a team out of a subscription it is entitled to.
 func (u *dbUpstream) Status(personID, accountID string) gateway.QuotaStatus {
 	// Keyed by both: the same person can be under different standings on different
 	// accounts (an account cap applies to whoever is using that account).
 	key := personID + "\x00" + accountID
 	u.mu.Lock()
-	if e, ok := u.limitCache[key]; ok && time.Since(e.at) < limitCacheTTL {
-		u.mu.Unlock()
-		return e.status
+	defer u.mu.Unlock()
+	e := u.limitCache[key]
+	if !e.reading && time.Since(e.at) >= limitCacheTTL {
+		e.reading = true
+		u.limitCache[key] = e
+		go u.readLimit(key, personID, accountID)
 	}
-	u.mu.Unlock()
+	return e.status
+}
 
+// readLimit refreshes one cached standing. A failed read keeps the standing it
+// had and waits a full limitCacheTTL before trying again.
+func (u *dbUpstream) readLimit(key, personID, accountID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	st, err := u.pg.MemberLimitStatus(ctx, personID, accountID)
-	if err != nil {
-		return gateway.QuotaStatus{}
-	}
-	status := gateway.QuotaStatus{Over: st.Over, Fraction: st.Fraction, ResetAt: st.ResetAt, Message: st.Message}
 	u.mu.Lock()
-	if u.limitCache == nil {
-		u.limitCache = map[string]limitCacheEntry{}
+	defer u.mu.Unlock()
+	e := u.limitCache[key]
+	e.reading, e.at = false, time.Now()
+	if err == nil {
+		e.status = gateway.QuotaStatus{Over: st.Over, Fraction: st.Fraction, ResetAt: st.ResetAt, Message: st.Message}
 	}
-	u.limitCache[key] = limitCacheEntry{status: status, at: time.Now()}
-	u.mu.Unlock()
-	return status
-}
-
-// recordCollision notes, best-effort, that an account's shared login just failed
-// to refresh — the panel turns this into a "used outside the gateway" warning.
-func (u *dbUpstream) recordCollision(accountID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := u.pg.RecordCollision(ctx, accountID,
-		"the shared login failed to refresh — the account is likely being used first-party outside the gateway"); err != nil {
-		log.Printf("health: recording collision for account %s: %v", accountID, err)
-	}
+	u.limitCache[key] = e
 }
 
 // forget drops an account's cached token manager, so the next request rebuilds
@@ -259,15 +356,19 @@ func (u *dbUpstream) managerFor(acct panel.Account) (*gateway.Manager, error) {
 	access, refreshTok, expires := parseCredential(raw)
 	accountID := acct.ID
 	m := gateway.NewManager(access, refreshTok, expires, func(fresh gateway.Credential) {
-		u.persist(accountID, fresh)
+		// Queued and retried until it is stored: refresh tokens are single-use,
+		// so this rotation is the only one that works from now on.
+		u.w.credential(accountID, fresh)
 	})
-	// Before spending its refresh token, the manager re-reads what the database
-	// holds now — so a credential rotated out of process (a re-added login,
-	// `clawdh-server diagnose` testing the refresh) is adopted, not fought.
+	// Before spending its refresh token, the manager looks for a newer credential
+	// stored since — a re-added login, or `clawdh-server diagnose` testing the
+	// refresh — so one rotated out of process is adopted, not fought. A fresh
+	// read when the database answers promptly, the state already read when it
+	// does not; the manager only ever adopts one newer than its own.
 	m.Reload(func() (gateway.Credential, bool) {
-		d, err := u.store.Load()
-		if err != nil {
-			return gateway.Credential{}, false
+		d, ok := u.freshRead()
+		if !ok {
+			d = u.current()
 		}
 		acct, ok := d.Account(accountID)
 		if !ok {
@@ -282,28 +383,6 @@ func (u *dbUpstream) managerFor(acct panel.Account) (*gateway.Manager, error) {
 	})
 	u.managers[acct.ID] = m
 	return m, nil
-}
-
-// persist seals a rotated credential back into the account, so the single-use
-// refresh token that just replaced the old one is not lost on restart.
-func (u *dbUpstream) persist(accountID string, fresh gateway.Credential) {
-	_ = u.store.Mutate(func(d *panel.Data) error {
-		acct, ok := d.Account(accountID)
-		if !ok {
-			return nil
-		}
-		raw, err := u.secret.Open(acct.Credential)
-		if err != nil {
-			return nil
-		}
-		updated := updateCredential(raw, fresh)
-		sealed, err := u.secret.Seal(updated)
-		if err != nil {
-			return nil
-		}
-		acct.Credential = sealed
-		return nil
-	})
 }
 
 // parseCredential pulls the tokens out of a stored claudeAiOauth blob.

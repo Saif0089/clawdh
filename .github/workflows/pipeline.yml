@@ -384,7 +384,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build the gateway for linux/amd64
-        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o clawdh-server ./cmd/clawdh-server
+        # -buildvcs=false keeps the git commit out of the binary, so unchanged
+        # gateway source builds to identical bytes and the ship step can tell.
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o clawdh-server ./cmd/clawdh-server
       - name: Ship it, migrating from ccam-gateway on first run
         env:
           KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -413,22 +415,43 @@ jobs:
               install -m 600 /opt/ccam-gateway/env /opt/clawdh-server/env
             fi'
 
-          # Upload the new binary and the systemd unit.
+          # Stage the new binary and unit beside the running ones; nothing live
+          # changes until the checks below pass.
           scp $SSHO clawdh-server "root@$HOST:/opt/clawdh-server/clawdh-server.new"
-          scp $SSHO deploy/clawdh-server.service "root@$HOST:/etc/systemd/system/clawdh-server.service"
+          scp $SSHO deploy/clawdh-server.service "root@$HOST:/opt/clawdh-server/clawdh-server.service.new"
 
-          # Swap the binary in, (re)install the unit, and cut over from
-          # ccam-gateway. Both serve 127.0.0.1:8787 and nginx already proxies the
-          # gateway hostname there, so nothing about the URL members hold changes.
-          # If the new service will not come up, roll back to ccam-gateway rather
-          # than leave the gateway down.
           ssh $SSHO "root@$HOST" '
             set -e
-            mv /opt/clawdh-server/clawdh-server.new /opt/clawdh-server/clawdh-server
-            chmod +x /opt/clawdh-server/clawdh-server
+            cd /opt/clawdh-server
+            chmod +x clawdh-server.new
+            # A push that did not change the gateway must not restart it: every
+            # restart cut every member'"'"'s answer in flight, client-only
+            # releases included. The build is reproducible, so unchanged source
+            # means identical bytes.
+            if cmp -s clawdh-server.new clawdh-server \
+               && cmp -s clawdh-server.service.new /etc/systemd/system/clawdh-server.service \
+               && systemctl is-active --quiet clawdh-server; then
+              rm -f clawdh-server.new clawdh-server.service.new
+              echo "gateway unchanged; the running one was left alone"
+              exit 0
+            fi
+            # Never restart into a gateway that cannot serve. The new build must
+            # read the panel state first — as the service user, with the service
+            # env, so over the same network and database the service will have.
+            if ! systemd-run --quiet --wait --pipe --collect --uid=clawdh-server \
+                   -p EnvironmentFile=/opt/clawdh-server/env \
+                   /opt/clawdh-server/clawdh-server.new check; then
+              rm -f clawdh-server.new clawdh-server.service.new
+              echo "the new gateway could not read its state; the running one was left alone" >&2
+              exit 1
+            fi
+            mv clawdh-server.service.new /etc/systemd/system/clawdh-server.service
+            mv clawdh-server.new clawdh-server
             systemctl daemon-reload
             systemctl enable clawdh-server
             systemctl stop ccam-gateway 2>/dev/null || true
+            # The gateway now lets answers in flight finish (up to 20s) and then
+            # flushes its write queue before exiting, so a restart takes a moment.
             if systemctl restart clawdh-server && sleep 2 && systemctl is-active --quiet clawdh-server; then
               systemctl disable ccam-gateway 2>/dev/null || true
               echo "clawdh-server is active (was ccam-gateway)"

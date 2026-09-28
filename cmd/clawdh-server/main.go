@@ -5,10 +5,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"clawdh/internal/config"
 	"clawdh/internal/gateway"
@@ -33,6 +37,15 @@ func main() {
 		}
 		return
 	}
+	// `clawdh-server check` is a deploy's preflight: can this build read what it
+	// would serve from? Nothing is restarted into a gateway that cannot.
+	if len(os.Args) > 1 && os.Args[1] == "check" {
+		if err := runCheck(context.Background(), os.Getenv("DATABASE_URL"), config.Env("PANEL_KEY")); err != nil {
+			fmt.Fprintln(os.Stderr, "check:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// `clawdh-server wipe-usage [--yes]` shows what the metering tables hold
 	// and, with --yes, clears them so the boards start over.
 	if len(os.Args) > 1 && os.Args[1] == "wipe-usage" {
@@ -48,19 +61,25 @@ func main() {
 	memberKey := flag.String("member-key", config.Env("GW_MEMBER_KEY"), "the gateway key a client presents")
 	flag.Parse()
 
+	// SIGTERM is how systemd restarts the gateway (every deploy): it ends ctx,
+	// which winds serving down gracefully below.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var up gateway.Upstream
 	var rec gateway.Recorder // the DB upstream also meters and enforces quotas;
 	var lim gateway.Limiter  // the static path does neither.
+	var dbu *dbUpstream
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
-		u, err := newDBUpstream(context.Background(), dsn, config.Env("PANEL_KEY"))
+		u, err := newDBUpstream(ctx, dsn, config.Env("PANEL_KEY"))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "gateway: connecting to the panel database:", err)
 			os.Exit(1)
 		}
-		up, rec, lim = u, u, u
+		up, rec, lim, dbu = u, u, u, u
 		fmt.Println("clawdh-server: serving from the panel database")
 		// Keep every shared login's usage reading fresh, idle or not.
-		go runUsagePoller(context.Background(), u)
+		go runUsagePoller(ctx, u)
 	} else {
 		token := config.Env("GW_TOKEN")
 		if token == "" || *memberKey == "" {
@@ -69,10 +88,27 @@ func main() {
 		}
 		up = staticUpstream{key: *memberKey, token: token}
 	}
-	h := gateway.New(up, rec, lim)
+	srv := &http.Server{Addr: *addr, Handler: gateway.New(up, rec, lim)}
+	stopped := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		// Let the answers in flight finish — a restart used to cut every member's
+		// stream mid-answer — but not for long: systemd stops waiting at 90s, and
+		// the write queue still has to be flushed after this.
+		c, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		_ = srv.Shutdown(c)
+		cancel()
+		close(stopped)
+	}()
 	fmt.Printf("clawdh-server on http://%s (forwarding to api.anthropic.com)\n", *addr)
-	if err := http.ListenAndServe(*addr, h); err != nil {
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	<-stopped
+	// Last: anything still queued for the database — above all a rotated
+	// credential, which is the only one that works once it has been issued.
+	if dbu != nil {
+		dbu.drain(10 * time.Second)
 	}
 }

@@ -13,6 +13,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +120,7 @@ const warnFraction = 0.75
 // forward and answers over-quota members with a 429.
 func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 	proxy := &httputil.ReverseProxy{
+		Transport: upstreamTransport,
 		// -1 flushes every write immediately, which is what keeps streamed
 		// (SSE) responses streaming instead of buffering to the end.
 		FlushInterval: -1,
@@ -226,11 +228,11 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 				return
 			}
 		}
-		// The stock behaviour: a plain 502 for a transport failure.
-		if !errors.Is(err, context.Canceled) {
-			log.Printf("gateway: upstream error: %v", err)
+		if errors.Is(err, context.Canceled) {
+			return // the member went away; there is no one to answer
 		}
-		w.WriteHeader(http.StatusBadGateway)
+		log.Printf("gateway: upstream error: %v", err)
+		upstreamFailed(w, err)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := memberKey(r)
@@ -336,6 +338,42 @@ func deny(w http.ResponseWriter, status int, errType, message string) {
 	w.Header().Set("x-should-retry", "false")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// upstreamFailed answers a request the gateway could not get an answer to — a
+// dropped connection to Anthropic, a timeout. Unlike deny it invites the retry:
+// this kind of failure is usually gone a moment later, and Claude Code's own
+// retry is the quickest way past it. It used to be a bare 502 with no body,
+// which Claude Code can only show as an unexplained API error.
+func upstreamFailed(w http.ResponseWriter, err error) {
+	body, _ := json.Marshal(map[string]any{
+		"type": "error",
+		"error": map[string]string{"type": "api_error",
+			"message": "The clawdh gateway could not get an answer from Anthropic just now (" + err.Error() + "). Retrying usually works."},
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("x-should-retry", "true")
+	w.WriteHeader(http.StatusBadGateway)
+	_, _ = w.Write(body)
+}
+
+// upstreamTransport is how the gateway reaches api.anthropic.com. The stock
+// transport keeps an idle connection for 90s and only two per host, so a
+// member coming back from reading an answer often paid for a new TLS handshake
+// first — 0.3s to 1.2s, measured from the gateway's VPS. Idle connections are
+// kept for five minutes, TLS sessions resume instead of starting over, and
+// HTTP/2 pings find a connection that died quietly before a request does.
+var upstreamTransport http.RoundTripper = newUpstreamTransport()
+
+func newUpstreamTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 256
+	t.MaxIdleConnsPerHost = 64
+	t.IdleConnTimeout = 5 * time.Minute
+	t.TLSClientConfig = &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(64)}
+	t.ForceAttemptHTTP2 = true
+	t.HTTP2 = &http.HTTP2Config{SendPingTimeout: 30 * time.Second, PingTimeout: 15 * time.Second}
+	return t
 }
 
 // memberKey pulls the caller's gateway key from where Claude Code puts it in

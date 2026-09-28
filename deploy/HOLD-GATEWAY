@@ -16,7 +16,19 @@ database call costs a millisecond instead of ~2.8s. The running binary would
 also regress to the stale, already-spent credentials the database still holds
 the moment it could reach it again; the rule keeps it from ever doing that.
 
+Meanwhile:
+  - Panel changes (new shares, withdrawals, re-added logins) do not reach the
+    running gateway, since it cannot read the database. Do the cutover soon
+    after the database is reachable again.
+  - Do not run `clawdh-server diagnose` against a reachable database: it tests
+    every stored refresh token by spending it, and for an account that has not
+    rotated since the outage that is the live token the running gateway holds.
+
 Lift the hold only at the planned cutover to a database on the VPS:
   1. Restore the data where the new gateway will read it.
-  2. Deploy a gateway that never adopts an older credential than it holds.
+  2. Deploy a gateway that never adopts an older credential than it holds
+     (this repo's, from 2026-09-28 on). The deploy now refuses to restart
+     into a build that cannot read its state (`clawdh-server check`).
   3. Remove the two firewall rules, then delete this file.
+  4. Add the login again for each shared account that was in use during the
+     outage: the database holds its pre-outage token, which rotation spent.

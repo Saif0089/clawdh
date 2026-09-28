@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -526,5 +527,41 @@ func TestGatewayTurnsAnUnrenewableTokenIntoACollision(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "add its login to the panel again") {
 		t.Errorf("body = %s, want the owner-facing fix", body)
+	}
+}
+
+// When Anthropic cannot be reached, the member gets an explained error that
+// invites Claude Code's own retry — not the bare, bodiless 502 it used to get,
+// which Claude Code can only show as an unexplained API error.
+func TestAnUnreachableUpstreamIsAnExplainedRetryableError(t *testing.T) {
+	gone := httptest.NewServer(http.NotFoundHandler())
+	testTargetHost = strings.TrimPrefix(gone.URL, "http://")
+	gone.Close() // nothing listens there now
+	defer func() { testTargetHost = "" }()
+
+	srv := httptest.NewServer(New(fakeUpstream{key: "member-key", token: "T"}, nil, nil))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/messages", strings.NewReader(`{"model":"m","max_tokens":1}`))
+	req.Header.Set("x-api-key", "member-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("the 502 has no error body: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || body.Error.Type != "api_error" || body.Error.Message == "" {
+		t.Errorf("got %d %+v; want a 502 carrying an api_error that says what happened", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("x-should-retry"); got != "true" {
+		t.Errorf("x-should-retry = %q; a dropped connection is worth retrying", got)
 	}
 }
