@@ -40,6 +40,19 @@ func (c Credential) stale(now time.Time) bool {
 	return c.AccessToken == "" || !now.Before(c.ExpiresAt.Add(-refreshLead))
 }
 
+// newerThan reports whether c was issued after o. Between two credentials for
+// the same login only the later one can still be rolled forward — the earlier
+// one's refresh token was spent producing it — and an expiry is the issue time
+// plus a fixed lifetime, so it orders them.
+//
+// Adopting a stored credential merely because it differs is what this guards
+// against: a store that missed rotations (the database was unreachable while
+// the gateway kept refreshing in memory) holds an earlier, spent credential,
+// and swapping to it kills a login that was working.
+func (c Credential) newerThan(o Credential) bool {
+	return c.ExpiresAt.After(o.ExpiresAt)
+}
+
 // refresh trades a refresh token for a fresh credential.
 func refresh(ctx context.Context, httpc *http.Client, refreshToken string) (Credential, error) {
 	body, _ := json.Marshal(map[string]string{
@@ -144,7 +157,7 @@ func (m *Manager) Renew(ctx context.Context, bad string) (string, error) {
 		return m.cred.AccessToken, nil // someone renewed it already
 	}
 	if m.reload != nil {
-		if c, ok := m.reload(); ok && c.AccessToken != "" && c.AccessToken != bad {
+		if c, ok := m.reload(); ok && c.AccessToken != "" && c.AccessToken != bad && c.newerThan(m.cred) {
 			m.cred = c
 			return m.cred.AccessToken, nil
 		}
@@ -166,9 +179,10 @@ func (m *tokenManager) get(ctx context.Context) (string, error) {
 	if !m.cred.stale(m.now()) {
 		return m.cred.AccessToken, nil
 	}
-	// Adopt a credential someone else rotated before spending ours (see Reload).
+	// Adopt a credential someone else rotated before spending ours (see Reload)
+	// — but only a newer one; see newerThan.
 	if m.reload != nil {
-		if c, ok := m.reload(); ok && c.RefreshToken != "" && (c.RefreshToken != m.cred.RefreshToken || c.AccessToken != m.cred.AccessToken) {
+		if c, ok := m.reload(); ok && c.RefreshToken != "" && c.newerThan(m.cred) {
 			m.cred = c
 			if !m.cred.stale(m.now()) {
 				return m.cred.AccessToken, nil
