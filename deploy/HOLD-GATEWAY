@@ -1,0 +1,22 @@
+Neon's free compute quota ran out on 2026-09-28; a restarted gateway cannot load its data until the database is reachable again.
+
+While this file exists, CI builds the gateway but never ships or restarts it.
+
+Why the running gateway must not be restarted right now:
+  - It is serving every shared session from the panel data it loaded before
+    the outage. A new process has nowhere to load that data from.
+  - Access tokens rotate every few hours and refresh tokens are single-use.
+    Every rotation since the outage exists only in that process's memory,
+    because persisting it to the database fails. A restart loses them, and
+    those accounts' logins have to be added again by their owners.
+
+On the VPS, the gateway's Postgres connections are rejected locally
+(iptables/ip6tables OUTPUT, owner clawdh-server, dport 5432) so each failed
+database call costs a millisecond instead of ~2.8s. The running binary would
+also regress to the stale, already-spent credentials the database still holds
+the moment it could reach it again; the rule keeps it from ever doing that.
+
+Lift the hold only at the planned cutover to a database on the VPS:
+  1. Restore the data where the new gateway will read it.
+  2. Deploy a gateway that never adopts an older credential than it holds.
+  3. Remove the two firewall rules, then delete this file.

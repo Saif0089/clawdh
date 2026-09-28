@@ -390,6 +390,15 @@ jobs:
           KEY: ${{ secrets.VPS_SSH_KEY }}
           HOST: ${{ secrets.VPS_HOST }}
         run: |
+          # A deploy ends in `systemctl restart`, and a restart is only safe when
+          # the new process can load what the running one is serving from. While
+          # deploy/HOLD-GATEWAY exists, nothing here touches the VPS — the running
+          # gateway keeps serving, and the file says why and what lifts the hold.
+          if [ -f deploy/HOLD-GATEWAY ]; then
+            echo "::warning::Gateway deploy held — the running gateway was left alone. $(head -1 deploy/HOLD-GATEWAY)"
+            exit 0
+          fi
+
           install -m 600 /dev/stdin key <<< "$KEY"
           SSHO="-i key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
 
