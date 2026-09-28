@@ -409,8 +409,7 @@ const checkInEvery = 30 * time.Second
 // as long as clawdh is running. It is silent when nothing changes, which is
 // almost always, and gives up quietly when this machine answers to no panel.
 func watchPanel(ctx context.Context) {
-	t := time.NewTicker(checkInEvery)
-	defer t.Stop()
+	failures := 0
 	for {
 		// Reload the config each tick rather than once at startup, so a machine
 		// joined from the web page (or by `clawdh join`) after the service
@@ -420,7 +419,7 @@ func watchPanel(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-time.After(checkInEvery):
 				continue
 			}
 		}
@@ -454,14 +453,35 @@ func watchPanel(ctx context.Context) {
 		// Any other failure is the panel being unreachable, which is not an
 		// event: a machine that cannot ask keeps what it was last told it had.
 		// Saying so every thirty seconds would fill the log with the fact that
-		// a laptop is on a train.
+		// a laptop is on a train. Asking every thirty seconds is no better, so
+		// a machine that keeps failing asks less often (see checkInBackoff).
+		if err != nil {
+			failures++
+		} else {
+			failures = 0
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-time.After(checkInBackoff(failures)):
 		}
 	}
 }
+
+// checkInBackoff is how long to wait after n consecutive failed check-ins: the
+// usual thirty seconds at first, doubling to five minutes. A panel that is down
+// for days should not hear from every machine twice a minute the whole time,
+// and once it is back a machine is at most five minutes behind. A success puts
+// it straight back on the thirty-second beat that withdrawals rely on.
+func checkInBackoff(failures int) time.Duration {
+	d := checkInEvery
+	for i := 1; i < failures && d < checkInBackoffMax; i++ {
+		d *= 2
+	}
+	return min(d, checkInBackoffMax)
+}
+
+const checkInBackoffMax = 5 * time.Minute
 
 // panelGenkey prints a fresh sealing key for a panel that runs somewhere with no
 // disk of its own — a serverless deployment. The value goes in that host's
