@@ -227,6 +227,11 @@ func TestRequestsAreServedFromMemoryWhileTheDatabaseHangs(t *testing.T) {
 			t.Fatalf("Resolve = %+v, %v; want the share served from memory", res, err)
 		}
 	}
+	// The re-read runs in a goroutine, so it may not have been scheduled yet:
+	// wait for it to start (it then hangs on the database for the rest of the
+	// test), then make sure no second one follows.
+	waitFor(t, "the background re-read to start", func() bool { return b.loadCount()-before >= 1 })
+	time.Sleep(50 * time.Millisecond)
 	if n := b.loadCount() - before; n != 1 {
 		t.Errorf("%d re-reads started for 20 requests; want exactly one, in the background", n)
 	}
