@@ -140,6 +140,8 @@ func launchSharedSupervised(gatewayURL, key, label string, rest []string) int {
 	if self, err := service.SelfPath(); err == nil {
 		if err := switching.EnsureHooks(filepath.Join(claudeDir, "settings.json"), self); err != nil {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
+		} else {
+			hooksReady = true
 		}
 	}
 	ensureStatusLine(filepath.Join(claudeDir, "settings.json"))

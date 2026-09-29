@@ -242,6 +242,17 @@ func TestSettingARuleInsideASession(t *testing.T) {
 	t.Setenv(switching.HandoffEnvVar, handoff)
 	t.Setenv(switching.SupervisorEnvVar, strconv.Itoa(os.Getpid()))
 
+	// A session launched by a clawdh from before rules has no Stop hook to
+	// fire one in: refused, with the way out, rather than shown as pending.
+	t.Setenv(switching.RulesEnvVar, "")
+	if _, problem := setRule("saif", true, switching.WindowWeek, 5); !strings.Contains(problem, "clawdh hassandh --continue") {
+		t.Errorf("an older session's problem = %q; want the restart command", problem)
+	}
+	if _, ok := switching.ReadRule(handoff); ok {
+		t.Fatal("a rule was recorded in a session that cannot act on it")
+	}
+	t.Setenv(switching.RulesEnvVar, "1")
+
 	msg, problem := setRule("saif", true, switching.WindowWeek, 5)
 	if problem != "" {
 		t.Fatal(problem)

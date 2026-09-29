@@ -37,6 +37,13 @@ const (
 	Window5h   = "5h"
 )
 
+// RulesEnvVar marks a session whose supervisor can make a move for later. The
+// supervisor installs clawdh's Stop hook before it launches Claude Code, and
+// Claude Code reads its hooks once, at startup — so only a session launched
+// that way has the hook a rule fires in. One started by an older clawdh would
+// show the rule as pending and never act on it.
+const RulesEnvVar = "CLAWDH_RULES"
+
 // RulePath is where the rule for the supervisor behind handoffPath lives.
 func RulePath(handoffPath string) string { return handoffPath + ".when" }
 

@@ -37,6 +37,11 @@ var claudeRunner = runClaudeOnce
 // revocation of that account and stop the session, the same way it notices a
 // staged switch.
 
+// hooksReady is whether this launch installed clawdh's hooks, among them the
+// Stop hook a move for later fires in. Only then does the session say it can
+// take one (switching.RulesEnvVar).
+var hooksReady bool
+
 // onSwitch is called when a switch is staged while Claude Code runs. It
 // returns true if it dealt with the handoff on its own — there is nothing to
 // relaunch — and false if the session has to be relaunched on the other
@@ -107,6 +112,8 @@ func cmdRun(args []string) int {
 	if self, err := service.SelfPath(); err == nil {
 		if err := switching.EnsureHooks(settings, self); err != nil {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
+		} else {
+			hooksReady = true
 		}
 	}
 	ensureStatusLine(settings)
@@ -345,6 +352,10 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 			fmt.Sprintf("%s=%d", switching.SupervisorEnvVar, os.Getpid()),
 			statusline.VersionEnvVar+"="+buildinfo.Compact(),
 			statusline.AccountEnvVar+"="+target.display)
+		if hooksReady {
+			// The Stop hook is installed, so a move for later can fire here.
+			env = append(env, switching.RulesEnvVar+"=1")
+		}
 
 		// A shared session's gateway key can change under it — a revoke then a
 		// re-grant mints a new one — and the frozen key would 401 forever. Watch

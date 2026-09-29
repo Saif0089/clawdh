@@ -60,6 +60,14 @@ func setRule(name string, shared bool, window string, atPercent float64) (messag
 	if handoff == "" || !ok {
 		return "", "Only a session started with clawdh can move to another account later. Start one with `clawdh <account>` (or `clawdh shared <name>`), then set the move inside it."
 	}
+	if os.Getenv(switching.RulesEnvVar) == "" {
+		restart := "clawdh " + sess.Slug + " --continue"
+		if sess.Shared {
+			restart = "clawdh shared " + sess.Slug + " --continue"
+		}
+		return "", "This session was started by an older clawdh, which cannot make the move after an answer — it would show as pending and never happen. " +
+			"Restart the session with `" + restart + "` (the conversation carries over), then set the move there."
+	}
 	slug, label, problem := resolveSwitchTarget(name, shared)
 	if problem != "" {
 		return "", problem
