@@ -16,11 +16,18 @@ import (
 // cmdHook runs one of the hooks clawdh installs into Claude Code. Today the only
 // one is the UserPromptSubmit switch trigger.
 func cmdHook(args []string) int {
-	if len(args) == 0 || args[0] != "user-prompt-submit" {
-		fmt.Fprintln(os.Stderr, "usage: clawdh hook user-prompt-submit")
-		return 2
+	if len(args) == 1 {
+		switch args[0] {
+		case "user-prompt-submit":
+			return hookUserPromptSubmit()
+		case "stop":
+			return hookStop()
+		case "session-start":
+			return hookSessionStart()
+		}
 	}
-	return hookUserPromptSubmit()
+	fmt.Fprintln(os.Stderr, "usage: clawdh hook user-prompt-submit|stop|session-start")
+	return 2
 }
 
 // hookUserPromptSubmit is Claude Code's UserPromptSubmit hook. It reads the
@@ -42,6 +49,22 @@ func hookUserPromptSubmit() int {
 	if err := json.Unmarshal(input, &in); err != nil {
 		return 0
 	}
+	// A move for later — `clawdh shared saif at 5%`, or `clawdh stay` to cancel
+	// one — is recorded, not acted on: it happens after an answer finishes.
+	if rule, clear, ok := switching.ParseRuleTrigger(in.Prompt); ok {
+		if clear {
+			if handoff := os.Getenv(switching.HandoffEnvVar); handoff != "" && supervisorAlive() {
+				return block(stayMessage(handoff))
+			}
+			return block("Only a session started with clawdh can have a pending move, so there is nothing to cancel here.")
+		}
+		message, problem := setRule(rule.Account, rule.Shared, rule.Window, rule.AtPercent)
+		if problem != "" {
+			return block(problem)
+		}
+		return block(message)
+	}
+
 	name, shared, ok := switching.ParseTrigger(in.Prompt)
 	if !ok {
 		return 0 // the overwhelmingly common case: an ordinary prompt
@@ -50,7 +73,10 @@ func hookUserPromptSubmit() int {
 	// Resolve the target — a gateway share by slug, or a local account that
 	// can sign in — to the label to report the switch by, or to the reason it
 	// cannot be switched to.
-	label, problem := resolveSwitchTarget(name, shared)
+	_, label, problem := resolveSwitchTarget(name, shared)
+	if problem == "" {
+		problem = cwdProblem() // a relaunch here would end the session instead
+	}
 	if problem != "" {
 		return block(problem)
 	}
@@ -92,30 +118,30 @@ func hookUserPromptSubmit() int {
 // person who typed the command: a switch that cannot happen is never allowed
 // through to the model, which used to answer `clawdh saif` as though it were a
 // question.
-func resolveSwitchTarget(name string, shared bool) (label, problem string) {
+func resolveSwitchTarget(name string, shared bool) (slug, label, problem string) {
 	if shared {
 		for _, sh := range sharedAccounts() {
 			if strings.EqualFold(sh.Slug, name) {
-				return sh.Slug, ""
+				return sh.Slug, sh.Slug, ""
 			}
 		}
-		return "", fmt.Sprintf("There is no shared account called %q on this machine. `clawdh list` shows what's shared with you.", name)
+		return "", "", fmt.Sprintf("There is no shared account called %q on this machine. `clawdh list` shows what's shared with you.", name)
 	}
 	list, err := loadAccounts()
 	if err != nil {
-		return "", fmt.Sprintf("clawdh could not read its accounts (%v), so nothing was switched.", err)
+		return "", "", fmt.Sprintf("clawdh could not read its accounts (%v), so nothing was switched.", err)
 	}
 	acct, ok := switching.ResolveAccount(list, name)
 	if !ok {
-		return "", fmt.Sprintf("There is no clawdh account called %q. Accounts on this machine: %s.\nIf you meant to ask me something, put it in a sentence — `clawdh <name>` on its own is the switch command.",
+		return "", "", fmt.Sprintf("There is no clawdh account called %q. Accounts on this machine: %s.\nIf you meant to ask me something, put it in a sentence — `clawdh <name>` on its own is the switch command.",
 			name, accountNames(list))
 	}
 	if accountsDir, err := config.AccountsDir(); err == nil {
 		if reason := missingLogin(acct, accountsDir); reason != "" {
-			return "", reason
+			return "", "", reason
 		}
 	}
-	return displayName(acct), ""
+	return acct.Slug, displayName(acct), ""
 }
 
 // switchReportTimeout is how long the hook waits for the supervisor to report

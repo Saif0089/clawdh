@@ -105,7 +105,7 @@ func cmdRun(args []string) int {
 	// failure only means in-session switching won't work; the session still
 	// runs, so it is a warning, not fatal.
 	if self, err := service.SelfPath(); err == nil {
-		if err := switching.EnsureUserPromptSubmitHook(settings, self); err != nil {
+		if err := switching.EnsureHooks(settings, self); err != nil {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
 		}
 	}
@@ -154,6 +154,13 @@ func cmdRun(args []string) int {
 	// inherited by anything a session spawned, including processes that
 	// outlive it, and staging a handoff nobody will read reported a switch
 	// that never happened.
+	// `clawdh <account> at 5%` moves this session later instead of now (see
+	// rule.go). Outside a session it would otherwise start Claude Code with
+	// "at 5%" as its first prompt; setRule says what to do instead.
+	if window, pct, ok := switching.ParseRuleArgs(passthrough); ok && !auto {
+		return setRuleCommand(startName, false, window, pct)
+	}
+
 	if handoffPath := os.Getenv(switching.HandoffEnvVar); handoffPath != "" && len(passthrough) == 0 && !auto {
 		if supervisorAlive() {
 			// Relaunching the conversation onto an account that cannot sign in
@@ -250,6 +257,14 @@ func localTarget(acct accounts.Account, accountsDir, claudeJSON string) sessionT
 func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessionTarget, passthrough []string, resolve func(switching.Handoff) (sessionTarget, error)) int {
 	defer os.Remove(handoff)
 	defer switching.ClearOutcome(handoff) // an outcome nobody collected (a `!clawdh` switch has no hook waiting)
+	defer switching.ClearRule(handoff)    // a move for later ends with the session it was set in
+
+	// Claude Code cannot run in a folder it cannot read, and says so only as
+	// "An unknown error occurred (Unexpected)". Say what is actually wrong.
+	if problem := cwdProblem(); problem != "" {
+		printProblem(problem)
+		return 1
+	}
 	// The hook writes the handoff here; on a machine that has only ever
 	// joined shares the directory may not exist yet, and a hook that cannot
 	// write is a switch that never happens.

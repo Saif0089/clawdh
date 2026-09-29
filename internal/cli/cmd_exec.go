@@ -96,7 +96,7 @@ func cmdExec(args []string) int {
 	// handoff (idempotent; a failure only disables in-session switching, so it
 	// is a warning on stderr — never stdout — not a reason to refuse to start).
 	if self, err := service.SelfPath(); err == nil {
-		if err := switching.EnsureUserPromptSubmitHook(filepath.Join(claudeDir, "settings.json"), self); err != nil {
+		if err := switching.EnsureHooks(filepath.Join(claudeDir, "settings.json"), self); err != nil {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
 		}
 	}

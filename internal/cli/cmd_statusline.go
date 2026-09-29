@@ -10,6 +10,7 @@ import (
 	"clawdh/internal/config"
 	"clawdh/internal/service"
 	"clawdh/internal/statusline"
+	"clawdh/internal/switching"
 )
 
 // cmdStatusLine is what Claude Code's status line runs once clawdh has wrapped
@@ -24,6 +25,12 @@ func cmdStatusLine(_ []string) int {
 	stdin, _ := io.ReadAll(os.Stdin)
 	theirs, _ := statusline.Saved(statusLineSavePath())
 	badge := statusline.Badge(os.Getenv, buildinfo.Compact())
+	// A move for later shows while it is pending: "→ saif 5%wk".
+	if handoff := os.Getenv(switching.HandoffEnvVar); handoff != "" && badge != "" {
+		if r, ok := switching.ReadRule(handoff); ok {
+			badge += " " + r.Badge()
+		}
+	}
 	if out := statusline.Render(theirs, stdin, badge); out != "" {
 		fmt.Println(out)
 	}

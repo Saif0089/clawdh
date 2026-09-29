@@ -55,6 +55,10 @@ func cmdShared(args []string) int {
 		if !strings.EqualFold(sh.Slug, slug) {
 			continue
 		}
+		// `clawdh shared <slug> at 5%` moves this session later (see rule.go).
+		if window, pct, ok := switching.ParseRuleArgs(rest); ok {
+			return setRuleCommand(sh.Slug, true, window, pct)
+		}
 		// Inside a supervised session, a bare `clawdh shared <slug>` is a switch:
 		// stage it (marked shared) and let the supervisor relaunch this terminal
 		// on the share. Only the bare form — `clawdh shared X -p "…"` is a
@@ -134,7 +138,7 @@ func launchSharedSupervised(gatewayURL, key, label string, rest []string) int {
 	// shared session too (idempotent; a failure only disables in-session
 	// switching, so it is a warning, not fatal).
 	if self, err := service.SelfPath(); err == nil {
-		if err := switching.EnsureUserPromptSubmitHook(filepath.Join(claudeDir, "settings.json"), self); err != nil {
+		if err := switching.EnsureHooks(filepath.Join(claudeDir, "settings.json"), self); err != nil {
 			fmt.Fprintln(os.Stderr, "clawdh: could not install switch hook:", err)
 		}
 	}

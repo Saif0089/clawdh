@@ -46,6 +46,8 @@ func Run(args []string) int {
 		return cmdStatusLine(args[1:])
 	case "shared":
 		return cmdShared(args[1:])
+	case "stay":
+		return cmdStay(args[1:])
 	case "list", "ls", "accounts":
 		return cmdList(args[1:])
 	case "join":
@@ -112,6 +114,12 @@ EVERYDAY
   clawdh <name> [args...]      Run Claude as one of your accounts (args go to claude)
   clawdh shared <name> [args]  Run Claude on an account someone shared with you
   clawdh status                Is the clawdh service running, and on what URL
+
+INSIDE A SESSION — type as your prompt, or just ask Claude in plain words:
+  clawdh [shared] <name>       Switch now; the conversation carries over
+  clawdh [shared] <name> at 5% Switch once this account has used 5% of its week
+                               (add 5h for the 5-hour window) — after an answer, never mid-answer
+  clawdh stay                  Cancel a pending switch
 
 ACCOUNTS live on the web page clawdh opens — add, connect, and remove them there:
   clawdh install [--port N]    Start clawdh at login and open the page (do this once)

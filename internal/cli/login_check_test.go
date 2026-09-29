@@ -146,11 +146,11 @@ func TestHookRefusesASwitchToAnAccountWithoutALogin(t *testing.T) {
 	home := seedRunEnv(t)
 	dropLogin(t, home, "work", "")
 
-	label, problem := resolveSwitchTarget("work", false)
+	_, label, problem := resolveSwitchTarget("work", false)
 	if label != "" || !strings.Contains(problem, "isn't connected on this machine yet") {
 		t.Errorf("resolveSwitchTarget = %q, %q; want a refusal", label, problem)
 	}
-	if label, problem := resolveSwitchTarget("ehti", false); label != "ehti" || problem != "" {
+	if _, label, problem := resolveSwitchTarget("ehti", false); label != "ehti" || problem != "" {
 		t.Errorf("a signed-in account should resolve, got %q, %q", label, problem)
 	}
 }
