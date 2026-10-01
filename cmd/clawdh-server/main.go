@@ -46,6 +46,19 @@ func main() {
 		}
 		return
 	}
+	// `clawdh-server panel-serve [--addr]` runs the admin panel as a long-lived
+	// server against the same database, so the panel can live on the VPS beside
+	// the gateway instead of on a serverless host.
+	if len(os.Args) > 1 && os.Args[1] == "panel-serve" {
+		fs := flag.NewFlagSet("panel-serve", flag.ExitOnError)
+		paddr := fs.String("addr", "127.0.0.1:8789", "listen address")
+		_ = fs.Parse(os.Args[2:])
+		if err := runPanelServe(*paddr); err != nil {
+			fmt.Fprintln(os.Stderr, "panel-serve:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// `clawdh-server wipe-usage [--yes]` shows what the metering tables hold
 	// and, with --yes, clears them so the boards start over.
 	if len(os.Args) > 1 && os.Args[1] == "wipe-usage" {
