@@ -72,12 +72,23 @@ type fakeUsage struct {
 	seriesPerson string
 	seriesRes    string
 	seriesFrom   time.Time
+	seriesSess   string
+	sessions     []SessionUsage
 	unlinked     float64
+	// lastRequests is each person's newest metered request, for presence.
+	lastRequests map[string]time.Time
 }
 
-func (f *fakeUsage) PersonSeries(_ context.Context, personID string, res Resolution, from time.Time) ([]SeriesPoint, error) {
-	f.seriesPerson, f.seriesRes, f.seriesFrom = personID, res.Name, from
+func (f *fakeUsage) PersonSeries(_ context.Context, personID, sessionID string, res Resolution, from time.Time) ([]SeriesPoint, error) {
+	f.seriesPerson, f.seriesSess, f.seriesRes, f.seriesFrom = personID, sessionID, res.Name, from
 	return f.series, nil
+}
+func (f *fakeUsage) PersonSessions(_ context.Context, personID string, _ time.Time, _ int) ([]SessionUsage, error) {
+	f.seriesPerson = personID
+	return f.sessions, nil
+}
+func (f *fakeUsage) LastRequests(context.Context, time.Time) (map[string]time.Time, error) {
+	return f.lastRequests, nil
 }
 func (f *fakeUsage) UnlinkedAccountUsage(context.Context, []string, time.Time) (float64, error) {
 	return f.unlinked, nil

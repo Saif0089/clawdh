@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"clawdh/internal/meter"
 	"clawdh/panel"
 )
 
@@ -15,7 +16,7 @@ func series(t *testing.T, b *Backend, person, grain string, from time.Time) []pa
 	if !ok {
 		t.Fatalf("no %s grain", grain)
 	}
-	pts, err := b.PersonSeries(context.Background(), person, res, from)
+	pts, err := b.PersonSeries(context.Background(), person, "", res, from)
 	if err != nil {
 		t.Fatalf("%s series: %v", grain, err)
 	}
@@ -197,5 +198,120 @@ func TestOnlyUsageOnALoginWithNoTraceIsUnlinked(t *testing.T) {
 	}
 	if got, _ := b.UnlinkedAccountUsage(ctx, nil, at.Add(-time.Hour)); got != 1230 {
 		t.Errorf("unlinked with no current logins = %v, want everything (1230)", got)
+	}
+}
+
+// Every bucket is split by token class, and the split reconciles: the classes'
+// raw tokens add up to the bucket's, their weighted shares to the weighted tokens
+// the gateway recorded (even where that was priced at an older rate), each class
+// weighs what its model's rate says, and a model with no known rate adds its
+// tokens but no weight. The events and the roll-up split the same way.
+func TestEveryBucketSplitsByTokenClassAndAddsUp(t *testing.T) {
+	ctx := context.Background()
+	b := freshBackend(t)
+	resetLineage(t, b)
+	at := time.Date(2026, 10, 28, 9, 15, 7, 0, time.UTC)
+	opus := meter.Usage{Input: 2, Output: 300, CacheCreation: 1000, CacheRead: 200000}
+	sonnet := meter.Usage{Input: 10, Output: 50, CacheCreation: 0, CacheRead: 40000}
+	odd := meter.Usage{Input: 7, CacheRead: 70}
+	for i, ev := range []struct {
+		model    string
+		u        meter.Usage
+		weighted float64
+	}{
+		{"claude-opus-5-5", opus, meter.Measure("claude-opus-5-5", opus).Weighted},
+		{"claude-sonnet-4-6", sonnet, 2 * meter.Measure("claude-sonnet-4-6", sonnet).Weighted}, // priced at an older, doubled rate
+		{"no-such-model", odd, 0},
+	} {
+		if err := b.RecordUsage(ctx, UsageEvent{
+			At: at, PersonID: "alice", AccountID: "a", Model: ev.model, Weighted: ev.weighted,
+			Input: ev.u.Input, Output: ev.u.Output, CacheCreation: ev.u.CacheCreation, CacheRead: ev.u.CacheRead,
+			RequestID: string(rune('a' + i)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	op := meter.WeightedParts("claude-opus-5-5", opus)
+	sp := meter.WeightedParts("claude-sonnet-4-6", sonnet)
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
+	for _, grain := range []string{"second", "hour"} {
+		pts := series(t, b, "alice", grain, at.Add(-time.Hour))
+		if len(pts) != 1 {
+			t.Fatalf("%s: %d buckets, want 1", grain, len(pts))
+		}
+		p := pts[0]
+		if p.Input.Tokens != 19 || p.Output.Tokens != 350 || p.CacheWrite.Tokens != 1000 || p.CacheRead.Tokens != 240070 {
+			t.Errorf("%s raw classes = %+v %+v %+v %+v, want 19 / 350 / 1000 / 240070", grain, p.Input, p.Output, p.CacheWrite, p.CacheRead)
+		}
+		if p.Input.Tokens+p.Output.Tokens+p.CacheWrite.Tokens+p.CacheRead.Tokens != p.Tokens {
+			t.Errorf("%s: the classes' tokens do not add up to the bucket's %d", grain, p.Tokens)
+		}
+		if got := p.Input.Weighted + p.Output.Weighted + p.CacheWrite.Weighted + p.CacheRead.Weighted; !near(got, p.Weighted) {
+			t.Errorf("%s: the classes weigh %v, the bucket %v", grain, got, p.Weighted)
+		}
+		if !near(p.CacheRead.Weighted, op.CacheRead+2*sp.CacheRead) || !near(p.Output.Weighted, op.Output+2*sp.Output) {
+			t.Errorf("%s: cache read %v / output %v, want %v / %v", grain, p.CacheRead.Weighted, p.Output.Weighted, op.CacheRead+2*sp.CacheRead, op.Output+2*sp.Output)
+		}
+		if grain == "second" && p.Requests != 3 {
+			t.Errorf("seconds count %d requests, want 3 across the models", p.Requests)
+		}
+	}
+}
+
+// A session is the requests one Claude Code session made: its series holds only
+// those, at every grain (the roll-up knows no sessions, so it is read from the
+// events), and the sessions list names each one newest first with what it came
+// to. Requests that named no session are no session's.
+func TestASessionIsOnlyItsOwnRequests(t *testing.T) {
+	ctx := context.Background()
+	b := freshBackend(t)
+	resetLineage(t, b)
+	at := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
+	for i, ev := range []struct {
+		person, session string
+		min             int
+		w               float64
+		read            int64
+	}{
+		{"alice", "s-old", 0, 100, 1000},
+		{"alice", "s-old", 5, 200, 2000},
+		{"alice", "s-new", 10, 400, 4000},
+		{"alice", "", 11, 800, 8000},      // named no session
+		{"bob", "s-new", 12, 1600, 16000}, // someone else's, same id
+	} {
+		if err := b.RecordUsage(ctx, UsageEvent{
+			At: at.Add(time.Duration(ev.min) * time.Minute), PersonID: ev.person, AccountID: "a", Model: "claude-opus-5-5",
+			Weighted: ev.w, CacheRead: ev.read, SessionID: ev.session, RequestID: string(rune('a' + i)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, grain := range []string{"minute", "hour", "all"} {
+		res, _ := panel.ResolutionByName(grain)
+		pts, err := b.PersonSeries(ctx, "alice", "s-old", res, at.Add(-time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		w, tok, req := sum(pts)
+		if w != 300 || tok != 3000 || req != 2 {
+			t.Errorf("%s: s-old came to %v weighted, %d tokens, %d requests; want 300, 3000, 2", grain, w, tok, req)
+		}
+	}
+	list, err := b.PersonSessions(ctx, "alice", at.Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != "s-new" || list[1].ID != "s-old" {
+		t.Fatalf("sessions = %+v, want s-new then s-old", list)
+	}
+	if list[0].Usage.Weighted != 400 || list[0].Usage.Requests != 1 {
+		t.Errorf("s-new = %+v, want only Alice's 400 over 1 request", list[0].Usage)
+	}
+	old := list[1]
+	if !old.First.Equal(at) || !old.Last.Equal(at.Add(5*time.Minute)) || old.Usage.CacheRead.Tokens != 3000 || old.Usage.Requests != 2 {
+		t.Errorf("s-old = %+v, want 09:00–09:05, 3000 cache-read tokens over 2 requests", old)
+	}
+	if got, _ := b.PersonSessions(ctx, "alice", at.Add(-time.Hour), 1); len(got) != 1 || got[0].ID != "s-new" {
+		t.Errorf("limit 1 = %+v, want only the newest", got)
 	}
 }

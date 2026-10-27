@@ -19,6 +19,9 @@ type Event struct {
 	CacheCreation int64
 	CacheRead     int64
 	RequestID     string
+	// SessionID is the Claude Code session the request came from, as it names
+	// itself (X-Claude-Code-Session-Id); empty for a client that does not say.
+	SessionID string
 }
 
 // Recorder is where the gateway sends a completed request's usage. It runs off

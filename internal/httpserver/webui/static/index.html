@@ -167,12 +167,25 @@
       <h2>Your usage</h2>
       <p class="block-sub">What the gateway metered for you, as finely as a second. Nothing here is estimated.</p>
     </div>
+    <div id="tel-focus" class="tel-focus" hidden></div>
     <div id="tel-grains" class="tel-grains" role="group" aria-label="How finely to cut your usage"></div>
+    <div class="tel-switches">
+      <div id="tel-show" class="tel-grains" role="group" aria-label="Which token class to show"></div>
+      <div id="tel-measure" class="tel-grains" role="group" aria-label="Weighted or raw tokens"></div>
+    </div>
     <p id="tel-err" class="row-err" hidden></p>
     <div class="tel-card">
       <div id="tel-stats" class="tel-stats"></div>
+      <div id="tel-legend" class="tel-legend" role="group" aria-label="Token classes"></div>
       <div id="tel-plot" class="tel-plot"></div>
       <p id="tel-note" class="tel-note"></p>
+    </div>
+    <div class="tel-card tel-sessions-card">
+      <div class="tel-sessions-head">
+        <h3>Sessions</h3>
+        <p class="tel-note">Each Claude Code session's usage over the last 30 days, subagents included. Pick one to see it alone above.</p>
+      </div>
+      <div id="tel-sessions" class="tel-sessions" role="list"></div>
     </div>
   </section>
 
@@ -328,8 +341,11 @@
 <template id="live-row-template">
   <article class="live-row">
     <span class="live-where">
-      <span class="live-host"></span>
-      <span class="live-dir"></span>
+      <span class="live-title"></span>
+      <span class="live-meta">
+        <span class="live-host"></span>
+        <span class="live-dir"></span>
+      </span>
     </span>
     <span class="live-spacer"></span>
     <label class="visually-hidden">Account for this session</label>

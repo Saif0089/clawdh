@@ -85,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 		// A machine reads its own person's usage over time with its enrolment,
 		// the same credential it checks in with.
 		mux.HandleFunc("GET /api/v1/telemetry", s.device(s.handleOwnTelemetry))
+		mux.HandleFunc("GET /api/v1/telemetry/sessions", s.device(s.handleOwnSessions))
 		mux.HandleFunc("GET /api/limits", s.admin(s.handleListLimits))
 		mux.HandleFunc("POST /api/limits", s.admin(s.handleSetLimit))
 		mux.HandleFunc("DELETE /api/limits/{id}", s.admin(s.handleDeleteLimit))

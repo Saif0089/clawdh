@@ -144,6 +144,7 @@ func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []
 		byAccount[w.AccountID] = w
 	}
 	var out []ShareWindow
+	present := s.presence(ctx, d)
 	slugs := shareSlugs(d, personID)
 	for _, sh := range d.Shares {
 		if sh.PersonID != personID {
@@ -157,7 +158,8 @@ func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []
 		week := s.weeklyShares(ctx, d, acct.ID, w.SevenD, w.SevenDReset)
 		var people []SharePerson
 		for _, p := range week.People {
-			people = append(people, SharePerson{Name: p.Name, OfWeekly: p.OfWeekly, Weighted: p.Weighted})
+			pr := present[p.ID]
+			people = append(people, SharePerson{Name: p.Name, OfWeekly: p.OfWeekly, Weighted: p.Weighted, Presence: &pr})
 		}
 		out = append(out, ShareWindow{
 			Slug: slugs[acct.ID], Email: acct.Email,

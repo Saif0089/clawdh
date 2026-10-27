@@ -64,6 +64,8 @@ type personView struct {
 	// CanUntil is, per Can entry, when that access ends ("" = until revoked).
 	CanUntil []string     `json:"canUntil,omitempty"`
 	Devices  []deviceView `json:"devices,omitempty"`
+	// Presence is whether they are working, online or offline right now.
+	Presence Presence `json:"presence"`
 }
 
 // handlePanel builds the whole interface in one read. Three tabs over one
@@ -100,9 +102,10 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	present := s.presence(r.Context(), d)
 	people := make([]personView, 0, len(d.People))
 	for _, p := range d.People {
-		v := personView{ID: p.ID, Name: p.Name, Email: p.Email}
+		v := personView{ID: p.ID, Name: p.Name, Email: p.Email, Presence: present[p.ID]}
 		for _, sh := range d.Shares {
 			if sh.PersonID == p.ID {
 				v.Can = append(v.Can, d.accountName(sh.AccountID))

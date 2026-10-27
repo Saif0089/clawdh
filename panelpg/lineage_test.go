@@ -15,7 +15,7 @@ func resetLineage(t *testing.T, b *Backend) {
 	}
 }
 
-func meter(t *testing.T, b *Backend, at time.Time, person, account string, weighted float64) {
+func record(t *testing.T, b *Backend, at time.Time, person, account string, weighted float64) {
 	t.Helper()
 	if err := b.RecordUsage(context.Background(), UsageEvent{
 		At: at, PersonID: person, AccountID: account, Model: "claude-opus-5", Weighted: weighted,
@@ -34,10 +34,10 @@ func TestAReaddedLoginKeepsTheUsageMeteredUnderItsOldID(t *testing.T) {
 	resetLineage(t, b)
 
 	week := time.Date(2026, 10, 25, 21, 0, 0, 0, time.UTC)
-	meter(t, b, week.Add(12*time.Hour), "hassan", "old-id", 880e6)
-	meter(t, b, week.Add(36*time.Hour), "hassan", "new-id", 15e6)
-	meter(t, b, week.Add(36*time.Hour), "bd-loq", "new-id", 28e6)
-	meter(t, b, week.Add(30*time.Hour), "hassan", "someone-elses-login", 999e6)
+	record(t, b, week.Add(12*time.Hour), "hassan", "old-id", 880e6)
+	record(t, b, week.Add(36*time.Hour), "hassan", "new-id", 15e6)
+	record(t, b, week.Add(36*time.Hour), "bd-loq", "new-id", 28e6)
+	record(t, b, week.Add(30*time.Hour), "hassan", "someone-elses-login", 999e6)
 
 	for id, key := range map[string]string{"old-id": "hassan@example.com", "new-id": "hassan@example.com", "someone-elses-login": "other@example.com"} {
 		if err := b.LinkLogin(ctx, id, key); err != nil {
@@ -67,8 +67,8 @@ func TestAReaddedLoginKeepsTheUsageMeteredUnderItsOldID(t *testing.T) {
 
 	// An account that was never linked is only itself; it must not match
 	// every other unlinked account (a NULL login key matching a NULL).
-	meter(t, b, week, "dawood", "unlinked-a", 1)
-	meter(t, b, week, "rizwan", "unlinked-b", 2)
+	record(t, b, week, "dawood", "unlinked-a", 1)
+	record(t, b, week, "rizwan", "unlinked-b", 2)
 	rows, err = b.AccountUsageByPerson(ctx, "unlinked-a", week)
 	if err != nil || len(rows) != 1 || rows[0].SubjectID != "dawood" {
 		t.Errorf("an unlinked account read as %v (%v), want only itself", rows, err)

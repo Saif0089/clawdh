@@ -224,6 +224,9 @@ type SharePerson struct {
 	Name     string  `json:"name"`
 	OfWeekly float64 `json:"ofWeekly"`
 	Weighted float64 `json:"weighted"`
+	// Presence is whether they are working, online or offline, and since when —
+	// nothing more about them than that.
+	Presence *Presence `json:"presence,omitempty"`
 }
 
 // ModelWindow is one model's own weekly allowance on a plan: Claude meters the
@@ -334,7 +337,7 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 // every few seconds is sent one bucket and not the whole view; the zero time
 // asks for the whole view. The panel answers only for the person this machine
 // is enrolled as, so nobody else's usage is reachable this way.
-func (c *Client) Telemetry(ctx context.Context, res string, since time.Time) (Telemetry, error) {
+func (c *Client) Telemetry(ctx context.Context, res string, since time.Time, session string) (Telemetry, error) {
 	var out Telemetry
 	if !c.Config.Configured() {
 		return out, errors.New("This machine isn't connected to a panel yet.")
@@ -343,11 +346,30 @@ func (c *Client) Telemetry(ctx context.Context, res string, since time.Time) (Te
 	if !since.IsZero() {
 		u += "&since=" + url.QueryEscape(since.UTC().Format(time.RFC3339))
 	}
+	if session != "" {
+		u += "&session=" + url.QueryEscape(session)
+	}
 	err := getJSON(ctx, c.http(), u, c.Config.Token, &out)
 	if errors.Is(err, errUnauthorized) {
 		return out, ErrNotEnrolled
 	}
 	return out, err
+}
+
+// Sessions is this machine's person's Claude Code sessions, newest first, with
+// what each came to — by id only; the page puts the titles on.
+func (c *Client) Sessions(ctx context.Context) ([]SessionUsage, error) {
+	var out struct {
+		Sessions []SessionUsage `json:"sessions"`
+	}
+	if !c.Config.Configured() {
+		return nil, errors.New("This machine isn't connected to a panel yet.")
+	}
+	err := getJSON(ctx, c.http(), c.Config.Server+"/api/v1/telemetry/sessions", c.Config.Token, &out)
+	if errors.Is(err, errUnauthorized) {
+		return nil, ErrNotEnrolled
+	}
+	return out.Sessions, err
 }
 
 // Contributed is the panel's answer to a login handed up: the account it is

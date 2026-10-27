@@ -281,6 +281,7 @@ func (u *dbUpstream) recordUsage(ev gateway.Event) error {
 		Input: ev.Input, Output: ev.Output,
 		CacheCreation: ev.CacheCreation, CacheRead: ev.CacheRead,
 		Weighted: m.Weighted, CostUSD: m.CostUSD, RequestID: ev.RequestID,
+		SessionID: ev.SessionID,
 	})
 }
 

@@ -1,17 +1,21 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"clawdh/internal/config"
+	"clawdh/internal/transcripts"
 	"clawdh/panel"
 )
 
@@ -101,7 +105,7 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	out, err := client.Telemetry(ctx, res, since)
+	out, err := client.Telemetry(ctx, res, since, r.URL.Query().Get("session"))
 	if errors.Is(err, panel.ErrNotEnrolled) {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -206,4 +210,89 @@ func (s *Server) handlePanelProxy(w http.ResponseWriter, r *http.Request) {
 		req.Host = target.Host
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// sessionUsage is one of this person's Claude Code sessions as the page shows it:
+// what the panel metered for it, with the title and project from this machine's
+// own transcript when the session ran here. Titles never leave the machine.
+type sessionUsage struct {
+	panel.SessionUsage
+	Title   string `json:"title,omitempty"`
+	Project string `json:"project,omitempty"`
+	// Here is whether the session's transcript is on this machine; a session
+	// that ran on another of this person's machines has no title here.
+	Here bool `json:"here"`
+}
+
+// handleTelemetrySessions is this person's sessions, newest first, each with
+// what it came to and, where it ran here, its title.
+func (s *Server) handleTelemetrySessions(w http.ResponseWriter, r *http.Request) {
+	client, err := s.panelClient()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	list, err := client.Sessions(ctx)
+	if errors.Is(err, panel.ErrNotEnrolled) {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "The panel could not be reached: "+err.Error())
+		return
+	}
+	out := make([]sessionUsage, 0, len(list))
+	for _, su := range list {
+		row := sessionUsage{SessionUsage: su}
+		if path := transcriptPath(su.ID); path != "" {
+			row.Here = true
+			row.Project = projectOf(path)
+			row.Title = transcripts.SessionTitle(su.ID)
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// transcriptPath is where Claude Code keeps a session's transcript on this
+// machine, or "" when it did not run here. A session id is the client's word,
+// so only one that looks like an id is looked up.
+func transcriptPath(id string) string {
+	if id == "" || strings.ContainsAny(id, `/\.*?[`) {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	matches, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", id+".jsonl"))
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
+}
+
+// projectOf names the project a transcript belongs to: the last part of the
+// working directory its session started in, which the transcript's first lines
+// record. Only the head of the file is read; a transcript can run to hundreds
+// of megabytes.
+func projectOf(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(io.LimitReader(f, 256<<10))
+	sc.Buffer(make([]byte, 0, 64<<10), 256<<10)
+	for sc.Scan() {
+		var line struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(sc.Bytes(), &line) == nil && line.Cwd != "" {
+			return filepath.Base(line.Cwd)
+		}
+	}
+	return ""
 }

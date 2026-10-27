@@ -66,6 +66,8 @@ type PersonShare struct {
 	// known (AccountWindow.WeekBasis is "none") — the tokens beside it are
 	// exact either way.
 	OfWeekly float64 `json:"ofWeekly"`
+	// Presence is whether this person is working, online or offline right now.
+	Presence *Presence `json:"presence,omitempty"`
 }
 
 // AccountWindow is a subscription's real utilisation of its rolling usage
@@ -145,11 +147,18 @@ type UsageReader interface {
 	// PersonSeries is one person's usage cut into buckets from `from` on — or
 	// everyone's, for an empty person — at the grain a Resolution names. Only
 	// buckets with something in them come back. See telemetry.go.
-	PersonSeries(ctx context.Context, personID string, res Resolution, from time.Time) ([]SeriesPoint, error)
+	// A session narrows it to one Claude Code session's requests.
+	PersonSeries(ctx context.Context, personID, sessionID string, res Resolution, from time.Time) ([]SeriesPoint, error)
+	// PersonSessions is the sessions a person ran requests in since a time,
+	// newest first, at most limit of them, with what each came to.
+	PersonSessions(ctx context.Context, personID string, since time.Time, limit int) ([]SessionUsage, error)
 	// UnlinkedAccountUsage is the weighted tokens metered since a time on account
 	// IDs that are neither in currentIDs nor an earlier ID of one of those
 	// logins: usage on a login the panel no longer has any trace of.
 	UnlinkedAccountUsage(ctx context.Context, currentIDs []string, since time.Time) (float64, error)
+	// LastRequests is each person's newest metered request since a time, for
+	// the people with one: what "working" is read from (see presence.go).
+	LastRequests(ctx context.Context, since time.Time) (map[string]time.Time, error)
 }
 
 // windowSince maps a window name to a rolling start: the last 24 hours, 7
@@ -178,6 +187,7 @@ func (s *Server) handlePeopleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d, _ := s.store.Load() // names for the IDs; a read failure just leaves them blank
+	present := s.presence(ctx, d)
 
 	subjects := make([]map[string]any, 0, len(rows))
 	// What a removed person ran has no card to hang on, but it was metered and it
@@ -194,6 +204,7 @@ func (s *Server) handlePeopleUsage(w http.ResponseWriter, r *http.Request) {
 			"name":     name,
 			"weighted": row.Weighted,
 			"byModel":  row.ByModel,
+			"presence": present[row.SubjectID],
 		})
 	}
 	asOf, _ := s.usage.LatestEventAt(ctx)
@@ -225,6 +236,7 @@ func (s *Server) handleAccountsUsage(w http.ResponseWriter, r *http.Request) {
 		byAccount[row.AccountID] = row
 	}
 	d, _ := s.store.Load()
+	present := s.presence(ctx, d)
 	out := make([]AccountWindow, 0, len(d.Accounts))
 	for _, a := range d.Accounts {
 		if !a.HasLogin() {
@@ -235,6 +247,10 @@ func (s *Server) handleAccountsUsage(w http.ResponseWriter, r *http.Request) {
 		row.People = s.ranBy(ctx, d, a.ID, since)
 		row.Weighted, row.ByModel = accountTotals(row.People)
 		s.attributeWeekly(ctx, d, &row)
+		for i := range row.People {
+			p := present[row.People[i].ID]
+			row.People[i].Presence = &p
+		}
 		out = append(out, row)
 	}
 	asOf, _ := s.usage.LatestEventAt(ctx)

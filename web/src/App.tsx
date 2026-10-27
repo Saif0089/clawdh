@@ -8,6 +8,7 @@ import { Quotas } from "./Quotas";
 import { TelemetryTab } from "./Telemetry";
 import { useDialog } from "./Dialog";
 import { DeviceJobs } from "./DeviceJobs";
+import { PresenceBadge } from "./Presence";
 import { when, untilExpiry, accessLeft, dateAndTime } from "./format";
 
 type Ask = ReturnType<typeof useDialog>["ask"];
@@ -525,7 +526,10 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                   {p.name.slice(0, 1).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[17px] font-semibold">{p.name}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[17px] font-semibold">{p.name}</span>
+                    <PresenceBadge p={p.presence} />
+                  </div>
                   <div className="text-[14px] text-faint">{p.email || "no email"}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">

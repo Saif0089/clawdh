@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { api, Board, Subject, AccountUsage, ModelUsage } from "./api";
+import { api, Board, Subject, AccountUsage, ModelUsage, Presence } from "./api";
+import { PresenceBadge } from "./Presence";
 import { fmtNum, modelLabel, agoFrom, untilReset, windowTone, pct, when } from "./format";
 
 // The board's unit is the account. Each shared login gets one card holding
@@ -37,13 +38,13 @@ function modelSplit(models: ModelUsage[]): string {
 
 // --- controls --------------------------------------------------------------
 
-export function Seg<T extends string>({ value: v, onChange, options }: { value: T; onChange: (v: T) => void; options: [T, string][] }) {
+export function Seg<T extends string>({ value: v, onChange, options, id = "seg-active" }: { value: T; onChange: (v: T) => void; options: [T, string][]; id?: string }) {
   return (
     <div className="inline-flex rounded-xl border border-line bg-sunken p-1">
       {options.map(([opt, label]) => (
         <button key={opt} onClick={() => onChange(opt)} className="relative rounded-lg px-3.5 py-1.5 text-[14px] font-medium transition-colors">
           {opt === v && (
-            <motion.span layoutId="seg-active" className="absolute inset-0 rounded-lg bg-raised-2" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
+            <motion.span layoutId={id} className="absolute inset-0 rounded-lg bg-raised-2" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
           )}
           <span className={`relative ${opt === v ? "text-ink" : "text-muted hover:text-ink"}`}>{label}</span>
         </button>
@@ -79,12 +80,15 @@ function WindowMeter({ label, frac, reset }: { label: string; frac: number; rese
 // relative to the busiest person. Deliberately no percentage — these accounts
 // have separate plans and separate weeks, so there is nothing a percentage
 // here could honestly be a percentage of.
-function TokenRow({ name, detail, value, most }: { name: string; detail: string; value: number; most: number }) {
+function TokenRow({ name, detail, value, most, presence }: { name: string; detail: string; value: number; most: number; presence?: Presence }) {
   const rel = most > 0 ? value / most : 0;
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-x-4 py-2 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_96px]">
       <div className="col-start-1 row-start-1 min-w-0">
-        <div className="truncate text-[14.5px] font-medium text-ink">{name}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[14.5px] font-medium text-ink">{name}</span>
+          <PresenceBadge p={presence} />
+        </div>
         {detail && <div className="truncate text-[12px] text-faint">{detail}</div>}
       </div>
       <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0">
@@ -104,7 +108,7 @@ function TokenRow({ name, detail, value, most }: { name: string; detail: string;
 // but turning them into a share of the week would be a guess, so the row shows
 // the tokens alone. unmetered draws the part of the week no metered request
 // explains — hatched, with no tokens, because nobody's tokens are behind it.
-function ShareRow({ name, detail, ofWeekly, value, unmetered }: { name: string; detail: string; ofWeekly: number | null; value?: number; unmetered?: boolean }) {
+function ShareRow({ name, detail, ofWeekly, value, unmetered, presence }: { name: string; detail: string; ofWeekly: number | null; value?: number; unmetered?: boolean; presence?: Presence }) {
   const frac = ofWeekly ?? 0;
   const title = unmetered
     ? `${pct(frac)} of this week that no metered request explains`
@@ -117,7 +121,10 @@ function ShareRow({ name, detail, ofWeekly, value, unmetered }: { name: string; 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-x-4 py-2 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_96px]">
       <div className="col-start-1 row-start-1 min-w-0">
-        <div className={`truncate text-[14.5px] font-medium ${unmetered ? "text-muted" : "text-ink"}`}>{name}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`truncate text-[14.5px] font-medium ${unmetered ? "text-muted" : "text-ink"}`}>{name}</span>
+          <PresenceBadge p={presence} />
+        </div>
         {detail && <div className="truncate text-[12px] text-faint">{detail}</div>}
       </div>
       <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0" title={title}>
@@ -177,7 +184,7 @@ function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
           <div className="mt-2 text-[13.5px] text-muted">Nobody ran it in the {PERIOD_LABEL[period]}.</div>
         ) : (
           <div className="mt-1 divide-y divide-line/60">
-            {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} ofWeekly={a.hasReading && sized ? p.ofWeekly : null} value={p.weighted} />)}
+            {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} ofWeekly={a.hasReading && sized ? p.ofWeekly : null} value={p.weighted} presence={p.presence} />)}
             {unmetered && (
               <ShareRow
                 name="Not metered"
@@ -287,7 +294,7 @@ export function UsageBoard() {
               <span className="tabular-nums">{fmtNum(teamTotal)} total</span>
             </div>
             <div className="divide-y divide-line/60">
-              {ranked.map((p) => <TokenRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} value={p.weighted} most={ranked[0]?.weighted || 0} />)}
+              {ranked.map((p) => <TokenRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} value={p.weighted} most={ranked[0]?.weighted || 0} presence={p.presence} />)}
               {removed > 0 && <TokenRow name="People since removed" detail="metered, with no card to show it on" value={removed} most={ranked[0]?.weighted || 0} />}
             </div>
           </div>

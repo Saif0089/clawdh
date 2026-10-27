@@ -194,6 +194,11 @@
       host.textContent = s.host === "editor" ? (s.editor || "Editor") : "Terminal";
       host.className = "live-host " + (s.host === "editor" ? "editor" : "terminal");
       node.querySelector(".live-dir").textContent = s.where || "";
+      // The conversation's own name: several sessions in one folder are otherwise
+      // the same row. One with no title yet is told apart by its ID.
+      const title = node.querySelector(".live-title");
+      title.textContent = s.title || (s.sessionId ? "Session " + s.sessionId.slice(0, 8) : "New session");
+      title.title = s.title || "";
 
       const select = node.querySelector(".live-account");
       const here = s.shared ? "s:" + s.slug : "a:" + s.accountId;

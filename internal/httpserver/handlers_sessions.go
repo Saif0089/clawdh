@@ -15,6 +15,7 @@ import (
 	"clawdh/internal/service"
 	"clawdh/internal/sessions"
 	"clawdh/internal/switching"
+	"clawdh/internal/transcripts"
 	"clawdh/panel"
 )
 
@@ -44,7 +45,13 @@ type sessionView struct {
 	Editor string `json:"editor,omitempty"`
 	// Where is the folder it was started in, shortened for reading: the thing a
 	// person recognises their own window by.
-	Where     string    `json:"where,omitempty"`
+	Where string `json:"where,omitempty"`
+	// Title is the conversation's own name — the one its person gave it, else
+	// the one Claude Code generated, else its first prompt — since several
+	// sessions in one folder are otherwise the same row. SessionID is there for
+	// a conversation with no title yet.
+	Title     string    `json:"title,omitempty"`
+	SessionID string    `json:"sessionId,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 }
 
@@ -97,6 +104,8 @@ func (s *Server) sessionsSnapshot() sessionsResponse {
 			Host:      string(live.Host),
 			Editor:    live.Editor,
 			Where:     shortenDir(live.Dir),
+			Title:     transcripts.SessionTitle(live.SessionID),
+			SessionID: live.SessionID,
 			StartedAt: live.StartedAt,
 		})
 	}

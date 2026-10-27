@@ -90,14 +90,7 @@ func Measure(model string, u Usage) Measured {
 	if !ok {
 		return Measured{Known: false}
 	}
-	// Weighted tokens: every token class scaled to the input-token baseline for
-	// this model, then that model's weight applied. Output and cache classes use
-	// the same multipliers the dollar cost does, so weight and cost stay in step.
-	weightedRaw := float64(u.Input) +
-		float64(u.Output)*outputMult +
-		float64(u.CacheCreation)*cacheCreationMult +
-		float64(u.CacheRead)*cacheReadMult
-	weighted := weightedRaw * r.weight
+	weighted := partsAt(r, u).Sum()
 
 	// USD: input priced at inUSD/MTok, the rest scaled off it by the same
 	// multipliers (outUSD is carried explicitly and used for output).
@@ -108,4 +101,36 @@ func Measure(model string, u Usage) Measured {
 		float64(u.CacheRead)/perMillion*r.inUSD*cacheReadMult
 
 	return Measured{Weighted: weighted, CostUSD: cost, Known: true}
+}
+
+// Parts is a usage's weighted tokens taken class by class; they add up to what
+// Measure calls Weighted.
+type Parts struct {
+	Input, Output, CacheCreation, CacheRead float64
+}
+
+// Sum is the parts added up.
+func (p Parts) Sum() float64 { return p.Input + p.Output + p.CacheCreation + p.CacheRead }
+
+// WeightedParts is Measure's weighted tokens split by token class, so a board can
+// show which kind of token a figure came from. An unknown model's parts are all
+// zero, as its weight is.
+func WeightedParts(model string, u Usage) Parts {
+	r, ok := rateFor(model)
+	if !ok {
+		return Parts{}
+	}
+	return partsAt(r, u)
+}
+
+// partsAt scales every token class to the input-token baseline for the model,
+// then applies the model's weight. Output and cache classes use the same
+// multipliers the dollar cost does, so weight and cost stay in step.
+func partsAt(r rate, u Usage) Parts {
+	return Parts{
+		Input:         float64(u.Input) * r.weight,
+		Output:        float64(u.Output) * outputMult * r.weight,
+		CacheCreation: float64(u.CacheCreation) * cacheCreationMult * r.weight,
+		CacheRead:     float64(u.CacheRead) * cacheReadMult * r.weight,
+	}
 }

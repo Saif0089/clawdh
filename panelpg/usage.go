@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_at         ON usage_events(at);
 CREATE INDEX IF NOT EXISTS usage_events_person_at  ON usage_events(person_id, at);
 CREATE INDEX IF NOT EXISTS usage_events_account_at ON usage_events(account_id, at);
+-- The Claude Code session a request came from; '' for events from before it
+-- was recorded, or from a client that does not name its session.
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS session_id text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS usage_events_person_session_at ON usage_events(person_id, session_id, at);
 
 CREATE TABLE IF NOT EXISTS usage_counters (
     subject_type text NOT NULL,          -- 'person' | 'account'
@@ -83,6 +87,7 @@ type UsageEvent struct {
 	Weighted      float64
 	CostUSD       float64
 	RequestID     string
+	SessionID     string
 }
 
 // RecordUsage stores one event and rolls it into the hourly counters for both
@@ -105,10 +110,10 @@ func (b *Backend) RecordUsage(ctx context.Context, ev UsageEvent) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO usage_events
 		  (at, person_id, account_id, model, input_tokens, output_tokens,
-		   cache_creation_tokens, cache_read_tokens, weighted_tokens, cost_usd, request_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		   cache_creation_tokens, cache_read_tokens, weighted_tokens, cost_usd, request_id, session_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		ev.At, ev.PersonID, ev.AccountID, ev.Model, ev.Input, ev.Output,
-		ev.CacheCreation, ev.CacheRead, ev.Weighted, ev.CostUSD, ev.RequestID); err != nil {
+		ev.CacheCreation, ev.CacheRead, ev.Weighted, ev.CostUSD, ev.RequestID, ev.SessionID); err != nil {
 		return err
 	}
 
@@ -249,4 +254,28 @@ func (b *Backend) LatestEventAt(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return at.Time, nil
+}
+
+// LastRequests is each person's newest metered request since a time, for the
+// people with one — a range scan of the last few minutes of events, which is
+// all "working" ever asks about.
+func (b *Backend) LastRequests(ctx context.Context, since time.Time) (map[string]time.Time, error) {
+	rows, err := b.db.QueryContext(ctx, `
+		SELECT person_id, MAX(at) FROM usage_events
+		 WHERE at >= $1 AND person_id <> ''
+		 GROUP BY 1`, since.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = at.UTC()
+	}
+	return out, rows.Err()
 }

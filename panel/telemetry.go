@@ -67,12 +67,37 @@ type SeriesPoint struct {
 	// Requests is how many requests made it; present only where the events are
 	// read (seconds and minutes) — the hourly roll-up does not count them.
 	Requests int64 `json:"requests,omitempty"`
+	// The bucket split by token class. Each class's raw tokens add up to Tokens
+	// and its weighted share to Weighted, so a board can show any one class, or
+	// all of them stacked, without a figure that does not reconcile.
+	Input      ClassUsage `json:"input"`
+	Output     ClassUsage `json:"output"`
+	CacheWrite ClassUsage `json:"cacheWrite"`
+	CacheRead  ClassUsage `json:"cacheRead"`
+}
+
+// ClassUsage is one token class's part of a bucket.
+type ClassUsage struct {
+	Tokens   int64   `json:"tokens"`
+	Weighted float64 `json:"weighted"`
+}
+
+// SessionUsage is one Claude Code session's usage: when it began and last ran,
+// and what it came to, split by class. The session is named by its id only; its
+// title lives on the machine that ran it, which is the only place it is shown.
+type SessionUsage struct {
+	ID    string    `json:"id"`
+	First time.Time `json:"first"`
+	Last  time.Time `json:"last"`
+	// Usage is what the session came to; its T is when it last ran.
+	Usage SeriesPoint `json:"usage"`
 }
 
 // Telemetry is one person's series (or everyone's, when Person is empty).
 type Telemetry struct {
-	Res    string `json:"res"`
-	Person string `json:"person,omitempty"`
+	Res     string `json:"res"`
+	Person  string `json:"person,omitempty"`
+	Session string `json:"session,omitempty"`
 	// BucketSeconds is a bucket's length, 0 for months. From and Until bound the
 	// span the view covers, so a bucket with nothing in it can be drawn as the
 	// gap it is.
@@ -129,9 +154,14 @@ func (s *Server) readTelemetry(w http.ResponseWriter, r *http.Request, personID 
 		}
 		since = t
 	}
+	session := r.URL.Query().Get("session")
+	if session != "" && personID == "" {
+		fail(w, http.StatusBadRequest, "A session belongs to one person; name the person too.")
+		return
+	}
 	now := s.now().UTC()
 	from := res.from(now, since)
-	points, err := s.usage.PersonSeries(r.Context(), personID, res, from)
+	points, err := s.usage.PersonSeries(r.Context(), personID, session, res, from)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "The usage could not be read: "+err.Error())
 		return
@@ -140,7 +170,7 @@ func (s *Server) readTelemetry(w http.ResponseWriter, r *http.Request, personID 
 		points = []SeriesPoint{}
 	}
 	out := Telemetry{
-		Res: res.Name, Person: personID, BucketSeconds: int(res.Bucket / time.Second),
+		Res: res.Name, Person: personID, Session: session, BucketSeconds: int(res.Bucket / time.Second),
 		From: from, Until: now, Points: points,
 	}
 	if res.Span == 0 && len(points) > 0 && since.IsZero() {
@@ -167,4 +197,26 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 // that: the person is the enrolled machine's, never a parameter.
 func (s *Server) handleOwnTelemetry(w http.ResponseWriter, r *http.Request, dev Device) {
 	s.readTelemetry(w, r, dev.PersonID)
+}
+
+// sessionsReach is how far back a sessions list looks, and sessionsLimit how many
+// sessions it names at most.
+const (
+	sessionsReach = 30 * 24 * time.Hour
+	sessionsLimit = 100
+)
+
+// handleOwnSessions is a machine's read of its own person's sessions, newest
+// first: what each Claude Code session came to, by id. The machine puts titles
+// on them; the panel never sees one.
+func (s *Server) handleOwnSessions(w http.ResponseWriter, r *http.Request, dev Device) {
+	list, err := s.usage.PersonSessions(r.Context(), dev.PersonID, s.now().Add(-sessionsReach), sessionsLimit)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "The sessions could not be read: "+err.Error())
+		return
+	}
+	if list == nil {
+		list = []SessionUsage{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
 }

@@ -6,8 +6,9 @@ import { Seg } from "./UsageBoard";
 // Usage over time for one person, or for everyone: what the gateway metered,
 // cut as finely as a second or as coarsely as a month.
 //
-// Nothing is estimated. A bar is the weighted tokens metered in its bucket and a
-// bucket with nothing in it is an empty slot, not a guess. The fine grains are
+// Nothing is estimated. A bar is what was metered in its bucket — weighted tokens
+// or raw tokens, every class stacked or one class alone — and a bucket with
+// nothing in it is an empty slot, not a guess. The fine grains are
 // cut from individual requests, so they carry a request count; the longer ones
 // are summed from the hourly totals the gateway keeps with each request, and
 // agree with them to the token.
@@ -89,10 +90,49 @@ function niceMax(v: number): number {
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
 }
 
-const BAR = "#7C8797"; // the board's one neutral hue: colour here would mean something it does not
+// The token classes, bottom of a stack first. Colour means the class and nothing
+// else: these four hues pass the colour-vision checks against the board's surface
+// for the pairs that touch in a stack, and every one is named beside its swatch.
+type ClassKey = "input" | "output" | "cacheWrite" | "cacheRead";
+type Show = "all" | ClassKey;
+type Measure = "weighted" | "tokens";
+const CLASSES: { key: ClassKey; label: string; color: string; note: string }[] = [
+  { key: "cacheRead", label: "Cache read", color: "#9085e9", note: "the conversation so far, re-read from cache on every request" },
+  { key: "cacheWrite", label: "Cache write", color: "#199e70", note: "new context written to the cache" },
+  { key: "input", label: "Input", color: "#3987e5", note: "uncached input" },
+  { key: "output", label: "Output", color: "#d95926", note: "what the model wrote" },
+];
+const SHOW: [Show, string][] = [["all", "All"], ["input", "Input"], ["output", "Output"], ["cacheWrite", "Cache write"], ["cacheRead", "Cache read"]];
+const MEASURES: [Measure, string][] = [["weighted", "Weighted"], ["tokens", "Tokens"]];
+const REST = "#7C8797"; // what a panel older than the split could not attribute to a class
+
+// value is a bucket's figure for a class (or all of them) in a measure.
+function value(p: SeriesPoint | undefined, show: Show, m: Measure): number {
+  if (!p) return 0;
+  if (show === "all") return m === "weighted" ? p.weighted : p.tokens;
+  return p[show]?.[m] || 0;
+}
+
+// remember keeps a viewer's choice of class and measure across visits; a browser
+// that keeps nothing just starts from the default.
+function remembered<T extends string>(key: string, fallback: T, allowed: [T, string][]): T {
+  try {
+    const v = localStorage.getItem(key) as T | null;
+    return v && allowed.some(([k]) => k === v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function remember(key: string, v: string) {
+  try { localStorage.setItem(key, v); } catch { /* nothing to keep it in */ }
+}
 
 export function TelemetryTab() {
   const [grain, setGrain] = useState<Grain>("minute");
+  const [show, setShowState] = useState<Show>(() => remembered("tel-show", "all", SHOW));
+  const [measure, setMeasureState] = useState<Measure>(() => remembered("tel-measure", "weighted", MEASURES));
+  const setShow = (v: Show) => { setShowState(v); remember("tel-show", v); };
+  const setMeasure = (v: Measure) => { setMeasureState(v); remember("tel-measure", v); };
   const [person, setPerson] = useState("");
   const [people, setPeople] = useState<{ id: string; name: string }[]>([]);
   const [points, setPoints] = useState<SeriesPoint[]>([]);
@@ -139,11 +179,14 @@ export function TelemetryTab() {
   }, [grain, person]);
 
   const who = person === "" ? "Everyone" : people.find((p) => p.id === person)?.name || "This person";
-  const total = points.reduce((a, p) => a + p.weighted, 0);
-  const tokens = points.reduce((a, p) => a + p.tokens, 0);
+  const total = points.reduce((a, p) => a + value(p, show, measure), 0);
   const requests = points.reduce((a, p) => a + (p.requests || 0), 0);
-  const peak = points.reduce<SeriesPoint | null>((m, p) => (!m || p.weighted > m.weighted ? p : m), null);
+  const peak = points.reduce<SeriesPoint | null>((m, p) => (!m || value(p, show, measure) > value(m, show, measure) ? p : m), null);
   const raw = grain === "second" || grain === "minute";
+  const unit = measure === "weighted" ? "weighted tokens" : "tokens";
+  const what = show === "all" ? unit + ", every class" : SHOW.find(([k]) => k === show)![1].toLowerCase() + ", " + unit;
+  const classTotals = CLASSES.map((c) => points.reduce((a, p) => a + (p[c.key]?.[measure] || 0), 0));
+  const classSum = classTotals.reduce((a, b) => a + b, 0);
 
   return (
     <div>
@@ -163,21 +206,48 @@ export function TelemetryTab() {
         </select>
       </div>
 
-      <div className="mt-5 overflow-x-auto pb-1">
+      <div className="mt-5 flex flex-wrap gap-3 overflow-x-auto pb-1">
         <Seg value={grain} onChange={setGrain} options={GRAINS} />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-3 overflow-x-auto pb-1">
+        <Seg id="tel-show" value={show} onChange={setShow} options={SHOW} />
+        <Seg id="tel-measure" value={measure} onChange={setMeasure} options={MEASURES} />
       </div>
 
       {err && <div className="mt-4 rounded-xl border border-crit/30 bg-crit/5 px-4 py-2.5 text-[14px] text-crit">{err}</div>}
 
       <div className="mt-5 rounded-2xl border border-line bg-raised p-5">
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-          <Stat label={`${who}, in view`} value={fmtNum(total)} note="weighted tokens" />
-          <Stat label="Raw tokens" value={fmtNum(tokens)} note="every class added up" />
-          <Stat label="Busiest" value={peak ? fmtNum(peak.weighted) : "—"} note={peak ? label(Date.parse(peak.t), grain) : ""} />
+          <Stat label={`${who}, in view`} value={fmtNum(total)} note={what} />
+          <Stat label="Busiest" value={peak ? fmtNum(value(peak, show, measure)) : "—"} note={peak ? label(Date.parse(peak.t), grain) : ""} />
           <Stat label="Requests" value={raw ? fmtNum(requests) : "—"} note={raw ? "counted per request" : "not counted at this grain"} />
+          <Stat label="Per request" value={raw && requests ? fmtNum(total / requests) : "—"} note={raw ? "on average, in view" : "not counted at this grain"} />
         </div>
-        <Chart points={points} grain={grain} now={now} loaded={loaded} />
+        <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Token classes">
+          {CLASSES.slice().reverse().map((c) => {
+            const i = CLASSES.indexOf(c);
+            const on = show === c.key;
+            return (
+              <button
+                key={c.key}
+                type="button"
+                title={c.note}
+                aria-pressed={on}
+                onClick={() => setShow(on ? "all" : c.key)}
+                className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[13px] transition-colors ${on ? "border-primary/60 bg-raised-2" : "border-line hover:bg-raised-2"} ${show !== "all" && !on ? "opacity-60" : ""}`}
+              >
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: c.color }} />
+                <span className="text-muted">{c.label}</span>
+                <span className="tabular-nums text-ink">{fmtNum(classTotals[i])}</span>
+                <span className="tabular-nums text-faint">{classSum > 0 ? Math.round((classTotals[i] / classSum) * 100) + "%" : ""}</span>
+              </button>
+            );
+          })}
+        </div>
+        <Chart points={points} grain={grain} now={now} loaded={loaded} show={show} measure={measure} />
         <div className="mt-3 text-[12.5px] leading-snug text-faint">
+          Every request re-sends the conversation so far, so cache reads grow with the context and usually lead.
+          Weighted puts every class on one scale: output counts 5×, cache writes 1.25× and cache reads 0.1× an input token, times the model's weight.
           Seconds and minutes are cut from individual requests. Hours and longer come from the hourly totals the gateway keeps with them.
           {grain === "day" || grain === "week" || grain === "month" || grain === "all" ? " Days, weeks and months are UTC; weeks begin on Monday." : ""}
         </div>
@@ -196,7 +266,7 @@ function Stat({ label: l, value, note }: { label: string; value: string; note?: 
   );
 }
 
-function Chart({ points, grain, now, loaded }: { points: SeriesPoint[]; grain: Grain; now: number; loaded: boolean }) {
+function Chart({ points, grain, now, loaded, show, measure }: { points: SeriesPoint[]; grain: Grain; now: number; loaded: boolean; show: Show; measure: Measure }) {
   const box = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(640);
   const [hover, setHover] = useState<number | null>(null);
@@ -210,7 +280,7 @@ function Chart({ points, grain, now, loaded }: { points: SeriesPoint[]; grain: G
 
   const times = useMemo(() => slots(points, grain, now), [points, grain, now]);
   const byTime = useMemo(() => new Map(points.map((p) => [Date.parse(p.t), p])), [points]);
-  const vals = times.map((t) => byTime.get(t)?.weighted || 0);
+  const vals = times.map((t) => value(byTime.get(t), show, measure));
   const max = niceMax(Math.max(0, ...vals));
 
   const H = 240, padL = 48, padR = 8, padT = 10, padB = 26;
@@ -219,6 +289,18 @@ function Chart({ points, grain, now, loaded }: { points: SeriesPoint[]; grain: G
   const y = (v: number) => padT + (H - padT - padB) * (1 - v / max);
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
   const every = Math.max(1, Math.ceil(times.length / Math.max(2, Math.floor((w - padL) / 92))));
+  const base = H - padB;
+
+  // segments is a bucket's bar, bottom up: one class, or every class stacked with
+  // whatever no class accounts for on top in grey.
+  const segments = (p: SeriesPoint | undefined): { v: number; color: string }[] => {
+    if (!p) return [];
+    if (show !== "all") return [{ v: value(p, show, measure), color: CLASSES.find((c) => c.key === show)!.color }];
+    const out = CLASSES.map((c) => ({ v: p[c.key]?.[measure] || 0, color: c.color }));
+    const rest = value(p, "all", measure) - out.reduce((a, s) => a + s.v, 0);
+    if (rest > Math.max(1, value(p, "all", measure) * 1e-6)) out.push({ v: rest, color: REST });
+    return out.filter((s) => s.v > 0);
+  };
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -226,10 +308,11 @@ function Chart({ points, grain, now, loaded }: { points: SeriesPoint[]; grain: G
     setHover(i >= 0 && i < times.length ? i : null);
   };
   const hp = hover != null ? byTime.get(times[hover]) : undefined;
+  const unit = measure === "weighted" ? "weighted" : "tokens";
 
   return (
     <div ref={box} className="relative mt-5">
-      <svg width={w} height={H} viewBox={`0 0 ${w} ${H}`} role="img" aria-label="Weighted tokens metered per bucket" onMouseMove={onMove} onMouseLeave={() => setHover(null)} className="block">
+      <svg width={w} height={H} viewBox={`0 0 ${w} ${H}`} role="img" aria-label={`${show === "all" ? "Every token class" : SHOW.find(([k]) => k === show)![1]}, ${unit}, per bucket`} onMouseMove={onMove} onMouseLeave={() => setHover(null)} className="block">
         {ticks.map((v, i) => (
           <g key={i}>
             <line x1={padL} x2={w - padR} y1={y(v)} y2={y(v)} className="stroke-line" strokeWidth={1} opacity={i === 0 ? 1 : 0.5} />
@@ -237,25 +320,42 @@ function Chart({ points, grain, now, loaded }: { points: SeriesPoint[]; grain: G
           </g>
         ))}
         {times.map((t, i) => {
-          const v = vals[i];
           const x = padL + i * slot + (slot - bw) / 2;
+          let acc = 0;
+          const segs = segments(byTime.get(t));
           return (
-            <g key={t}>
-              {v > 0 && <rect x={x} y={y(v)} width={bw} height={Math.max(1, H - padB - y(v))} rx={bw > 5 ? 2 : 0} fill={BAR} opacity={hover === i ? 1 : 0.85} />}
+            <g key={t} opacity={hover === i || hover == null ? 1 : 0.85}>
+              {segs.map((sg, j) => {
+                const top = y(acc + sg.v), bottom = y(acc);
+                acc += sg.v;
+                // a 1px surface gap between stacked parts, where a part is tall enough to keep one
+                const gap = j > 0 && bottom - top > 3 ? 1 : 0;
+                return <rect key={j} x={x} y={top} width={bw} height={Math.max(j === 0 ? 1 : 0, bottom - top - gap)} rx={bw > 5 && j === segs.length - 1 ? 2 : 0} fill={sg.color} />;
+              })}
               {i % every === 0 && <text x={x + bw / 2} y={H - 8} textAnchor="middle" className="fill-faint text-[11px] tabular-nums">{label(t, grain)}</text>}
             </g>
           );
         })}
+        <line x1={padL} x2={w - padR} y1={base} y2={base} className="stroke-line" strokeWidth={1} />
         {hover != null && <rect x={padL + hover * slot} y={padT} width={slot} height={H - padT - padB} className="fill-ink" opacity={0.05} />}
       </svg>
       {hover != null && (
         <div
-          className="pointer-events-none absolute z-10 rounded-lg border border-line bg-raised px-3 py-2 text-[12.5px] shadow-lg"
-          style={{ left: Math.min(Math.max(padL + hover * slot - 70, 0), Math.max(0, w - 170)), top: 0 }}
+          className="pointer-events-none absolute z-10 min-w-[190px] rounded-lg border border-line bg-raised px-3 py-2 text-[12.5px] shadow-lg"
+          style={{ left: Math.min(Math.max(padL + hover * slot - 95, 0), Math.max(0, w - 210)), top: 0 }}
         >
           <div className="font-medium text-ink">{label(times[hover], grain)}</div>
-          <div className="tabular-nums text-ink">{fmtNum(hp?.weighted || 0)} <span className="text-faint">weighted</span></div>
-          <div className="tabular-nums text-muted">{fmtNum(hp?.tokens || 0)} <span className="text-faint">raw tokens</span></div>
+          {CLASSES.slice().reverse().map((c) => (
+            <div key={c.key} className={`flex items-center gap-2 tabular-nums ${show === "all" || show === c.key ? "" : "opacity-50"}`}>
+              <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: c.color }} />
+              <span className="text-muted">{c.label}</span>
+              <span className={`ml-auto ${show === c.key ? "font-semibold text-ink" : "text-ink"}`}>{fmtNum(hp?.[c.key]?.[measure] || 0)}</span>
+            </div>
+          ))}
+          <div className="mt-1 flex border-t border-line pt-1 tabular-nums">
+            <span className="text-muted">All, {unit}</span>
+            <span className={`ml-auto ${show === "all" ? "font-semibold text-ink" : "text-ink"}`}>{fmtNum(value(hp, "all", measure))}</span>
+          </div>
           {hp && hp.requests ? <div className="tabular-nums text-muted">{hp.requests} <span className="text-faint">{hp.requests === 1 ? "request" : "requests"}</span></div> : null}
         </div>
       )}

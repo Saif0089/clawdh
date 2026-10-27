@@ -46,6 +46,7 @@ func TestGatewayMetersAStreamedResponse(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer member-key")
+	req.Header.Set("X-Claude-Code-Session-Id", "607f886f-fb57-47d8-b748-2ebc6d92fdaa")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +67,9 @@ func TestGatewayMetersAStreamedResponse(t *testing.T) {
 		}
 		if ev.RequestID != "req_abc" {
 			t.Errorf("request id = %q, want req_abc", ev.RequestID)
+		}
+		if ev.SessionID != "607f886f-fb57-47d8-b748-2ebc6d92fdaa" {
+			t.Errorf("session = %q, want the one the request named", ev.SessionID)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("gateway recorded no usage for a streamed response")
@@ -563,5 +567,23 @@ func TestAnUnreachableUpstreamIsAnExplainedRetryableError(t *testing.T) {
 	}
 	if got := resp.Header.Get("x-should-retry"); got != "true" {
 		t.Errorf("x-should-retry = %q; a dropped connection is worth retrying", got)
+	}
+}
+
+// A session id is the client's word and ends up in the metering: one that looks
+// like an id is kept, anything else is dropped.
+func TestSessionIDIsKeptOnlyWhenItLooksLikeOne(t *testing.T) {
+	for in, want := range map[string]string{
+		"607f886f-fb57-47d8-b748-2ebc6d92fdaa": "607f886f-fb57-47d8-b748-2ebc6d92fdaa",
+		"":                                     "",
+		"a b":                                  "",
+		"x'; DROP TABLE usage_events; --":      "",
+		strings.Repeat("a", 65):                "",
+	} {
+		h := http.Header{}
+		h.Set("X-Claude-Code-Session-Id", in)
+		if got := sessionID(h); got != want {
+			t.Errorf("sessionID(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

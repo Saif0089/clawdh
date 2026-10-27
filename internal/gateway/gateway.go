@@ -176,6 +176,7 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 			}
 			ident, _ := ctx.Value(identKey).(Event)
 			ident.RequestID = resp.Header.Get("request-id")
+			ident.SessionID = sessionID(resp.Request.Header)
 			resp.Body = &meteringBody{inner: resp.Body, rec: rec, base: ident}
 			return nil
 		},
@@ -493,4 +494,20 @@ func parseWindows(h http.Header) (w Windows, has bool) {
 
 func withToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, tokenKey, token)
+}
+
+// sessionID is the Claude Code session a request names, kept only when it looks
+// like one: it is the client's word and ends up in the metering, so anything long
+// or odd is dropped rather than stored.
+func sessionID(h http.Header) string {
+	id := h.Get("X-Claude-Code-Session-Id")
+	if len(id) == 0 || len(id) > 64 {
+		return ""
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return ""
+		}
+	}
+	return id
 }

@@ -583,6 +583,11 @@ function renderPeople(box, win) {
     const name = document.createElement("span");
     name.className = "person-name";
     name.textContent = p.name || "Someone";
+    const who = document.createElement("span");
+    who.className = "person-who";
+    who.append(name);
+    const badge = presenceBadge(p.presence);
+    if (badge) who.append(badge);
 
     const bar = document.createElement("span");
     bar.className = "person-bar";
@@ -598,7 +603,7 @@ function renderPeople(box, win) {
     pct.className = "person-pct";
     pct.textContent = sized ? formatPercent((p.ofWeekly || 0) * 100) : formatTokens(p.weighted || 0);
 
-    row.append(dot, name, bar, pct);
+    row.append(dot, who, bar, pct);
     row.title = sized
       ? `${p.name} used ${pct.textContent} of this account's week`
       : `${p.name} ran ${formatTokens(p.weighted || 0)} tokens through this account`;
@@ -631,6 +636,37 @@ function renderPeople(box, win) {
     note.textContent = "Shares of the plan appear once the gateway has watched this login for a whole week. The token counts are exact.";
     box.appendChild(note);
   }
+}
+
+// presenceBadge says whether a person is working, online or offline, as the
+// panel saw it: a request through the gateway in the last three minutes is
+// working; one of their machines checking in within the last 90 seconds is
+// online. The words carry it; the dot only echoes them, and is never one of the
+// meters' colours. Nothing for a panel too old to say.
+const PRESENCE_LABEL = { working: "Working", idle: "Online · idle", offline: "Offline" };
+function presenceBadge(pr) {
+  if (!pr || !PRESENCE_LABEL[pr.state]) return null;
+  const b = document.createElement("span");
+  b.className = "presence presence-" + pr.state;
+  const dot = document.createElement("span");
+  dot.className = "presence-dot";
+  dot.setAttribute("aria-hidden", "true");
+  b.append(dot, document.createTextNode(PRESENCE_LABEL[pr.state]));
+  const t = agoShort(pr.at);
+  b.title = pr.state === "working" ? `Last request through the gateway ${t}`
+    : t ? `Last seen ${t}` : "No machine of theirs has checked in yet";
+  return b;
+}
+
+// agoShort is how long since a moment, to the second while it is recent.
+function agoShort(iso) {
+  if (!iso || iso.startsWith("0001")) return "";
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return s + "s ago";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + " min ago";
+  const h = Math.round(m / 60);
+  return h < 24 ? h + " h ago" : Math.round(h / 24) + " days ago";
 }
 
 // formatTokens is a token count at a glance: 880M, 1.4B, 27k.
