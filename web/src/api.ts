@@ -36,6 +36,8 @@ export interface SeriesPoint {
   t: string; weighted: number; tokens: number; requests?: number;
   input?: ClassUsage; output?: ClassUsage; cacheWrite?: ClassUsage; cacheRead?: ClassUsage;
 }
+// SessionUsage is one Claude Code session as the gateway metered it, by id.
+export interface SessionUsage { id: string; first: string; last: string; usage: SeriesPoint }
 export interface Telemetry { res: string; person?: string; bucketSeconds: number; from: string; until: string; points: SeriesPoint[] }
 // One account on the usage board: its real rolling windows (Claude's own %;
 // hasReading is false until the gateway has read the login once), and for the
@@ -48,7 +50,7 @@ export interface AccountUsage {
   // The part of the plan's week (0..1 of the plan) no metered request explains —
   // the login was used before the gateway had met it, or outside the gateway. It
   // belongs to nobody on the card. weekBasis says how the plan's size was learned
-  // ("history" | "this-week"); "none" means it is not known yet, so people carry
+  // ("history": the largest of its watched weeks); "none" means no week has finished yet, so people carry
   // exact tokens and no percentage. meteredSince is when the gateway first saw
   // the login, whichever account IDs it has had.
   unaccounted: number; tokensPerWeek: number; weekBasis: string; meteredSince?: string;

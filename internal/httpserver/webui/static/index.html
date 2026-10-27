@@ -165,28 +165,26 @@
   <section id="telemetry-block" class="block" hidden>
     <div class="block-head">
       <h2>Your usage</h2>
-      <p class="block-sub">What the gateway metered for you, as finely as a second. Nothing here is estimated.</p>
+      <p class="block-sub">What your Claude Code sessions used, exactly as the gateway counted it.</p>
     </div>
     <div id="tel-focus" class="tel-focus" hidden></div>
-    <div id="tel-grains" class="tel-grains" role="group" aria-label="How finely to cut your usage"></div>
-    <div class="tel-switches">
-      <div id="tel-show" class="tel-grains" role="group" aria-label="Which token class to show"></div>
-      <div id="tel-measure" class="tel-grains" role="group" aria-label="Weighted or raw tokens"></div>
-    </div>
     <p id="tel-err" class="row-err" hidden></p>
     <div class="tel-card">
-      <div id="tel-stats" class="tel-stats"></div>
-      <div id="tel-legend" class="tel-legend" role="group" aria-label="Token classes"></div>
+      <div id="tel-tiles" class="tel-tiles"></div>
+      <div class="tel-mix-block">
+        <h3 class="tel-h">What it's spent on <span id="tel-mix-span" class="tel-h-sub"></span></h3>
+        <div id="tel-mix" class="tel-mix" role="img"></div>
+        <div id="tel-mix-rows" class="tel-mix-rows"></div>
+        <p id="tel-mix-say" class="tel-say"></p>
+      </div>
+      <h3 id="tel-chart-title" class="tel-h tel-chart-h"></h3>
       <div id="tel-plot" class="tel-plot"></div>
-      <p id="tel-note" class="tel-note"></p>
     </div>
     <div class="tel-card tel-sessions-card">
-      <div class="tel-sessions-head">
-        <h3>Sessions</h3>
-        <p class="tel-note">Each Claude Code session's usage over the last 30 days, subagents included. Pick one to see it alone above.</p>
-      </div>
+      <h3 class="tel-h">Sessions <span class="tel-h-sub">last 30 days · pick one to see it alone</span></h3>
       <div id="tel-sessions" class="tel-sessions" role="list"></div>
     </div>
+    <p class="tel-foot">Exact, from the gateway. Usage is counted the way plans count it: Claude writing weighs 5×, adding context 1.25×, re-reading 0.1× a new input token, times the model's rate.</p>
   </section>
 
   <!-- Remote help: what the panel may ask of this machine, and your say over it.

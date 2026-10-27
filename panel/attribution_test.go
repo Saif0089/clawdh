@@ -8,10 +8,10 @@ import (
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-// A plan's size is learned from its own finished, fully metered weeks — the
-// median of up to four, ignoring the window still running and any reading too
-// coarse to size a plan from — and only without any does the running week stand
-// in.
+// A plan's size is the largest its own watched weeks have shown — the newest
+// four finished ones, never the window still running on its own, and no
+// reading too coarse to size a plan from. Use outside the gateway only makes a
+// week look smaller, so the largest week is the one that blames nobody for it.
 func TestAPlansSizeIsLearnedFromItsOwnFinishedWeeks(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	week := func(daysAgo int, util, weighted float64) WeekSample {
@@ -26,26 +26,33 @@ func TestAPlansSizeIsLearnedFromItsOwnFinishedWeeks(t *testing.T) {
 		week(15, 0.10, 500e6), // a 10% reading is too coarse to size a plan from
 		week(22, 1.0, 1600e6), // 1.60B
 	}, nil, now)
-	if basis != ScaleHistory || !near(got, 1500e6) {
-		t.Errorf("scale = %v (%s), want the median of the three usable weeks, 1.5B (history)", got, basis)
+	if basis != ScaleHistory || !near(got, 1600e6) {
+		t.Errorf("scale = %v (%s), want the largest of the three usable weeks, 1.6B (history)", got, basis)
 	}
 
-	// Only four weeks are looked at, newest first, so a plan change is followed.
+	// Only four weeks are looked at, newest first, so a smaller plan is followed.
 	var many []WeekSample
-	for i, size := range []float64{2000e6, 2000e6, 2000e6, 2000e6, 100e6, 100e6, 100e6} {
+	for i, size := range []float64{100e6, 100e6, 100e6, 100e6, 2000e6, 2000e6, 2000e6} {
 		many = append(many, week(1+7*i, 1.0, size))
 	}
-	if got, _ := weekScale(many, nil, now); !near(got, 2000e6) {
-		t.Errorf("scale = %v, want the four newest weeks (2B), not older ones", got)
+	if got, _ := weekScale(many, nil, now); !near(got, 100e6) {
+		t.Errorf("scale = %v, want the four newest weeks (100M), not older ones", got)
 	}
 
-	// No finished week yet: the running one, when it is full enough.
-	if got, basis := weekScale(nil, &WeekSample{Reset: running.Reset, Util: 0.8, Weighted: 800e6}, now); basis != ScaleThisWeek || !near(got, 1000e6) {
-		t.Errorf("scale = %v (%s), want this week's own ratio, 1B (this-week)", got, basis)
+	// A running week the gateway watched whole counts once a week has finished,
+	// and can only raise the size: here this week shows a 2B plan where last
+	// week, with use the gateway did not see, looked like 1.4B.
+	if got, _ := weekScale([]WeekSample{week(1, 1.0, 1400e6)}, &WeekSample{Reset: running.Reset, Util: 0.5, Weighted: 1000e6}, now); !near(got, 2000e6) {
+		t.Errorf("scale = %v, want this week's larger 2B", got)
 	}
-	// …and nothing at all rather than a guess when it is not.
-	if got, basis := weekScale(nil, &WeekSample{Reset: running.Reset, Util: 0.1, Weighted: 80e6}, now); basis != ScaleNone || got != 0 {
-		t.Errorf("scale = %v (%s), want none from a 10%% reading", got, basis)
+	if got, _ := weekScale([]WeekSample{week(1, 1.0, 1400e6)}, &WeekSample{Reset: running.Reset, Util: 0.5, Weighted: 300e6}, now); !near(got, 1400e6) {
+		t.Errorf("scale = %v, want last week's 1.4B, not a smaller running week", got)
+	}
+
+	// No finished week yet: nothing to tell people's use apart from anyone
+	// else's, so no size, however full the running week is.
+	if got, basis := weekScale(nil, &WeekSample{Reset: running.Reset, Util: 0.8, Weighted: 800e6}, now); basis != ScaleNone || got != 0 {
+		t.Errorf("scale = %v (%s), want none from the running week alone", got, basis)
 	}
 	if got, basis := weekScale(nil, nil, now); basis != ScaleNone || got != 0 {
 		t.Errorf("scale = %v (%s), want none with nothing to learn from", got, basis)
@@ -137,7 +144,7 @@ func TestAReaddedLoginsEarlierWeekIsNotChargedToWhoeverRanItAfter(t *testing.T) 
 	}
 
 	card := boardAccount(t, h, acct)
-	size := 1450e6
+	size := 1500e6 // the larger of the two: the week that blames nobody for outside use
 	aliceOf, aliceTokens := shareOf(t, card, "Alice")
 	bobOf, _ := shareOf(t, card, "Bob")
 	if !near(aliceOf, 15e6/size) || !near(bobOf, 92e6/size) {
@@ -153,7 +160,7 @@ func TestAReaddedLoginsEarlierWeekIsNotChargedToWhoeverRanItAfter(t *testing.T) 
 		t.Errorf("unaccounted = %v, want the rest of the 80%% week, %v", got, want)
 	}
 	if card["weekBasis"] != ScaleHistory || card["tokensPerWeek"].(float64) != size {
-		t.Errorf("basis = %v, size = %v, want history and 1.45B", card["weekBasis"], card["tokensPerWeek"])
+		t.Errorf("basis = %v, size = %v, want history and 1.5B", card["weekBasis"], card["tokensPerWeek"])
 	}
 	if len(usage.recorded) != 0 {
 		t.Errorf("filed %v as a week the gateway watched, but it began metering mid-week", usage.recorded)
@@ -189,10 +196,10 @@ func TestWithoutAKnownPlanSizeNoPercentageIsInvented(t *testing.T) {
 	}
 }
 
-// A login the gateway has watched since before the week began has nothing
-// missing, so the running week can stand in for a history it does not have yet —
-// and is filed, once, so that it becomes part of one.
-func TestAFullyMeteredFirstWeekNeedsNoHistoryAndIsFiledOnce(t *testing.T) {
+// A login the gateway has watched since before the week began files its running
+// week, once per reading, so that it becomes the history a size is learned
+// from. Until that week has finished, it gives nobody a percentage.
+func TestAFirstWeekIsFiledButNobodyIsGivenAPercentageOfIt(t *testing.T) {
 	usage := &fakeUsage{}
 	h := newHarnessUsage(t, usage)
 	h.setUp()
@@ -212,15 +219,15 @@ func TestAFullyMeteredFirstWeekNeedsNoHistoryAndIsFiledOnce(t *testing.T) {
 	card := boardAccount(t, h, acct)
 	aliceOf, _ := shareOf(t, card, "Alice")
 	bobOf, _ := shareOf(t, card, "Bob")
-	// 600M of metered tokens in a 60% week: a plan of 1B tokens a week.
-	if card["weekBasis"] != ScaleThisWeek || !near(card["tokensPerWeek"].(float64), 1000e6) {
-		t.Errorf("basis = %v, size = %v, want this-week and 1B", card["weekBasis"], card["tokensPerWeek"])
+	// 600M metered in a 60% week would say "a 1B plan" — but only if nothing else
+	// used the login, which nothing here can know. With no finished week to
+	// compare against, nobody is given a share: the 60% might be partly the
+	// owner's, used outside the gateway.
+	if card["weekBasis"] != ScaleNone || card["tokensPerWeek"].(float64) != 0 {
+		t.Errorf("basis = %v, size = %v, want none and no size", card["weekBasis"], card["tokensPerWeek"])
 	}
-	if !near(aliceOf, 0.30) || !near(bobOf, 0.10) {
-		t.Errorf("Alice = %v, Bob = %v, want 30%% and 10%%", aliceOf, bobOf)
-	}
-	if card["unaccounted"].(float64) != 0 {
-		t.Errorf("unaccounted = %v, want nothing missing from a week metered whole", card["unaccounted"])
+	if aliceOf != 0 || bobOf != 0 {
+		t.Errorf("Alice = %v, Bob = %v, want no percentage for either", aliceOf, bobOf)
 	}
 	if len(usage.recorded) != 1 || usage.recorded[0].Util != 0.60 || usage.recorded[0].Weighted != 600e6 {
 		t.Fatalf("filed %+v, want this week once: 60%% and all 600M, the removed person's included", usage.recorded)

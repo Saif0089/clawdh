@@ -694,63 +694,68 @@ dialog input[type="text"], dialog input[type="url"], dialog input[type="password
 .hist-when { flex-shrink: 0; font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 @media (max-width: 560px) { .remote-head { flex-direction: column; gap: 12px; } .hist-text { white-space: normal; } }
 
-/* Your usage: this person's own metering over time. One neutral-to-teal bar
-   colour; nothing here is coloured by who or what, only by being the data. */
-.tel-grains { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.tel-grain { padding: 6px 12px; font-size: 13.5px; }
-.tel-grain[aria-pressed="true"] { background: var(--raised-2); border-color: var(--primary); color: var(--ink); }
-.tel-card { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
-.tel-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 20px; }
-@media (max-width: 620px) { .tel-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.tel-stat { min-width: 0; }
-.tel-stat-l { font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-.tel-stat-v { margin-top: 2px; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.tel-stat-n { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tel-plot { position: relative; margin-top: 16px; }
+/* Your usage: this person's own metering, at a glance. Colour means the kind of
+   token and nothing else, and every colour is named beside it. */
+.tel-card { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+.tel-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 20px; }
+@media (max-width: 620px) { .tel-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tel-tile { min-width: 0; }
+.tel-tile-l { font-size: 12.5px; color: var(--muted); }
+.tel-tile-v { margin-top: 2px; font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.tel-tile-n { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tel-h { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.tel-h-sub { margin-left: 6px; font-weight: 400; font-size: 12.5px; color: var(--faint); }
+.tel-mix-block { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.tel-mix { display: flex; gap: 2px; height: 10px; margin-top: 10px; border-radius: 5px; overflow: hidden; background: var(--sunken); }
+.tel-mix span { display: block; height: 100%; min-width: 2px; }
+.tel-mix-rows { display: flex; flex-wrap: wrap; gap: 8px 26px; margin-top: 12px; }
+.tel-mix-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13px; }
+@media (max-width: 620px) { .tel-mix-rows { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+.tel-mix-row .tel-swatch { align-self: center; }
+.tel-mix-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tel-mix-pct { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tel-mix-v { color: var(--faint); font-variant-numeric: tabular-nums; }
+.tel-say { margin: 12px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--muted); max-width: 72ch; }
+.tel-chart-h { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.tel-plot { position: relative; margin-top: 10px; }
 .tel-plot svg { display: block; }
 .tel-axis { stroke: var(--line); stroke-width: 1; }
 .tel-grid { stroke: var(--line); stroke-width: 1; opacity: .5; }
 .tel-tick { fill: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-.tel-focus { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 12px; padding: 8px 12px;
-  border: 1px solid var(--primary); border-radius: 10px; background: var(--raised-2); font-size: 14px; }
+.tel-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.tel-tip { position: absolute; top: 0; z-index: 2; pointer-events: none; min-width: 230px; background: var(--raised-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; box-shadow: var(--shadow); }
+.tel-tip-row { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.tel-tip-v { margin-left: auto; padding-left: 12px; color: var(--ink); }
+.tel-tip-raw { min-width: 62px; text-align: right; color: var(--faint); }
+.tel-tip-all { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.tel-tip-m { color: var(--muted); }
+.tel-empty { position: absolute; left: 0; right: 0; top: 38%; text-align: center; color: var(--muted); font-size: 14px; }
+.tel-focus { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 7px 8px 7px 12px; min-width: 0;
+  border: 1px solid var(--primary); border-radius: 999px; background: var(--raised-2); font-size: 13.5px; }
 .tel-focus[hidden] { display: none; }
-.tel-focus-l { font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-.tel-focus .subtle-btn { margin-left: auto; }
+.tel-focus-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.tel-focus-t b { color: var(--ink); font-weight: 600; }
+.tel-focus button { margin-left: auto; flex: none; padding: 4px 10px; font-size: 12.5px; border-radius: 999px; }
 .tel-sessions-card { margin-top: 14px; }
-.tel-sessions-head h3 { margin: 0; font-size: 15px; }
-.tel-sessions-head .tel-note { margin-top: 4px; }
 .tel-sessions { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-.tel-session { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(60px, 1fr) minmax(0, 1fr); align-items: center; gap: 14px;
+.tel-session { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(60px, .8fr) minmax(0, .9fr); align-items: center; gap: 14px;
   width: 100%; padding: 9px 12px; text-align: left; font-size: 13.5px; }
 @media (max-width: 620px) { .tel-session { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
 .tel-session.is-on { background: var(--raised-2); border-color: var(--primary); }
 .tel-session-name { display: flex; flex-direction: column; min-width: 0; }
 .tel-session-title { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tel-session-proj, .tel-session-m { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tel-session-mix { display: flex; gap: 1px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--sunken); }
+.tel-session-mix { display: flex; gap: 1px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--sunken); }
 .tel-session-mix span { display: block; height: 100%; }
+.tel-session-mix.is-empty { visibility: hidden; }
+@media (max-width: 620px) { .tel-session-mix.is-empty { display: none; } }
 .tel-session-nums { display: flex; flex-direction: column; min-width: 0; text-align: right; }
+@media (max-width: 620px) { .tel-session-nums { text-align: left; flex-direction: row; gap: 10px; align-items: baseline; } }
 .tel-session-v { color: var(--ink); font-variant-numeric: tabular-nums; }
 .tel-more { align-self: flex-start; margin-top: 4px; }
-.tel-switches { display: flex; flex-wrap: wrap; gap: 6px 18px; }
-.tel-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.tel-class { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 13px; }
-.tel-class[aria-pressed="true"] { background: var(--raised-2); border-color: var(--primary); }
-.tel-class.is-dim { opacity: .6; }
-.tel-class-l { color: var(--muted); }
-.tel-class-v { color: var(--ink); font-variant-numeric: tabular-nums; }
-.tel-class-p { color: var(--faint); font-variant-numeric: tabular-nums; }
-.tel-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
-.tel-tip-row { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
-.tel-tip-row.is-dim { opacity: .5; }
-.tel-tip-row.is-on .tel-tip-v { font-weight: 650; }
-.tel-tip-v { margin-left: auto; padding-left: 12px; }
-.tel-tip-all { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
-.tel-tip { position: absolute; top: 0; z-index: 2; pointer-events: none; min-width: 190px; background: var(--raised-2); border: 1px solid var(--line);
-  border-radius: 8px; padding: 7px 10px; font-size: 12.5px; line-height: 1.4; box-shadow: var(--shadow); }
-.tel-tip-m { color: var(--muted); }
-.tel-empty { position: absolute; left: 0; right: 0; top: 36%; text-align: center; color: var(--muted); font-size: 14px; }
-.tel-note { margin: 12px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--faint); max-width: 70ch; }
+.tel-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--faint); }
+.tel-foot { margin: 10px 2px 0; font-size: 12px; line-height: 1.45; color: var(--faint); max-width: 90ch; }
 
 /* A live session's own title over where it runs: several sessions in one folder
    are otherwise the same row. */

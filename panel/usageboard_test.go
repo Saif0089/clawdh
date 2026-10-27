@@ -25,6 +25,7 @@ func TestTheBoardShowsEachAccountWithWhoRanItAndOnWhat(t *testing.T) {
 		{SubjectID: aliceID, Weighted: 100, ByModel: []ModelUsage{{Model: "claude-sonnet-5", Weighted: 100}}},
 		{SubjectID: "someone-removed", Weighted: 999},
 	}}
+	usage.samples = []WeekSample{{Reset: h.clock.Add(-4 * 24 * time.Hour), Util: 1.0, Weighted: 2000}} // one finished week to size the plan from
 
 	code, body := h.do("GET", "/api/usage/accounts?window=month", nil, "")
 	if code != 200 || body["window"] != "month" {

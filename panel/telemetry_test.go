@@ -152,3 +152,51 @@ func TestTheTeamBoardsReportUsageThatHasNoCard(t *testing.T) {
 		t.Errorf("unlinkedAccounts = %v, want the 42M on logins the panel has no trace of", body["unlinkedAccounts"])
 	}
 }
+
+// The admin reads one named person's sessions; a person is required, and one
+// that does not exist is refused.
+func TestTheBoardListsAPersonsSessions(t *testing.T) {
+	usage := &fakeUsage{}
+	h := newHarnessUsage(t, usage)
+	h.setUp()
+	aliceID, _ := h.join("Alice", "alice-mbp")
+	at := h.clock.Add(-time.Hour)
+	usage.sessions = []SessionUsage{{ID: "607f886f-fb57", First: at, Last: h.clock, Usage: SeriesPoint{T: h.clock, Weighted: 900, Requests: 4}}}
+
+	code, body := h.do("GET", "/api/usage/telemetry/sessions?person="+aliceID, nil, "")
+	list, _ := body["sessions"].([]any)
+	if code != 200 || usage.seriesPerson != aliceID || len(list) != 1 || list[0].(map[string]any)["id"] != "607f886f-fb57" {
+		t.Fatalf("sessions = %d %v (asked for %q), want Alice's one session", code, body, usage.seriesPerson)
+	}
+	if code, _ := h.do("GET", "/api/usage/telemetry/sessions", nil, ""); code != 400 {
+		t.Errorf("without a person = %d, want 400", code)
+	}
+	if code, _ := h.do("GET", "/api/usage/telemetry/sessions?person=nobody", nil, ""); code != 404 {
+		t.Errorf("an unknown person = %d, want 404", code)
+	}
+	usage.sessions = nil
+	if _, body := h.do("GET", "/api/usage/telemetry/sessions?person="+aliceID, nil, ""); body["sessions"] == nil {
+		t.Errorf("no sessions = %v, want an empty list, never null", body)
+	}
+}
+
+// A session is read over its own span: a minute view of a session that ran days
+// ago starts where the client says it began, not two hours back from now.
+func TestASessionIsReadOverItsOwnSpan(t *testing.T) {
+	usage := &fakeUsage{}
+	h := newHarnessUsage(t, usage)
+	h.setUp()
+	aliceID, _ := h.join("Alice", "alice-mbp")
+	began := h.clock.Add(-72 * time.Hour).Add(17 * time.Second)
+	h.do("GET", "/api/usage/telemetry?res=minute&person="+aliceID+"&session=s1&since="+began.UTC().Format(time.RFC3339), nil, "")
+	if usage.seriesSess != "s1" || !usage.seriesFrom.Equal(began.Truncate(time.Minute)) {
+		t.Errorf("asked for session %q from %v, want s1 from %v", usage.seriesSess, usage.seriesFrom, began.Truncate(time.Minute))
+	}
+	h.do("GET", "/api/usage/telemetry?res=hour&person="+aliceID+"&session=s1", nil, "")
+	if !usage.seriesFrom.IsZero() {
+		t.Errorf("a session with no start given read from %v, want all of it", usage.seriesFrom)
+	}
+	if code, _ := h.do("GET", "/api/usage/telemetry?res=hour&session=s1", nil, ""); code != 400 {
+		t.Errorf("a session with no person = %d, want 400", code)
+	}
+}

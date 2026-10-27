@@ -26,19 +26,25 @@ import (
 // whole week — a size measured from the plan's own finished weeks, never
 // assumed — and whatever is left of Anthropic's figure is reported as what it
 // is: not metered.
+//
+// Which size, though, decides who gets blamed. Use the gateway cannot see (the
+// owner on claude.ai, the app, a machine outside the gateway) only ever makes a
+// week look smaller: the same metered tokens against a fuller reading. So the
+// size is the largest any watched week has shown, the cleanest evidence there
+// is, and every error left falls on the side of charging people less, never
+// more. Until a week has finished there is nothing to tell the people's use
+// apart from anyone else's, so no percentage is given at all: an earlier build
+// sized the plan from the running week itself, which by construction handed
+// every bit of outside use to whoever the gateway happened to see.
 
 // How a plan's size was learned, for the board to say so.
 const (
-	// ScaleHistory: the median of the plan's own finished, fully metered weeks.
+	// ScaleHistory: the largest size the plan's own watched weeks have shown —
+	// its finished weeks, and the running one once the gateway has watched it
+	// whole.
 	ScaleHistory = "history"
-	// ScaleThisWeek: no finished week to learn from yet, so this week itself —
-	// which is sound only because the gateway has watched the login since
-	// before the week began, so nothing it could have seen is missing. Nothing
-	// is then left over; use of the login outside the gateway, which no
-	// instrument here can see, would be absorbed into the size. That is why it
-	// gives way to the plan's finished weeks as soon as there are any.
-	ScaleThisWeek = "this-week"
-	// ScaleNone: neither. Tokens are shown exactly; no percentage is invented.
+	// ScaleNone: no finished week yet. Tokens are shown exactly; no percentage
+	// is invented.
 	ScaleNone = "none"
 )
 
@@ -48,9 +54,8 @@ const (
 	// the figure; from 25% up the rounding is at most a fifth of a point in
 	// the size per point of reading.
 	minScaleUtil = 0.25
-	// scaleWeeks is how many finished weeks the size is the median of: enough
-	// that one odd week (a model-heavy one, an outage) does not move it, few
-	// enough that a plan change is followed within a month.
+	// scaleWeeks is how many finished weeks the size is learned from, newest
+	// first: few enough that a plan change is followed within a month.
 	scaleWeeks = 4
 )
 
@@ -69,32 +74,37 @@ type WeekSample struct {
 // weekKey is the instant a window's samples are filed under.
 func weekKey(reset time.Time) time.Time { return reset.UTC().Round(time.Hour) }
 
-// weekScale is how many weighted tokens make a plan's whole week. It prefers the
-// plan's own finished weeks (samples, newest first — the window still running is
-// not one of them), because a finished week's reading is the fullest and its
-// tokens are all in. Only without any does it fall back to cur, the running week.
+// weekScale is how many weighted tokens make a plan's whole week: the largest
+// size its watched weeks have shown. Those are its newest finished weeks
+// (samples, newest first; the window still running is not one of them) and,
+// once there is at least one, the running week cur, which the caller passes
+// only when the gateway has watched all of it. Outside use only makes a week
+// look smaller, so the largest is the nearest to the plan's real size, and what
+// people's tokens do not explain is left over rather than handed to them.
+// Without a finished week there is nothing to learn from, and no size.
 func weekScale(samples []WeekSample, cur *WeekSample, now time.Time) (tokens float64, basis string) {
-	var sizes []float64
+	n := 0
 	for _, s := range samples {
-		if len(sizes) == scaleWeeks {
+		if n == scaleWeeks {
 			break
 		}
 		if s.Reset.After(now) || s.Util < minScaleUtil || s.Weighted <= 0 {
 			continue
 		}
-		sizes = append(sizes, s.Weighted/s.Util)
-	}
-	if n := len(sizes); n > 0 {
-		sort.Float64s(sizes)
-		if n%2 == 1 {
-			return sizes[n/2], ScaleHistory
+		n++
+		if size := s.Weighted / s.Util; size > tokens {
+			tokens = size
 		}
-		return (sizes[n/2-1] + sizes[n/2]) / 2, ScaleHistory
+	}
+	if n == 0 {
+		return 0, ScaleNone
 	}
 	if cur != nil && cur.Util >= minScaleUtil && cur.Weighted > 0 {
-		return cur.Weighted / cur.Util, ScaleThisWeek
+		if size := cur.Weighted / cur.Util; size > tokens {
+			tokens = size
+		}
 	}
-	return 0, ScaleNone
+	return tokens, ScaleHistory
 }
 
 // splitWeek turns each weighted-token figure into a share of the plan's week —
@@ -154,7 +164,7 @@ type weekShares struct {
 	// Tokens is how many weighted tokens make the plan's whole week; 0 when it
 	// is not yet known.
 	Tokens float64
-	Basis  string // ScaleHistory | ScaleThisWeek | ScaleNone
+	Basis  string // ScaleHistory | ScaleNone
 	// Since is when the gateway first metered this login — the earliest week it
 	// can account for. Zero if it never has.
 	Since time.Time

@@ -100,7 +100,7 @@ type AccountWindow struct {
 	// or it was used outside the gateway. It belongs to nobody on the card.
 	Unaccounted float64 `json:"unaccounted"`
 	// TokensPerWeek is how many weighted tokens make the plan's whole week, and
-	// WeekBasis how that was learned (ScaleHistory, ScaleThisWeek, ScaleNone).
+	// WeekBasis how that was learned (ScaleHistory, ScaleNone).
 	// MeteredSince is when the gateway first metered this login, whichever
 	// account IDs it has had.
 	TokensPerWeek float64   `json:"tokensPerWeek"`

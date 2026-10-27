@@ -161,6 +161,14 @@ func (s *Server) readTelemetry(w http.ResponseWriter, r *http.Request, personID 
 	}
 	now := s.now().UTC()
 	from := res.from(now, since)
+	if session != "" {
+		// A session is read over its own span, however long ago it ran: it is
+		// bounded by itself, not by how far back the grain's view reaches.
+		from = time.Time{}
+		if !since.IsZero() {
+			from = res.truncate(since)
+		}
+	}
 	points, err := s.usage.PersonSeries(r.Context(), personID, session, res, from)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "The usage could not be read: "+err.Error())
@@ -206,11 +214,32 @@ const (
 	sessionsLimit = 100
 )
 
+// handleSessions is the admin's read of one person's sessions, newest first, by
+// id: the panel never sees a title, so the board names a session by its id.
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	personID := r.URL.Query().Get("person")
+	if personID == "" {
+		fail(w, http.StatusBadRequest, "Sessions belong to one person; name the person.")
+		return
+	}
+	d, _ := s.store.Load()
+	if _, ok := d.Person(personID); !ok {
+		fail(w, http.StatusNotFound, "There is no such person.")
+		return
+	}
+	s.writeSessions(w, r, personID)
+}
+
 // handleOwnSessions is a machine's read of its own person's sessions, newest
 // first: what each Claude Code session came to, by id. The machine puts titles
 // on them; the panel never sees one.
 func (s *Server) handleOwnSessions(w http.ResponseWriter, r *http.Request, dev Device) {
-	list, err := s.usage.PersonSessions(r.Context(), dev.PersonID, s.now().Add(-sessionsReach), sessionsLimit)
+	s.writeSessions(w, r, dev.PersonID)
+}
+
+// writeSessions answers with a person's sessions from the last sessionsReach.
+func (s *Server) writeSessions(w http.ResponseWriter, r *http.Request, personID string) {
+	list, err := s.usage.PersonSessions(r.Context(), personID, s.now().Add(-sessionsReach), sessionsLimit)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "The sessions could not be read: "+err.Error())
 		return
