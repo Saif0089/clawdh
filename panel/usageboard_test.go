@@ -19,6 +19,7 @@ func TestTheBoardShowsEachAccountWithWhoRanItAndOnWhat(t *testing.T) {
 	spareID := h.contribute(bobTok, "Spare", "spare@example.com")
 
 	usage.windows = []AccountWindow{{AccountID: teamID, FiveH: 0.12, SevenD: 0.61, SevenDReset: h.clock.Add(50 * time.Hour), UpdatedAt: h.clock}}
+	usage.first = h.clock.Add(-30 * 24 * time.Hour) // metered since before this week began
 	usage.ranBy = map[string][]SubjectUsage{teamID: {
 		{SubjectID: bobID, Weighted: 300, ByModel: []ModelUsage{{Model: "claude-opus-5", Weighted: 200}, {Model: "claude-sonnet-5", Weighted: 100}}},
 		{SubjectID: aliceID, Weighted: 100, ByModel: []ModelUsage{{Model: "claude-sonnet-5", Weighted: 100}}},

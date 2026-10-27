@@ -251,7 +251,7 @@ function buildAccountCard(row) {
     setStatus(node.querySelector(".status-pill"), "linked");
     renderShareWindow(card, share);
   }
-  renderPeople(card.querySelector(".people"), share && share.window ? share.window.people : null);
+  renderPeople(card.querySelector(".people"), share && share.window ? share.window : null);
   return node;
 }
 
@@ -362,7 +362,7 @@ function refreshVisibleUsage(rows) {
     if (!card) continue;
     if (row.account) refreshUsage(row.account, card);
     else renderShareWindow(card, row.share);
-    renderPeople(card.querySelector(".people"), row.share && row.share.window ? row.share.window.people : null);
+    renderPeople(card.querySelector(".people"), row.share && row.share.window ? row.share.window : null);
   }
 }
 
@@ -556,10 +556,22 @@ function personColor(name) {
   return PERSON_HUES[h % PERSON_HUES.length];
 }
 
-function renderPeople(box, people) {
+// renderPeople draws who spent an account's week. win is the account's weekly
+// window as the panel sent it: its people, each with their share of the plan,
+// and what is left of the week that no metered request explains.
+//
+// That remainder is its own line and nobody's share. The panel used to divide it
+// across whoever it had metered, so after a login was re-added the person who
+// ran a little since read as having spent the week a colleague spent before.
+// While the plan's size is not yet known (weekBasis "none") there is no honest
+// percentage, so the rows carry their exact tokens instead.
+function renderPeople(box, win) {
   if (!box) return;
   box.replaceChildren();
+  const people = win && win.people;
   if (!people || !people.length) return;
+  // A panel older than this field never says; its numbers are as they were.
+  const sized = win.weekBasis !== "none";
   for (const p of people) {
     const row = document.createElement("div");
     row.className = "person";
@@ -574,20 +586,59 @@ function renderPeople(box, people) {
 
     const bar = document.createElement("span");
     bar.className = "person-bar";
-    const fill = document.createElement("span");
-    fill.className = "person-fill";
-    fill.style.width = Math.min(1, Math.max(0, p.ofWeekly || 0)) * 100 + "%";
-    fill.style.background = personColor(p.name || "");
-    bar.appendChild(fill);
+    if (sized) {
+      const fill = document.createElement("span");
+      fill.className = "person-fill";
+      fill.style.width = Math.min(1, Math.max(0, p.ofWeekly || 0)) * 100 + "%";
+      fill.style.background = personColor(p.name || "");
+      bar.appendChild(fill);
+    }
 
     const pct = document.createElement("span");
     pct.className = "person-pct";
-    pct.textContent = formatPercent((p.ofWeekly || 0) * 100);
+    pct.textContent = sized ? formatPercent((p.ofWeekly || 0) * 100) : formatTokens(p.weighted || 0);
 
     row.append(dot, name, bar, pct);
-    row.title = `${p.name} used ${pct.textContent} of this account's week`;
+    row.title = sized
+      ? `${p.name} used ${pct.textContent} of this account's week`
+      : `${p.name} ran ${formatTokens(p.weighted || 0)} tokens through this account`;
     box.appendChild(row);
   }
+
+  if (sized && win.unaccounted >= 0.01) {
+    const row = document.createElement("div");
+    row.className = "person person-unmetered";
+    const dot = document.createElement("span");
+    dot.className = "person-dot";
+    const name = document.createElement("span");
+    name.className = "person-name";
+    name.textContent = "Not metered";
+    const bar = document.createElement("span");
+    bar.className = "person-bar";
+    const fill = document.createElement("span");
+    fill.className = "person-fill";
+    fill.style.width = Math.min(1, win.unaccounted) * 100 + "%";
+    bar.appendChild(fill);
+    const pct = document.createElement("span");
+    pct.className = "person-pct";
+    pct.textContent = formatPercent(win.unaccounted * 100);
+    row.append(dot, name, bar, pct);
+    row.title = `${pct.textContent} of this week that no metered request explains — used before the gateway met this login, or outside it. It is nobody's share.`;
+    box.appendChild(row);
+  } else if (!sized) {
+    const note = document.createElement("div");
+    note.className = "person-note";
+    note.textContent = "Shares of the plan appear once the gateway has watched this login for a whole week. The token counts are exact.";
+    box.appendChild(note);
+  }
+}
+
+// formatTokens is a token count at a glance: 880M, 1.4B, 27k.
+function formatTokens(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + "B";
+  if (n >= 1e6) return Math.round(n / 1e6) + "M";
+  if (n >= 1e3) return Math.round(n / 1e3) + "k";
+  return String(Math.round(n));
 }
 
 function formatPercent(p) {

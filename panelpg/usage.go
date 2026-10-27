@@ -195,14 +195,16 @@ func (b *Backend) UsageBySubject(ctx context.Context, subjectType string, since 
 
 // AccountUsageByPerson breaks one account's usage down by person and model —
 // who ran it. It reads the raw events (the hourly counters are per-subject, so
-// they don't hold the person×account cross).
+// they don't hold the person×account cross). "One account" is the login: a
+// login that was removed and added again is the same login, and what was
+// metered under its earlier IDs is part of the same week (see sameLogin).
 func (b *Backend) AccountUsageByPerson(ctx context.Context, accountID string, since time.Time) ([]panel.SubjectUsage, error) {
 	rows, err := b.db.QueryContext(ctx, `
 		SELECT person_id, model,
 		       SUM(weighted_tokens), SUM(input_tokens), SUM(output_tokens),
 		       SUM(cache_creation_tokens), SUM(cache_read_tokens)
 		  FROM usage_events
-		 WHERE account_id = $1 AND at >= $2
+		 WHERE `+sameLogin+` AND at >= $2
 		 GROUP BY person_id, model`, accountID, since.UTC())
 	if err != nil {
 		return nil, err

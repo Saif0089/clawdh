@@ -56,6 +56,31 @@ type fakeUsage struct {
 	// window that the per-person percentages are a share of — so the single
 	// `since` above keeps the first (the period) and this keeps both.
 	asks map[string][]time.Time
+
+	// The weekly attribution's memory of a login: when the gateway first
+	// metered it (zero: never, so no week can be called fully metered), the
+	// finished weeks it has learned the plan's size from, what the board filed,
+	// and which login each account ID was linked to.
+	first    time.Time
+	samples  []WeekSample
+	recorded []WeekSample
+	links    map[string]string
+}
+
+func (f *fakeUsage) LinkLogin(_ context.Context, accountID, loginKey string) error {
+	if f.links == nil {
+		f.links = map[string]string{}
+	}
+	f.links[accountID] = loginKey
+	return nil
+}
+func (f *fakeUsage) FirstMeteredAt(context.Context, string) (time.Time, error) { return f.first, nil }
+func (f *fakeUsage) WeekSamples(context.Context, string, int) ([]WeekSample, error) {
+	return f.samples, nil
+}
+func (f *fakeUsage) RecordWeekSample(_ context.Context, _ string, s WeekSample) error {
+	f.recorded = append(f.recorded, s)
+	return nil
 }
 
 func (f *fakeUsage) asked(key string, since time.Time) {

@@ -99,20 +99,35 @@ function TokenRow({ name, detail, value, most }: { name: string; detail: string;
 // account for. The bar is drawn against the whole week, not against the other
 // people, so the rows stack up to the weekly meter above them and a short bar
 // means "barely touched it" rather than "less than the others".
-function ShareRow({ name, detail, ofWeekly, value }: { name: string; detail: string; ofWeekly: number; value: number }) {
+//
+// ofWeekly is null when the plan's size is not known yet: the tokens are exact,
+// but turning them into a share of the week would be a guess, so the row shows
+// the tokens alone. unmetered draws the part of the week no metered request
+// explains — hatched, with no tokens, because nobody's tokens are behind it.
+function ShareRow({ name, detail, ofWeekly, value, unmetered }: { name: string; detail: string; ofWeekly: number | null; value?: number; unmetered?: boolean }) {
+  const frac = ofWeekly ?? 0;
+  const title = unmetered
+    ? `${pct(frac)} of this week that no metered request explains`
+    : ofWeekly === null
+      ? `${name} · ${fmtNum(value || 0)} tokens`
+      : `${name} · ${pct(frac)} of this week · ${fmtNum(value || 0)} tokens`;
+  const fill: React.CSSProperties = unmetered
+    ? { background: `repeating-linear-gradient(135deg, ${SHARE} 0 3px, transparent 3px 7px)`, opacity: 0.55 }
+    : { background: SHARE };
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-x-4 py-2 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_96px]">
       <div className="col-start-1 row-start-1 min-w-0">
-        <div className="truncate text-[14.5px] font-medium text-ink">{name}</div>
+        <div className={`truncate text-[14.5px] font-medium ${unmetered ? "text-muted" : "text-ink"}`}>{name}</div>
         {detail && <div className="truncate text-[12px] text-faint">{detail}</div>}
       </div>
-      <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0"
-           title={`${name} · ${pct(ofWeekly)} of this week · ${fmtNum(value)} tokens`}>
-        <motion.div className="h-full rounded-full" style={{ background: SHARE }} initial={{ width: 0 }} animate={{ width: `${Math.min(ofWeekly, 1) * 100}%` }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }} />
+      <div className="col-span-2 col-start-1 row-start-2 mt-1.5 h-2 overflow-hidden rounded-full bg-sunken sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:mt-0" title={title}>
+        {ofWeekly !== null && (
+          <motion.div className="h-full rounded-full" style={fill} initial={{ width: 0 }} animate={{ width: `${Math.min(frac, 1) * 100}%` }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }} />
+        )}
       </div>
       <div className="col-start-2 row-start-1 text-right sm:col-start-3">
-        <span className="text-[14.5px] font-semibold tabular-nums text-ink">{pct(ofWeekly)}</span>
-        <span className="ml-2 text-[12px] tabular-nums text-faint">{fmtNum(value)}</span>
+        {ofWeekly !== null && <span className={`text-[14.5px] font-semibold tabular-nums ${unmetered ? "text-muted" : "text-ink"}`}>{pct(frac)}</span>}
+        {value !== undefined && <span className={`${ofWeekly !== null ? "ml-2 text-[12px] text-faint" : "text-[14.5px] font-semibold text-ink"} tabular-nums`}>{fmtNum(value)}</span>}
       </div>
     </div>
   );
@@ -120,6 +135,11 @@ function ShareRow({ name, detail, ofWeekly, value }: { name: string; detail: str
 
 function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
   const people = a.people || [];
+  // Shares of the plan exist only once its size is known (see weekScale); before
+  // that the rows carry exact tokens and the card says why there is no percentage.
+  const sized = a.weekBasis !== "none";
+  // Under a percent is rounding, not a gap worth a row.
+  const unmetered = a.hasReading && sized && (a.unaccounted || 0) >= 0.01;
   return (
     <div className="rounded-2xl border border-line bg-raised p-5">
       <div className="flex items-baseline justify-between gap-3">
@@ -157,7 +177,20 @@ function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
           <div className="mt-2 text-[13.5px] text-muted">Nobody ran it in the {PERIOD_LABEL[period]}.</div>
         ) : (
           <div className="mt-1 divide-y divide-line/60">
-            {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} ofWeekly={p.ofWeekly} value={p.weighted} />)}
+            {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} ofWeekly={a.hasReading && sized ? p.ofWeekly : null} value={p.weighted} />)}
+            {unmetered && (
+              <ShareRow
+                name="Not metered"
+                detail={a.meteredSince ? `the gateway has watched this login since ${when(a.meteredSince)}, or it was used outside it` : "used outside the gateway"}
+                ofWeekly={a.unaccounted}
+                unmetered
+              />
+            )}
+          </div>
+        )}
+        {a.hasReading && !sized && people.length > 0 && (
+          <div className="mt-2 text-[12.5px] leading-snug text-faint">
+            The gateway has not yet watched this login for a whole week, so a person's share of the plan cannot be worked out without guessing. The token counts are exact.
           </div>
         )}
       </div>

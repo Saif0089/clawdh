@@ -70,6 +70,9 @@ func Open(ctx context.Context, dsn string) (*Backend, error) {
 	if err := ensureWindowsSchema(ctx, db); err != nil {
 		return nil, err
 	}
+	if err := ensureLineageSchema(ctx, db); err != nil {
+		return nil, err
+	}
 	return &Backend{db: db}, nil
 }
 

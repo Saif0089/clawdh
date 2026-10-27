@@ -207,6 +207,13 @@ type ShareWindow struct {
 	// ask an admin to look at the panel for them. Nobody's own private login
 	// ever appears here — only accounts the panel is lending out.
 	People []SharePerson `json:"people,omitempty"`
+	// Unaccounted is the part of the plan's week, as a fraction of the plan, that
+	// no metered request explains — the login was used before the gateway had
+	// met it, or outside it. It is shown as its own line and is nobody's share.
+	// WeekBasis says whether the people's percentages could be worked out at all
+	// ("none": not yet, so only their tokens are exact).
+	Unaccounted float64 `json:"unaccounted,omitempty"`
+	WeekBasis   string  `json:"weekBasis,omitempty"`
 }
 
 // SharePerson is one person's slice of a shared account's real weekly

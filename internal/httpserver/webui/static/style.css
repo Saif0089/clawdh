@@ -499,6 +499,11 @@ select:disabled { opacity: .55; cursor: default; }
 .person-bar { height: 6px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
 .person-fill { display: block; height: 100%; border-radius: 4px; transition: width .5s var(--ease); }
 .person-pct { font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; min-width: 2.6rem; text-align: right; }
+/* The part of the week nobody's metered tokens explain: hollow and hatched, so it never reads as a person. */
+.person-unmetered .person-dot { background: transparent; border: 1px dashed var(--faint); box-sizing: border-box; }
+.person-unmetered .person-fill { background: repeating-linear-gradient(135deg, var(--faint) 0 3px, transparent 3px 7px); opacity: .6; }
+.person-unmetered .person-name { font-style: italic; }
+.person-note { font-size: 12px; color: var(--faint); line-height: 1.4; }
 @media (max-width: 560px) { .person { grid-template-columns: 8px minmax(0, 1fr) auto; } .person-bar { grid-column: 1 / -1; } }
 
 .usage-age { margin: 10px 0 0; color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }

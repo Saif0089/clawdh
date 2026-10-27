@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,13 +37,23 @@ type Server struct {
 	usage  UsageReader // nil for a file-backed panel with no metering DB
 	jobs   Jobs        // nil unless the remote-jobs channel is wired (the server panel)
 	now    func() time.Time
+	// memo is what the weekly attribution has already told the metering, so a
+	// board and thirty machines checking in every half minute do not repeat it.
+	memo struct {
+		sync.Mutex
+		linked  map[string]string     // account ID -> the login key it was linked under
+		sampled map[string]WeekSample // account ID -> the last weekly reading filed
+	}
 }
 
 // NewServer wires a panel over a store and its key. usage is the metering read
 // surface for the boards and jobs is the remote-jobs channel; pass nil for
 // either (a local, file-backed panel) to leave those routes unmounted.
 func NewServer(store *Store, secret *Secret, usage UsageReader, jobs Jobs) *Server {
-	return &Server{store: store, secret: secret, usage: usage, jobs: jobs, now: time.Now}
+	s := &Server{store: store, secret: secret, usage: usage, jobs: jobs, now: time.Now}
+	s.memo.linked = map[string]string{}
+	s.memo.sampled = map[string]WeekSample{}
+	return s
 }
 
 // Handler is the whole panel.

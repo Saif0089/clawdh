@@ -27,6 +27,13 @@ export interface AccountUsage {
   fiveHReset?: string; sevenDReset?: string; updatedAt: string; hasReading: boolean;
   people: { id: string; name: string; weighted: number; byModel: ModelUsage[]; ofWeekly: number }[];
   weighted: number; byModel: ModelUsage[];
+  // The part of the plan's week (0..1 of the plan) no metered request explains —
+  // the login was used before the gateway had met it, or outside the gateway. It
+  // belongs to nobody on the card. weekBasis says how the plan's size was learned
+  // ("history" | "this-week"); "none" means it is not known yet, so people carry
+  // exact tokens and no percentage. meteredSince is when the gateway first saw
+  // the login, whichever account IDs it has had.
+  unaccounted: number; tokensPerWeek: number; weekBasis: string; meteredSince?: string;
   // Per-model weekly allowances. Claude meters the top models separately, so an
   // account can have half its week left and almost none of its Fable — which is
   // the limit people actually hit.

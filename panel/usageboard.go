@@ -51,14 +51,20 @@ type PersonShare struct {
 	// account's token count says "you were 100% of who used it", which on a
 	// card beside a window meter reads as "you have used up the plan". One
 	// person working alone is always 100% of that, however little they ran.
-	// This is Anthropic's own weekly utilisation multiplied by that person's
-	// slice of the tokens metered inside the same window, so it answers the
-	// question people actually ask — how much of our week did you spend —
-	// and every percentage on the card means one thing.
+	// This is their weighted tokens over the number that make the plan's whole
+	// week (see weekScale), so it answers the question people actually ask —
+	// how much of our week did you spend — and every percentage on the card
+	// means one thing.
+	//
+	// It is only what this person's own metered tokens come to. Part of the
+	// week the gateway did not see is not theirs and is not divided among them;
+	// it is AccountWindow.Unaccounted.
 	//
 	// Zero when the gateway has no window reading yet, when the weekly reset
-	// time is unknown (there is then no window to scope the tokens to), or
-	// when nothing was metered in the window.
+	// time is unknown (there is then no window to scope the tokens to), when
+	// nothing was metered in the window, or when the plan's size is not yet
+	// known (AccountWindow.WeekBasis is "none") — the tokens beside it are
+	// exact either way.
 	OfWeekly float64 `json:"ofWeekly"`
 }
 
@@ -87,6 +93,17 @@ type AccountWindow struct {
 	People   []PersonShare `json:"people"`
 	Weighted float64       `json:"weighted"`
 	ByModel  []ModelUsage  `json:"byModel"`
+	// Unaccounted is the part of the plan's week, as a 0..1 fraction of the plan,
+	// that no metered request explains: the gateway had not met this login yet,
+	// or it was used outside the gateway. It belongs to nobody on the card.
+	Unaccounted float64 `json:"unaccounted"`
+	// TokensPerWeek is how many weighted tokens make the plan's whole week, and
+	// WeekBasis how that was learned (ScaleHistory, ScaleThisWeek, ScaleNone).
+	// MeteredSince is when the gateway first metered this login, whichever
+	// account IDs it has had.
+	TokensPerWeek float64   `json:"tokensPerWeek"`
+	WeekBasis     string    `json:"weekBasis"`
+	MeteredSince  time.Time `json:"meteredSince,omitzero"`
 }
 
 // UsageReader is the metering read surface a board is drawn from. The Postgres
@@ -109,6 +126,21 @@ type UsageReader interface {
 	// AccountWindows is each account's latest real 5h / weekly utilisation, from
 	// Anthropic's own numbers — what the board's bars and every ceiling read.
 	AccountWindows(ctx context.Context) ([]AccountWindow, error)
+
+	// The weekly attribution (see attribution.go). All of it is by login, not by
+	// account ID: a login removed and added again is a new account with the same
+	// email, and what was metered under its old ID is still its history.
+	//
+	// LinkLogin records that an account ID is the login under a key.
+	LinkLogin(ctx context.Context, accountID, loginKey string) error
+	// FirstMeteredAt is when the gateway first metered this login, across every
+	// ID it has had; zero if it never has.
+	FirstMeteredAt(ctx context.Context, accountID string) (time.Time, error)
+	// WeekSamples are the readings filed for this login's weekly windows, newest
+	// window first; RecordWeekSample files one, keeping the fullest reading a
+	// window ever had.
+	WeekSamples(ctx context.Context, accountID string, limit int) ([]WeekSample, error)
+	RecordWeekSample(ctx context.Context, accountID string, s WeekSample) error
 }
 
 // windowSince maps a window name to a rolling start: the last 24 hours, 7
@@ -221,46 +253,27 @@ func (s *Server) ranBy(ctx context.Context, d Data, accountID string, since time
 // span its weekly utilisation figure covers.
 const weeklyWindow = 7 * 24 * time.Hour
 
-// attributeWeekly works out how much of the account's real weekly allowance
-// each person accounts for (see PersonShare.OfWeekly).
+// attributeWeekly gives each person on an account's card their share of the
+// plan's real weekly allowance (see PersonShare.OfWeekly), and the card the part
+// of that week nobody's metered tokens explain (see weeklyShares).
 //
 // The tokens have to be counted over the same span the percentage covers, or
 // the two do not divide: the board's own period is the reader's choice — a
 // day, a week, a month — while the weekly utilisation is a fixed window ending
-// at Anthropic's reset. So this asks a second time, scoped to that window, and
-// splits the utilisation across the people in it.
+// at Anthropic's reset. So this asks a second time, scoped to that window.
 func (s *Server) attributeWeekly(ctx context.Context, d Data, row *AccountWindow) {
-	if !row.HasReading || len(row.People) == 0 {
+	if !row.HasReading {
 		return
 	}
+	week := s.weeklyShares(ctx, d, row.AccountID, row.SevenD, row.SevenDReset)
+	row.Unaccounted, row.TokensPerWeek, row.WeekBasis, row.MeteredSince = week.Unaccounted, week.Tokens, week.Basis, week.Since
 	share := map[string]float64{}
-	for _, p := range s.weeklyShares(ctx, d, row.AccountID, row.SevenD, row.SevenDReset) {
+	for _, p := range week.People {
 		share[p.ID] = p.OfWeekly
 	}
 	for i := range row.People {
 		row.People[i].OfWeekly = share[row.People[i].ID]
 	}
-}
-
-// weeklyShares is who spent an account's current week, and how much of the
-// whole plan each of them accounts for. Empty when there is no weekly reading
-// to divide, or nothing was metered inside the window.
-func (s *Server) weeklyShares(ctx context.Context, d Data, accountID string, sevenD float64, sevenDReset time.Time) []PersonShare {
-	if s.usage == nil || sevenD <= 0 || sevenDReset.IsZero() {
-		return nil
-	}
-	inWindow := s.ranBy(ctx, d, accountID, sevenDReset.Add(-weeklyWindow))
-	var total float64
-	for _, p := range inWindow {
-		total += p.Weighted
-	}
-	if total <= 0 {
-		return nil
-	}
-	for i := range inWindow {
-		inWindow[i].OfWeekly = sevenD * (inWindow[i].Weighted / total)
-	}
-	return inWindow
 }
 
 // accountTotals sums the people who ran an account into the account's own

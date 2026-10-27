@@ -9,8 +9,10 @@ import (
 // (limits) are configuration, not readings, and stay; so does the panel's
 // own state. account_windows holds only each login's latest reading and is
 // re-read by the poller within minutes, so clearing it costs nothing and
-// leaves no stale % on the board.
-var meteringTables = []string{"usage_events", "usage_counters", "account_windows"}
+// leaves no stale % on the board. week_samples are ratios of the readings and
+// events above, so they go with them; account_lineage says which IDs are one
+// login — configuration, not a reading — and stays.
+var meteringTables = []string{"usage_events", "usage_counters", "account_windows", "week_samples"}
 
 // MeteringCounts is how many rows each metering table holds, keyed by table —
 // what a wipe shows before it is confirmed, and after.
