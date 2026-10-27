@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,6 +328,28 @@ func (c *Client) CheckIn(ctx context.Context) (Change, error) {
 	return change, nil
 }
 
+// Telemetry reads this machine's own person's usage over time from the panel:
+// the series the board shows for them, at the grain asked (see Resolutions).
+// since is the end of what the caller already holds, so a page that syncs
+// every few seconds is sent one bucket and not the whole view; the zero time
+// asks for the whole view. The panel answers only for the person this machine
+// is enrolled as, so nobody else's usage is reachable this way.
+func (c *Client) Telemetry(ctx context.Context, res string, since time.Time) (Telemetry, error) {
+	var out Telemetry
+	if !c.Config.Configured() {
+		return out, errors.New("This machine isn't connected to a panel yet.")
+	}
+	u := c.Config.Server + "/api/v1/telemetry?res=" + url.QueryEscape(res)
+	if !since.IsZero() {
+		u += "&since=" + url.QueryEscape(since.UTC().Format(time.RFC3339))
+	}
+	err := getJSON(ctx, c.http(), u, c.Config.Token, &out)
+	if errors.Is(err, errUnauthorized) {
+		return out, ErrNotEnrolled
+	}
+	return out, err
+}
+
 // Contributed is the panel's answer to a login handed up: the account it is
 // now (or already was — Refreshed), by id and name.
 type Contributed struct {
@@ -487,6 +510,40 @@ func diffShares(prev, next []GatewayShare) Change {
 }
 
 var errUnauthorized = errors.New("unauthorized")
+
+// getJSON is post for a read: the panel's answer decoded into out. A reply that
+// carries an "error" is that error, in the panel's own words.
+func getJSON(ctx context.Context, httpc *http.Client, url, bearer string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return errUnauthorized
+	}
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("the panel answered %s", resp.Status)
+	}
+	if resp.StatusCode >= 400 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&e)
+		if e.Error != "" {
+			return errors.New(e.Error)
+		}
+		return fmt.Errorf("the panel answered %s", resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
 
 func post(ctx context.Context, httpc *http.Client, url, bearer string, body, out any) error {
 	var buf bytes.Buffer

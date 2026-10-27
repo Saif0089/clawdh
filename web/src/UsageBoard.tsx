@@ -37,7 +37,7 @@ function modelSplit(models: ModelUsage[]): string {
 
 // --- controls --------------------------------------------------------------
 
-function Seg<T extends string>({ value: v, onChange, options }: { value: T; onChange: (v: T) => void; options: [T, string][] }) {
+export function Seg<T extends string>({ value: v, onChange, options }: { value: T; onChange: (v: T) => void; options: [T, string][] }) {
   return (
     <div className="inline-flex rounded-xl border border-line bg-sunken p-1">
       {options.map(([opt, label]) => (
@@ -207,6 +207,11 @@ export function UsageBoard() {
   const [accounts, setAccounts] = useState<AccountUsage[]>([]);
   const [people, setPeople] = useState<Subject[]>([]);
   const [asOf, setAsOf] = useState("");
+  // Usage that was metered but has no card to sit on: people since removed, and
+  // logins the panel has no trace of. Shown as what it is, never folded into
+  // someone's row.
+  const [removed, setRemoved] = useState(0);
+  const [unlinked, setUnlinked] = useState(0);
   const [err, setErr] = useState("");
   const periodRef = useRef(period);
   periodRef.current = period;
@@ -216,7 +221,7 @@ export function UsageBoard() {
     const load = () => {
       const asked = periodRef.current;
       Promise.all([
-        api<{ accounts: AccountUsage[]; asOf: string }>("GET", `/api/usage/accounts?window=${asked}`),
+        api<{ accounts: AccountUsage[]; asOf: string; unlinkedAccounts?: number }>("GET", `/api/usage/accounts?window=${asked}`),
         api<Board>("GET", `/api/usage/people?window=${asked}`),
       ])
         .then(([a, p]) => {
@@ -224,6 +229,8 @@ export function UsageBoard() {
           setErr("");
           setAccounts(a.accounts || []);
           setPeople(p.subjects || []);
+          setRemoved(p.removedPeople || 0);
+          setUnlinked(a.unlinkedAccounts || 0);
           setAsOf(a.asOf || "");
         })
         .catch((e) => live && setErr(e.message)); // keep last-known data on a transient failure
@@ -236,7 +243,7 @@ export function UsageBoard() {
     };
   }, [period]);
 
-  const teamTotal = people.reduce((a, p) => a + p.weighted, 0);
+  const teamTotal = people.reduce((a, p) => a + p.weighted, 0) + removed;
   const ranked = [...people].sort((a, b) => b.weighted - a.weighted);
   const fresh = agoFrom(asOf);
 
@@ -281,11 +288,17 @@ export function UsageBoard() {
             </div>
             <div className="divide-y divide-line/60">
               {ranked.map((p) => <TokenRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} value={p.weighted} most={ranked[0]?.weighted || 0} />)}
+              {removed > 0 && <TokenRow name="People since removed" detail="metered, with no card to show it on" value={removed} most={ranked[0]?.weighted || 0} />}
             </div>
           </div>
         </>
       )}
 
+      {unlinked > 0 && (
+        <div className="mt-3 text-[12.5px] text-muted">
+          <span className="tabular-nums text-ink">{fmtNum(unlinked)}</span> weighted tokens in the {PERIOD_LABEL[period]} ran on logins the panel no longer has any trace of. They are counted in the people above and sit on no account card.
+        </div>
+      )}
       <div className="mt-3 text-[12px] text-faint">Every % is a share of that account's real weekly allowance, as Claude reports it.</div>
     </div>
   );

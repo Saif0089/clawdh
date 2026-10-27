@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -70,6 +71,46 @@ func (s *Server) currentPanelStatus() panelStatus {
 
 func (s *Server) handlePanelStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.currentPanelStatus())
+}
+
+// handleTelemetry is this person's own usage over time — seconds, minutes,
+// hours, days, weeks, months, all of it — read from the panel with this
+// machine's enrolment. The page asks every few seconds for the fine grains, and
+// sends the end of what it already holds, so each answer is the newest bucket
+// and not the whole view. The panel answers only for the person this machine is
+// enrolled as, so there is nothing here to point at anyone else.
+func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	res := r.URL.Query().Get("res")
+	if _, ok := panel.ResolutionByName(res); !ok {
+		writeError(w, http.StatusBadRequest, "That is not a grain the page has. Use second, minute, hour, day, week, month or all.")
+		return
+	}
+	var since time.Time
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since is a time like 2026-10-27T12:00:00Z.")
+			return
+		}
+		since = t
+	}
+	client, err := s.panelClient()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	out, err := client.Telemetry(ctx, res, since)
+	if errors.Is(err, panel.ErrNotEnrolled) {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "The panel could not be reached: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handlePanelConnect enrols this machine with a panel from the page: it takes

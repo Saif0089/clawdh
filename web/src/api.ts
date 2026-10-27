@@ -18,7 +18,16 @@ export interface ModelUsage {
   input: number; output: number; cacheCreation: number; cacheRead: number;
 }
 export interface Subject { id: string; name: string; weighted: number; byModel: ModelUsage[]; }
-export interface Board { window: string; asOf: string; subjects: Subject[] }
+export interface Board {
+  window: string; asOf: string; subjects: Subject[];
+  // What people since removed from the panel ran in the period: metered, so it is
+  // counted, though it has no card.
+  removedPeople?: number;
+}
+// One bucket of a person's usage over time, and the series of them. requests is
+// only present at the grains cut from individual requests (seconds, minutes).
+export interface SeriesPoint { t: string; weighted: number; tokens: number; requests?: number }
+export interface Telemetry { res: string; person?: string; bucketSeconds: number; from: string; until: string; points: SeriesPoint[] }
 // One account on the usage board: its real rolling windows (Claude's own %;
 // hasReading is false until the gateway has read the login once), and for the
 // asked period who ran it, each with their model split, plus the account's totals.

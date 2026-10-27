@@ -65,6 +65,22 @@ type fakeUsage struct {
 	samples  []WeekSample
 	recorded []WeekSample
 	links    map[string]string
+
+	// The usage-over-time reads: what a series request is answered with, and what
+	// it asked (the person, the grain, where it started).
+	series       []SeriesPoint
+	seriesPerson string
+	seriesRes    string
+	seriesFrom   time.Time
+	unlinked     float64
+}
+
+func (f *fakeUsage) PersonSeries(_ context.Context, personID string, res Resolution, from time.Time) ([]SeriesPoint, error) {
+	f.seriesPerson, f.seriesRes, f.seriesFrom = personID, res.Name, from
+	return f.series, nil
+}
+func (f *fakeUsage) UnlinkedAccountUsage(context.Context, []string, time.Time) (float64, error) {
+	return f.unlinked, nil
 }
 
 func (f *fakeUsage) LinkLogin(_ context.Context, accountID, loginKey string) error {

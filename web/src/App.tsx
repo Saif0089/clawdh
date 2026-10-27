@@ -5,13 +5,14 @@ import { ClawIntro } from "./ClawIntro";
 import { Tour, HelpFab, adminSteps, gateSteps, introSeen, markIntroSeen } from "./Tour";
 import { UsageBoard } from "./UsageBoard";
 import { Quotas } from "./Quotas";
+import { TelemetryTab } from "./Telemetry";
 import { useDialog } from "./Dialog";
 import { DeviceJobs } from "./DeviceJobs";
 import { when, untilExpiry, accessLeft, dateAndTime } from "./format";
 
 type Ask = ReturnType<typeof useDialog>["ask"];
 
-type Tab = "accounts" | "people" | "usage" | "quotas" | "activity";
+type Tab = "accounts" | "people" | "usage" | "telemetry" | "quotas" | "activity";
 type Status = "loading" | "setup" | "gate" | "in";
 
 export default function App() {
@@ -246,7 +247,7 @@ function Shell({ tab, setTab, actor, tag, onSignOut }: { tab: Tab; setTab: (t: T
     }
     onSignOut();
   };
-  const tabs: [Tab, string][] = [["accounts", "Accounts"], ["people", "People"], ["usage", "Usage"], ["quotas", "Quotas"], ["activity", "Activity"]];
+  const tabs: [Tab, string][] = [["accounts", "Accounts"], ["people", "People"], ["usage", "Usage"], ["telemetry", "Telemetry"], ["quotas", "Quotas"], ["activity", "Activity"]];
   return (
     <div className="mx-auto max-w-5xl px-5 py-6 pb-24 sm:px-8">
       <header className="wordmark flex items-center gap-2.5 pb-4">
@@ -270,7 +271,7 @@ function Shell({ tab, setTab, actor, tag, onSignOut }: { tab: Tab; setTab: (t: T
         ))}
       </nav>
       <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="pt-8">
-        {tab === "usage" ? <UsageBoard /> : tab === "quotas" ? <Quotas /> : <PanelTab tab={tab} />}
+        {tab === "usage" ? <UsageBoard /> : tab === "telemetry" ? <TelemetryTab /> : tab === "quotas" ? <Quotas /> : <PanelTab tab={tab} />}
       </motion.div>
     </div>
   );

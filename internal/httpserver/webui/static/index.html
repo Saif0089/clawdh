@@ -160,6 +160,22 @@
     </div>
   </section>
 
+  <!-- Your own usage over time, from the gateway's metering. Only shown once this
+       machine is connected to a panel, which is where the numbers live. -->
+  <section id="telemetry-block" class="block" hidden>
+    <div class="block-head">
+      <h2>Your usage</h2>
+      <p class="block-sub">What the gateway metered for you, as finely as a second. Nothing here is estimated.</p>
+    </div>
+    <div id="tel-grains" class="tel-grains" role="group" aria-label="How finely to cut your usage"></div>
+    <p id="tel-err" class="row-err" hidden></p>
+    <div class="tel-card">
+      <div id="tel-stats" class="tel-stats"></div>
+      <div id="tel-plot" class="tel-plot"></div>
+      <p id="tel-note" class="tel-note"></p>
+    </div>
+  </section>
+
   <!-- Remote help: what the panel may ask of this machine, and your say over it.
        Only shown once this machine is connected to a panel. -->
   <section id="remote-block" class="block" hidden>
@@ -340,6 +356,7 @@
 <script src="app.js"></script>
 <script src="sessions.js"></script>
 <script src="remote.js"></script>
+<script src="telemetry.js"></script>
 <script src="tour.js"></script>
 </body>
 </html>

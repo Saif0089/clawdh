@@ -141,6 +141,15 @@ type UsageReader interface {
 	// window ever had.
 	WeekSamples(ctx context.Context, accountID string, limit int) ([]WeekSample, error)
 	RecordWeekSample(ctx context.Context, accountID string, s WeekSample) error
+
+	// PersonSeries is one person's usage cut into buckets from `from` on — or
+	// everyone's, for an empty person — at the grain a Resolution names. Only
+	// buckets with something in them come back. See telemetry.go.
+	PersonSeries(ctx context.Context, personID string, res Resolution, from time.Time) ([]SeriesPoint, error)
+	// UnlinkedAccountUsage is the weighted tokens metered since a time on account
+	// IDs that are neither in currentIDs nor an earlier ID of one of those
+	// logins: usage on a login the panel no longer has any trace of.
+	UnlinkedAccountUsage(ctx context.Context, currentIDs []string, since time.Time) (float64, error)
 }
 
 // windowSince maps a window name to a rolling start: the last 24 hours, 7
@@ -171,10 +180,14 @@ func (s *Server) handlePeopleUsage(w http.ResponseWriter, r *http.Request) {
 	d, _ := s.store.Load() // names for the IDs; a read failure just leaves them blank
 
 	subjects := make([]map[string]any, 0, len(rows))
+	// What a removed person ran has no card to hang on, but it was metered and it
+	// is not nobody's: it is reported as its own figure so the list still adds up.
+	var removed float64
 	for _, row := range rows {
 		name, ok := s.lookupSubject(d, "person", row.SubjectID)
 		if !ok {
-			continue // a removed person — no ghost card
+			removed += row.Weighted // a removed person — no ghost card, but not lost either
+			continue
 		}
 		subjects = append(subjects, map[string]any{
 			"id":       row.SubjectID,
@@ -185,10 +198,11 @@ func (s *Server) handlePeopleUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	asOf, _ := s.usage.LatestEventAt(ctx)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"window":   windowName,
-		"since":    since.UTC(),
-		"asOf":     asOf.UTC(),
-		"subjects": subjects,
+		"window":        windowName,
+		"since":         since.UTC(),
+		"asOf":          asOf.UTC(),
+		"subjects":      subjects,
+		"removedPeople": removed,
 	})
 }
 
@@ -224,8 +238,16 @@ func (s *Server) handleAccountsUsage(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row)
 	}
 	asOf, _ := s.usage.LatestEventAt(ctx)
+	// Usage on a login the panel no longer has any trace of: metered, so counted,
+	// but on no card. A re-added login is not here — its earlier IDs are part of it.
+	ids := make([]string, 0, len(d.Accounts))
+	for _, a := range d.Accounts {
+		ids = append(ids, a.ID)
+	}
+	unlinked, _ := s.usage.UnlinkedAccountUsage(ctx, ids, since)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"window": windowName, "since": since.UTC(), "asOf": asOf.UTC(), "accounts": out,
+		"unlinkedAccounts": unlinked,
 	})
 }
 

@@ -81,6 +81,10 @@ func (s *Server) Handler() http.Handler {
 	if s.usage != nil {
 		mux.HandleFunc("GET /api/usage/people", s.admin(s.handlePeopleUsage))
 		mux.HandleFunc("GET /api/usage/accounts", s.admin(s.handleAccountsUsage))
+		mux.HandleFunc("GET /api/usage/telemetry", s.admin(s.handleTelemetry))
+		// A machine reads its own person's usage over time with its enrolment,
+		// the same credential it checks in with.
+		mux.HandleFunc("GET /api/v1/telemetry", s.device(s.handleOwnTelemetry))
 		mux.HandleFunc("GET /api/limits", s.admin(s.handleListLimits))
 		mux.HandleFunc("POST /api/limits", s.admin(s.handleSetLimit))
 		mux.HandleFunc("DELETE /api/limits/{id}", s.admin(s.handleDeleteLimit))

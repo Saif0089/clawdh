@@ -32,6 +32,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/update", s.handleUpdateNow)
 
 	mux.HandleFunc("GET /api/panel", s.handlePanelStatus)
+	mux.HandleFunc("GET /api/telemetry", s.handleTelemetry)
 	mux.HandleFunc("POST /api/panel/connect", s.handlePanelConnect)
 	mux.HandleFunc("POST /api/panel/disconnect", s.handlePanelDisconnect)
 	mux.HandleFunc("GET /api/remote", s.handleRemote)
