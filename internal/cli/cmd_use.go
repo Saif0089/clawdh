@@ -167,39 +167,12 @@ func sharedTarget(gatewayURL, key, label string) sessionTarget {
 	strip := append([]string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", switching.HandoffEnvVar, sharedSessionEnvVar,
 		statusline.VersionEnvVar, statusline.AccountEnvVar},
 		accounts.ProviderOverrideVars()...)
-	base := accountsEnvWithout(os.Environ(), strip...)
-	env := append(base,
+	env := append(accountsEnvWithout(os.Environ(), strip...),
 		"ANTHROPIC_BASE_URL="+strings.TrimRight(gatewayURL, "/"),
 		"ANTHROPIC_AUTH_TOKEN="+key,
 		sharedSessionEnvVar+"="+label,
 	)
-	env = append(env, subscriptionCache(base)...)
 	return sessionTarget{display: label, env: env, local: false, shareKey: key}
-}
-
-// cacheChoices are the variables a person sets to decide Claude Code's prompt
-// cache themselves; any one of them is their call, and clawdh leaves it alone.
-var cacheChoices = []string{
-	"ENABLE_PROMPT_CACHING_1H", "CLAUDE_CODE_PROMPT_CACHE_TTL", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL",
-	"FORCE_PROMPT_CACHING_5M", "DISABLE_PROMPT_CACHING",
-}
-
-// subscriptionCache keeps a shared session's prompt cache for an hour, as it is
-// for the same login signed in directly. Claude Code gives a claude.ai login the
-// hour by itself, but a session pointed at the gateway with a token looks to it
-// like a pay-as-you-go key and falls to five minutes: every pause longer than
-// that (reading what Claude did, a build, a test run) and the next request
-// writes the whole conversation into the cache again, at 12.5 times the cost of
-// reading it. On 2026-10-28 that was 43-61% of some people's usage.
-func subscriptionCache(env []string) []string {
-	for _, kv := range env {
-		for _, name := range cacheChoices {
-			if strings.HasPrefix(kv, name+"=") {
-				return nil
-			}
-		}
-	}
-	return []string{"ENABLE_PROMPT_CACHING_1H=1"}
 }
 
 // resolveHandoffTarget turns a staged switch into the next target: a gateway
