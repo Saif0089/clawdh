@@ -266,7 +266,7 @@ func jobSessions() string {
 		Note     string             `json:"note"`
 	}{Note: "Only sessions that ran through a shared account are listed; a person's own sessions are never shown."}
 	for _, f := range files {
-		out.Sessions = append(out.Sessions, sharedSessionOut{ID: f.id, Share: f.share, Project: f.project, Size: f.size, Mod: f.mod.Format("2006-01-02 15:04")})
+		out.Sessions = append(out.Sessions, sharedSessionOut{ID: f.id, Share: f.share, Project: f.project, Size: f.size, Mod: f.mod.UTC().Format(time.RFC3339)})
 	}
 	b, _ := json.Marshal(out)
 	return string(b)

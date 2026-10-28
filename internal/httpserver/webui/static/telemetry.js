@@ -184,10 +184,14 @@
     var words = { minute: "per minute", hour: "per hour", day: "per day" };
     return { grain: sessionGrain, from: startOf(first, sessionGrain), until: last, points: sessionPts, title: "This session · " + words[sessionGrain] };
   }
+  // 12-hour with am/pm in the viewer's own zone, like every other time here.
+  function clock12(d) {
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
+  }
   function label(ms, g) {
     var d = new Date(ms);
-    if (g === "minute") return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-    if (g === "hour") return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    if (g === "minute") return clock12(d);
+    if (g === "hour") return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + clock12(d);
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   }
   function niceMax(v) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Panel, SeriesPoint, SessionUsage, Telemetry as Tel } from "./api";
-import { fmtNum } from "./format";
+import { clockTime, dateAndTime, fmtNum } from "./format";
 
 // Usage over time, for everyone or one person, readable at a glance: four
 // figures, what the usage went on, one chart, and the person's sessions. The
@@ -75,13 +75,14 @@ function span(ms: number): string {
   return `${Math.round(h / 24)} days`;
 }
 function when(ms: number): string {
-  const d = new Date(ms);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return dateAndTime(new Date(ms));
 }
 function label(ms: number, g: Grain): string {
   const d = new Date(ms);
-  if (g === "minute") return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  if (g === "hour") return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  if (g === "minute") return clockTime(d);
+  if (g === "hour") return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + clockTime(d);
+  // Days are counted from midnight UTC, so the date is read in UTC to name
+  // the day the bucket holds.
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 function niceMax(v: number): number {

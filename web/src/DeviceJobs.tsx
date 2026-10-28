@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { api, Job } from "./api";
-import { when } from "./format";
+import { dateAndTime, when } from "./format";
 import { CopyButton, Mono } from "./Copy";
 
 // The remote-help panel for one machine. It can be asked three read-only
@@ -231,7 +231,7 @@ function SessionsView({ raw, onTranscript }: { raw: string; onTranscript: (id: s
               <div className="min-w-0">
                 <Mono text={s.id} className="max-w-full" />
                 <div className="mt-0.5 truncate text-[12.5px] text-faint" title={s.project}>
-                  {s.project} · {s.mod}
+                  {s.project} · {dateAndTime(s.mod) || s.mod}
                 </div>
               </div>
               <span className="w-fit rounded-full border border-primary/40 bg-primary/10 px-2 py-[1px] text-[12px] text-primary">{s.share}</span>
