@@ -60,3 +60,18 @@ func TestCostTracksTokens(t *testing.T) {
 		t.Errorf("opus 1M output cost = %v, want ~25", m.CostUSD)
 	}
 }
+
+// A one-hour cache write is priced at 2x input, a five-minute one at 1.25x.
+func TestHourCacheWritesCostMore(t *testing.T) {
+	five := Measure("claude-sonnet-4-5", Usage{CacheCreation: 1000})
+	mixed := Measure("claude-sonnet-4-5", Usage{CacheCreation: 1000, CacheCreation1h: 400})
+	if five.Weighted != 1250 {
+		t.Errorf("five-minute write = %v, want 1250", five.Weighted)
+	}
+	if mixed.Weighted != 600*1.25+400*2 {
+		t.Errorf("mixed write = %v, want %v", mixed.Weighted, 600*1.25+400*2)
+	}
+	if got := WeightedParts("claude-sonnet-4-5", Usage{CacheCreation: 1000, CacheCreation1h: 400}).Sum(); got != mixed.Weighted {
+		t.Errorf("parts sum %v != weighted %v", got, mixed.Weighted)
+	}
+}

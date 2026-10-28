@@ -17,7 +17,10 @@ type Usage struct {
 	Input         int64
 	Output        int64
 	CacheCreation int64 // cache_creation_input_tokens (written to cache)
-	CacheRead     int64 // cache_read_input_tokens (served from cache)
+	// CacheCreation1h is the part of CacheCreation written to the one-hour
+	// cache (cache_creation.ephemeral_1h_input_tokens), which is priced higher.
+	CacheCreation1h int64
+	CacheRead       int64 // cache_read_input_tokens (served from cache)
 }
 
 // rate is one model's pricing, in USD per million tokens. Weight is the same
@@ -32,11 +35,13 @@ type rate struct {
 const baselineInputUSD = 3.0
 
 // cacheCreationMult / cacheReadMult follow Anthropic's cache pricing: writing to
-// the cache costs 1.25x the input rate, reading from it 0.1x.
+// the five-minute cache costs 1.25x the input rate, to the one-hour cache 2x,
+// and reading from either 0.1x.
 const (
-	cacheCreationMult = 1.25
-	cacheReadMult     = 0.10
-	outputMult        = 5.0 // output is ~5x input across the line ($15 vs $3, etc.)
+	cacheCreationMult   = 1.25
+	cacheCreation1hMult = 2.0
+	cacheReadMult       = 0.10
+	outputMult          = 5.0 // output is ~5x input across the line ($15 vs $3, etc.)
 )
 
 // rates maps a model family (matched by the longest ID prefix below) to its
@@ -97,7 +102,7 @@ func Measure(model string, u Usage) Measured {
 	const perMillion = 1_000_000.0
 	cost := float64(u.Input)/perMillion*r.inUSD +
 		float64(u.Output)/perMillion*r.outUSD +
-		float64(u.CacheCreation)/perMillion*r.inUSD*cacheCreationMult +
+		cacheWriteUnits(u)/perMillion*r.inUSD +
 		float64(u.CacheRead)/perMillion*r.inUSD*cacheReadMult
 
 	return Measured{Weighted: weighted, CostUSD: cost, Known: true}
@@ -130,7 +135,14 @@ func partsAt(r rate, u Usage) Parts {
 	return Parts{
 		Input:         float64(u.Input) * r.weight,
 		Output:        float64(u.Output) * outputMult * r.weight,
-		CacheCreation: float64(u.CacheCreation) * cacheCreationMult * r.weight,
+		CacheCreation: cacheWriteUnits(u) * r.weight,
 		CacheRead:     float64(u.CacheRead) * cacheReadMult * r.weight,
 	}
+}
+
+// cacheWriteUnits is a usage's cache writes in input tokens: the five-minute
+// part at 1.25x, the one-hour part at 2x.
+func cacheWriteUnits(u Usage) float64 {
+	hour := min(max(u.CacheCreation1h, 0), u.CacheCreation)
+	return float64(u.CacheCreation-hour)*cacheCreationMult + float64(hour)*cacheCreation1hMult
 }

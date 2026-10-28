@@ -17,8 +17,10 @@ type Event struct {
 	Input         int64
 	Output        int64
 	CacheCreation int64
-	CacheRead     int64
-	RequestID     string
+	// CacheCreation1h is the part of CacheCreation kept for an hour.
+	CacheCreation1h int64
+	CacheRead       int64
+	RequestID       string
 	// SessionID is the Claude Code session the request came from, as it names
 	// itself (X-Claude-Code-Session-Id); empty for a client that does not say.
 	SessionID string
@@ -38,6 +40,9 @@ type respUsage struct {
 	Output        int64 `json:"output_tokens"`
 	CacheCreation int64 `json:"cache_creation_input_tokens"`
 	CacheRead     int64 `json:"cache_read_input_tokens"`
+	CacheBy       struct {
+		Hour int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 // usageScanner pulls model + token usage out of a Claude response as its bytes
@@ -108,6 +113,7 @@ func (s *usageScanner) processLine(line []byte) {
 			s.model = ev.Message.Model
 			s.u.Input = ev.Message.Usage.Input
 			s.u.CacheCreation = ev.Message.Usage.CacheCreation
+			s.u.CacheBy = ev.Message.Usage.CacheBy
 			s.u.CacheRead = ev.Message.Usage.CacheRead
 			if ev.Message.Usage.Output > 0 {
 				s.u.Output = ev.Message.Usage.Output
@@ -174,6 +180,7 @@ func (b *meteringBody) emit() {
 	ev.Input = b.scan.u.Input
 	ev.Output = b.scan.u.Output
 	ev.CacheCreation = b.scan.u.CacheCreation
+	ev.CacheCreation1h = b.scan.u.CacheBy.Hour
 	ev.CacheRead = b.scan.u.CacheRead
 	b.rec.Record(ev)
 }

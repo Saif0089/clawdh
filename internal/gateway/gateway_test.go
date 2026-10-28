@@ -587,3 +587,65 @@ func TestSessionIDIsKeptOnlyWhenItLooksLikeOne(t *testing.T) {
 		}
 	}
 }
+
+// A shared session is the same subscription a signed-in Claude Code would use,
+// so it gets the same hour-long prompt cache: every bare breakpoint Claude Code
+// placed is kept for an hour and the extended-TTL beta is named. Nothing else in
+// the body moves.
+func TestGatewayKeepsThePromptCacheForAnHour(t *testing.T) {
+	var gotBody, gotBeta string
+	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody, gotBeta = string(b), r.Header.Get("anthropic-beta")
+		io.WriteString(w, `{"type":"message"}`)
+	}))
+	defer anthropic.Close()
+	h := New(fakeUpstream{key: "member-key", token: "T"}, nil, nil)
+	srv := httptest.NewServer(rewriteHost(h, anthropic.Listener.Addr().String()))
+	defer srv.Close()
+
+	send := func(path, body string) {
+		t.Helper()
+		gotBody, gotBeta = "", ""
+		req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer member-key")
+		req.Header.Set("anthropic-beta", "claude-code-20250219")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+
+	bare := `{"system":[{"type":"text","text":"a \"cache_control\":{\"type\":\"ephemeral\"}","cache_control":{"type":"ephemeral"}}],` +
+		`"messages":[{"role":"user","content":[{"type":"text","text":"b","cache_control":{"type":"ephemeral"}}]}]}`
+	send("/v1/messages", bare)
+	want := strings.ReplaceAll(bare, `"cache_control":{"type":"ephemeral"}`, `"cache_control":{"type":"ephemeral","ttl":"1h"}`)
+	if gotBody != want {
+		t.Errorf("body =\n%s\nwant\n%s", gotBody, want)
+	}
+	if !strings.Contains(gotBeta, hourCacheBeta) || !strings.Contains(gotBeta, "claude-code-20250219") {
+		t.Errorf("anthropic-beta = %q, want the extended-TTL beta added to the client's", gotBeta)
+	}
+
+	// A request that chose a lifetime for any breakpoint is left as it is.
+	chose := `{"system":[{"cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"cache_control":{"type":"ephemeral"}}]}`
+	send("/v1/messages", chose)
+	if gotBody != chose || strings.Contains(gotBeta, hourCacheBeta) {
+		t.Errorf("a request with its own lifetime was changed: %s (beta %q)", gotBody, gotBeta)
+	}
+	// Token counting is not a message.
+	send("/v1/messages/count_tokens", bare)
+	if gotBody != bare {
+		t.Errorf("count_tokens body was changed: %s", gotBody)
+	}
+}
+
+// The meter reads how much of a cache write went to the one-hour cache.
+func TestGatewayMetersTheHourCachePart(t *testing.T) {
+	var s usageScanner
+	s.feed([]byte(`data: {"type":"message_start","message":{"model":"claude-opus-5-5","usage":{"input_tokens":3,"cache_creation_input_tokens":900,"cache_read_input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":800}}}}` + "\n"))
+	if !s.finish() || s.u.CacheCreation != 900 || s.u.CacheBy.Hour != 800 {
+		t.Fatalf("scanned %+v", s.u)
+	}
+}

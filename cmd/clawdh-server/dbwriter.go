@@ -268,7 +268,8 @@ func (u *dbUpstream) storeCredential(accountID string, fresh gateway.Credential)
 func (u *dbUpstream) recordUsage(ev gateway.Event) error {
 	m := meter.Measure(ev.Model, meter.Usage{
 		Input: ev.Input, Output: ev.Output,
-		CacheCreation: ev.CacheCreation, CacheRead: ev.CacheRead,
+		CacheCreation: ev.CacheCreation, CacheCreation1h: ev.CacheCreation1h,
+		CacheRead: ev.CacheRead,
 	})
 	model := ev.Model
 	if !m.Known {

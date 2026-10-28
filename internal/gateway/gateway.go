@@ -264,6 +264,7 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 			deny(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "That request is too large for the gateway to forward.")
 			return
 		}
+		body = withHourCache(r, body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 		r.ContentLength = int64(len(body))
