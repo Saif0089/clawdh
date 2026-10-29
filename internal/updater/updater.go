@@ -45,6 +45,11 @@ const DefaultRepo = "Saif0089/clawdh"
 // release of their own without touching the network.
 const DefaultAPIBase = "https://api.github.com"
 
+// DefaultWebBase is github.com itself. Its release download links are not
+// counted against the API's 60-an-hour-per-address limit, so they are what
+// a machine falls back to once that limit is spent (see latestFromWeb).
+const DefaultWebBase = "https://github.com"
+
 const (
 	// CheckInterval is how often the running service looks.
 	//
@@ -85,6 +90,7 @@ type Release struct {
 type Updater struct {
 	Repo       string
 	APIBase    string
+	WebBase    string
 	HTTPClient *http.Client
 	// BinaryPath is the executable to replace: clawdh's own.
 	BinaryPath string
@@ -336,8 +342,51 @@ func (u *Updater) CheckAndApply(ctx context.Context) (*Release, error) {
 // of minutes affordable.
 func (u *Updater) Latest(ctx context.Context) (*Release, error) {
 	if !u.rateLimitedUntil.IsZero() && u.now().Before(u.rateLimitedUntil) {
-		return nil, ErrRateLimited
+		return u.latestFromWeb(ctx)
 	}
+	release, err := u.latestFromAPI(ctx)
+	if errors.Is(err, ErrRateLimited) {
+		return u.latestFromWeb(ctx)
+	}
+	return release, err
+}
+
+// latestFromWeb finds the latest release without the API, for the time
+// the API's per-address limit is spent. Several machines on one network
+// share that limit, and with every one of them polling it was spent for
+// good: machines sat on old builds for weeks, saying only "rate-limited".
+// The download links under github.com/<repo>/releases/latest/download/ are
+// not part of that limit, and they are enough: checksums.txt names the
+// build, and its Last-Modified is when it was published, which is all the
+// "is it newer" decision reads.
+func (u *Updater) latestFromWeb(ctx context.Context) (*Release, error) {
+	link := func(name string) string {
+		return fmt.Sprintf("%s/%s/releases/latest/download/%s", u.webBase(), u.repo(), name)
+	}
+	resp, err := u.fetch(ctx, link("checksums.txt"), "")
+	if err != nil {
+		return nil, fmt.Errorf("the API is rate-limited and github.com did not answer either: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	published, err := http.ParseTime(resp.Header.Get("Last-Modified"))
+	if err != nil {
+		// Not guessed: without a time there is no telling an update from
+		// a downgrade (CheckAndApply reports it).
+		published = time.Time{}
+	}
+	return &Release{
+		Name:        "latest",
+		Tag:         "latest",
+		PublishedAt: published,
+		Assets: map[string]string{
+			"checksums.txt": link("checksums.txt"),
+			AssetName():     link(AssetName()),
+		},
+	}, nil
+}
+
+func (u *Updater) latestFromAPI(ctx context.Context) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/releases/latest", u.apiBase(), u.repo())
 
 	var payload struct {
@@ -519,17 +568,22 @@ func (u *Updater) fetch(ctx context.Context, url, etag string) (*http.Response, 
 	// 403 with the remaining count at zero, or 429, is GitHub saying the
 	// limit is per IP and this network has spent it. It is not a broken
 	// update, and asking again in two minutes cannot help.
+	api := strings.HasPrefix(url, u.apiBase())
 	if resp.StatusCode == http.StatusTooManyRequests ||
 		(resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0") {
 		resp.Body.Close()
-		u.rateLimitedUntil = u.now().Add(rateLimitBackoff)
+		if api {
+			u.rateLimitedUntil = u.now().Add(rateLimitBackoff)
+		}
 		return nil, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotModified {
 		resp.Body.Close()
 		return nil, fmt.Errorf("fetching %s: HTTP %d", url, resp.StatusCode)
 	}
-	u.rateLimitedUntil = time.Time{}
+	if api {
+		u.rateLimitedUntil = time.Time{}
+	}
 	return resp, nil
 }
 
@@ -538,6 +592,13 @@ func (u *Updater) apiBase() string {
 		return strings.TrimSuffix(u.APIBase, "/")
 	}
 	return DefaultAPIBase
+}
+
+func (u *Updater) webBase() string {
+	if u.WebBase != "" {
+		return strings.TrimSuffix(u.WebBase, "/")
+	}
+	return DefaultWebBase
 }
 
 func (u *Updater) repo() string {

@@ -327,3 +327,49 @@ func TestSweepsAbandonedDownloads(t *testing.T) {
 		t.Errorf("the abandoned download is still there: %v", err)
 	}
 }
+
+// The failure that kept machines on old builds: several of them share one
+// address, the API's 60 an hour per address is spent, and every check was
+// refused. With the API refusing, the release is still found and installed
+// through the plain download links.
+func TestUpdatesThroughDownloadLinksWhenTheAPIIsRateLimited(t *testing.T) {
+	published := time.Now().Add(-time.Hour).Truncate(time.Second)
+	body := []byte("the new build")
+	sum := sha256.Sum256(body)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/acme/clawdh/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+	})
+	mux.HandleFunc("/acme/clawdh/releases/latest/download/"+AssetName(), func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	})
+	mux.HandleFunc("/acme/clawdh/releases/latest/download/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", published.UTC().Format(http.TimeFormat))
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), AssetName())
+	})
+
+	path := installedBinary(t, "the old build", published.Add(-24*time.Hour))
+	u := newUpdater(t, srv, path)
+	u.WebBase = srv.URL
+
+	got, err := u.CheckAndApply(context.Background())
+	if err != nil {
+		t.Fatalf("CheckAndApply: %v", err)
+	}
+	if got == nil {
+		t.Fatal("want the release installed through the download links, got nil")
+	}
+	if content, _ := os.ReadFile(path); string(content) != string(body) {
+		t.Errorf("binary = %q, want the downloaded build", content)
+	}
+
+	// Already current: the next check, still refused by the API, finds nothing to do.
+	again, err := u.CheckAndApply(context.Background())
+	if err != nil || again != nil {
+		t.Errorf("second check = %v, %v; want nothing to do", again, err)
+	}
+}
