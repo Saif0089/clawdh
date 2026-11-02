@@ -133,14 +133,17 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 				if ident, _ := ctx.Value(identKey).(Event); ident.AccountID != "" {
 					bad, _ := ctx.Value(tokenKey).(string)
 					retried, _ := ctx.Value(retriedKey).(bool)
+					var renewErr error
 					if ren, ok := up.(Renewer); ok && !retried {
-						if fresh, err := ren.Renew(ident.AccountID, bad); err == nil && fresh != bad {
+						fresh, err := ren.Renew(ident.AccountID, bad)
+						if err == nil && fresh != bad {
 							resp.Body.Close()
 							return &retryWithToken{token: fresh}
 						}
+						renewErr = err
 					}
 					resp.Body.Close()
-					replaceWithDenial(resp, http.StatusBadGateway, "api_error", collisionMessage)
+					replaceWithDenial(resp, http.StatusBadGateway, "api_error", loginMessage(renewErr))
 					return nil
 				}
 			}
@@ -254,7 +257,7 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 			// use first-party somewhere, which rotates the login's refresh token
 			// out from under the gateway. Nothing the member does will fix it, so
 			// say what will, and don't have the client retry into it.
-			deny(w, http.StatusBadGateway, "api_error", collisionMessage)
+			deny(w, http.StatusBadGateway, "api_error", loginMessage(err))
 			return
 		}
 		// Buffer the body so the request can be replayed if the login's token
@@ -285,6 +288,20 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 		ctx = context.WithValue(ctx, quotaKey, quota)
 		proxy.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// expiredMessage is what a member sees when the shared login reached the end of
+// its life. It is nobody's collision: a Claude sign-in lasts about four weeks
+// and refreshing it does not extend that, so it has to be signed in to again.
+const expiredMessage = "The shared login for this account has reached the end of its sign-in. Claude logins last about four weeks, and the gateway cannot extend one. The account's owner needs to sign in to it again and add it to the panel."
+
+// loginMessage picks what to tell a member for a shared login that cannot serve:
+// the expiry when Anthropic said that is what happened, the collision otherwise.
+func loginMessage(err error) string {
+	if IsLoginExpired(err) {
+		return expiredMessage
+	}
+	return collisionMessage
 }
 
 // collisionMessage is what a member sees when the shared login can't serve —

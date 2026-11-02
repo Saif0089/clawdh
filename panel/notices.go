@@ -15,12 +15,17 @@ import (
 
 // checkinNotices is every notice for the person this machine belongs to.
 func (s *Server) checkinNotices(ctx context.Context, personID string, d Data) []Notice {
-	if s.usage == nil || personID == "" {
+	if personID == "" {
 		return nil
 	}
 	var out []Notice
-	out = append(out, s.quotaNotice(ctx, personID, d)...)
-	out = append(out, s.collisionNotices(ctx, personID, d)...)
+	if s.usage != nil {
+		out = append(out, s.quotaNotice(ctx, personID, d)...)
+		out = append(out, s.collisionNotices(ctx, personID, d)...)
+	}
+	// A login running out is known from the credential itself, so it needs no
+	// metering: it is told even to a panel that has none.
+	out = append(out, s.loginEndNotices(personID, d)...)
 	return out
 }
 
@@ -95,6 +100,9 @@ func (s *Server) collisionNotices(ctx context.Context, personID string, d Data) 
 		name := sh.AccountID
 		if acct, ok := d.Account(sh.AccountID); ok {
 			name = acct.Name
+			if s.loginEnded(*acct) {
+				continue // the login-ended notice says why, and says it better
+			}
 		}
 		out = append(out, Notice{
 			ID:   fmt.Sprintf("collision:%s:%d", sh.AccountID, at.Unix()),

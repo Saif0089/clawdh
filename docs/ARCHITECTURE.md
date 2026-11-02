@@ -222,6 +222,21 @@ runs it, matched by the email the panel sends with each share. The check is a
 read, like `DiscoverLogins`; on a Mac it is the same `security
 find-generic-password` read.
 
+A login handed to the gateway also has a hard end. A Claude sign-in's refresh
+token stops working about four weeks (27 to 30 days in the logins seen) after
+the browser sign-in, and the gateway refreshing every eight hours never moves
+that date: the stored credential carries it as `refreshTokenExpiresAt`, and
+Anthropic answers the first refresh past it with `invalid_grant` /
+"Refresh token expired". That is how the `anthropic` login died on 30 Oct
+2026 (the gateway then told members another machine was using it, which was
+not so). Until then the code assumed a shared login never expires. The only
+renewal is signing in again and adding the login to the panel, so the panel
+reads the date from each sealed credential (`panel/loginend.go`) and warns the
+board and the people the account matters to 7, 3 and 1 days ahead and once it
+has ended; `RefreshError` (`internal/gateway/refresh.go`) keeps Anthropic's
+reason so the gateway's message, log line and recorded note say "expired"
+rather than guessing at a collision.
+
 The bundle is plain-text JS inside the binary. Grep it with `/usr/bin/grep -a`
 or python — a shell whose `grep` is aliased to `ugrep` fails on a bounded
 `{0,240}` window and prints nothing, which reads as "not found".

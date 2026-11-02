@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -53,6 +56,40 @@ func (c Credential) newerThan(o Credential) bool {
 	return c.ExpiresAt.After(o.ExpiresAt)
 }
 
+// RefreshError is the token service turning a refresh down, in its own words.
+// "Refresh token expired" and "already used" both arrive as a bare 400, and they
+// need opposite answers: an expired one is a login that reached the end of its
+// life, which no one did anything to cause and only signing in again can fix.
+type RefreshError struct {
+	Status      string // "400 Bad Request"
+	Code        string // OAuth error code, e.g. "invalid_grant"
+	Description string // e.g. "Refresh token expired"
+}
+
+func (e *RefreshError) Error() string {
+	msg := "refreshing the shared login: the token service answered " + e.Status
+	switch {
+	case e.Code != "" && e.Description != "":
+		msg += ": " + e.Code + " (" + e.Description + ")"
+	case e.Code != "":
+		msg += ": " + e.Code
+	}
+	return msg
+}
+
+// Expired reports that the login's refresh token reached the end of its life.
+// Claude logins last about four weeks from the sign-in, however often they are
+// refreshed in between, so this is the ordinary end of a shared login.
+func (e *RefreshError) Expired() bool {
+	return e.Code == "invalid_grant" && strings.Contains(strings.ToLower(e.Description), "expired")
+}
+
+// IsLoginExpired reports whether err says a login's refresh token has expired.
+func IsLoginExpired(err error) bool {
+	var re *RefreshError
+	return errors.As(err, &re) && re.Expired()
+}
+
 // refresh trades a refresh token for a fresh credential.
 func refresh(ctx context.Context, httpc *http.Client, refreshToken string) (Credential, error) {
 	body, _ := json.Marshal(map[string]string{
@@ -75,7 +112,16 @@ func refresh(ctx context.Context, httpc *http.Client, refreshToken string) (Cred
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Credential{}, fmt.Errorf("refreshing the shared login: the token service answered %s", resp.Status)
+		// An error reply carries no token, only the service's reason; keep it.
+		reason := &RefreshError{Status: resp.Status}
+		var body struct {
+			Error       string `json:"error"`
+			Description string `json:"error_description"`
+		}
+		if raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<10)); err == nil && json.Unmarshal(raw, &body) == nil {
+			reason.Code, reason.Description = body.Error, body.Description
+		}
+		return Credential{}, reason
 	}
 	var out struct {
 		AccessToken  string `json:"access_token"`

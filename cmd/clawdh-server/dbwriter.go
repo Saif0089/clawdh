@@ -28,8 +28,22 @@ import (
 // request never is.
 const maxPendingEvents = 5000
 
-// collisionNote is what the panel is told when a shared login fails to refresh.
-const collisionNote = "the shared login failed to refresh — the account is likely being used first-party outside the gateway"
+// collisionNote and expiredNote are what the panel is told when a shared login
+// fails to refresh. They are told apart because they have opposite remedies: a
+// collision means something else is using the login, while an expiry is a login
+// that reached the end of its life and only needs signing in to again.
+const (
+	collisionNote = "the shared login failed to refresh — the account is likely being used first-party outside the gateway"
+	expiredNote   = "the shared login reached the end of its sign-in (Anthropic: refresh token expired) — sign in to the account again and add it to the panel"
+)
+
+// loginNote is the note that goes with a refresh failure.
+func loginNote(err error) string {
+	if gateway.IsLoginExpired(err) {
+		return expiredNote
+	}
+	return collisionNote
+}
 
 type pendingEvent struct {
 	seq uint64
@@ -40,7 +54,7 @@ type writer struct {
 	mu         sync.Mutex
 	creds      map[string]gateway.Credential // accountID -> newest rotation not yet stored
 	windows    map[string]gateway.Windows    // accountID -> newest reading not yet stored
-	collisions map[string]bool               // accountIDs with a collision to report
+	collisions map[string]string             // accountIDs with a collision to report -> why
 	events     []pendingEvent                // usage rows not yet stored, oldest first
 	seq        uint64                        // sequence of the last event queued
 	dropped    int                           // usage rows discarded since last reported
@@ -53,7 +67,7 @@ func newWriter() *writer {
 	return &writer{
 		creds:      map[string]gateway.Credential{},
 		windows:    map[string]gateway.Windows{},
-		collisions: map[string]bool{},
+		collisions: map[string]string{},
 		kick:       make(chan struct{}, 1),
 	}
 }
@@ -82,9 +96,9 @@ func (w *writer) window(accountID string, win gateway.Windows) {
 	w.wake()
 }
 
-func (w *writer) collision(accountID string) {
+func (w *writer) collision(accountID, note string) {
 	w.mu.Lock()
-	w.collisions[accountID] = true
+	w.collisions[accountID] = note
 	w.mu.Unlock()
 	w.wake()
 }
@@ -175,9 +189,9 @@ func (u *dbUpstream) flush() error {
 	for id, win := range w.windows {
 		windows[id] = win
 	}
-	collisions := make([]string, 0, len(w.collisions))
-	for id := range w.collisions {
-		collisions = append(collisions, id)
+	collisions := make(map[string]string, len(w.collisions))
+	for id, note := range w.collisions {
+		collisions[id] = note
 	}
 	events := append([]pendingEvent(nil), w.events...)
 	dropped := w.dropped
@@ -206,15 +220,17 @@ func (u *dbUpstream) flush() error {
 		}
 		w.mu.Unlock()
 	}
-	for _, id := range collisions {
+	for id, note := range collisions {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := u.pg.RecordCollision(ctx, id, collisionNote)
+		err := u.pg.RecordCollision(ctx, id, note)
 		cancel()
 		if err != nil {
 			return err
 		}
 		w.mu.Lock()
-		delete(w.collisions, id)
+		if w.collisions[id] == note {
+			delete(w.collisions, id)
+		}
 		w.mu.Unlock()
 	}
 	var written uint64

@@ -37,6 +37,7 @@ type dbUpstream struct {
 	retryAt      time.Time                   // no re-read starts before this after a failure
 	managers     map[string]*gateway.Manager // accountID -> token manager
 	limitCache   map[string]limitCacheEntry  // person+account -> recent quota standing
+	failLogged   map[string]time.Time        // account name -> when its login failure was last logged
 }
 
 // panelDB is the part of the panel database the gateway uses besides the panel
@@ -97,6 +98,7 @@ func newUpstream(store *panel.Store, db panelDB, secret *panel.Secret) (*dbUpstr
 		w:          newWriter(),
 		managers:   map[string]*gateway.Manager{},
 		limitCache: map[string]limitCacheEntry{},
+		failLogged: map[string]time.Time{},
 	}
 	d, err := store.Load()
 	if err != nil {
@@ -242,7 +244,8 @@ func (u *dbUpstream) Resolve(memberKey string) (gateway.Resolution, error) {
 		// and record the collision so the panel can warn that this account is
 		// being used outside the gateway.
 		u.forget(acct.ID)
-		u.w.collision(acct.ID)
+		u.w.collision(acct.ID, loginNote(err))
+		u.noteLoginFailure(acct.Name, err)
 		return gateway.Resolution{}, fmt.Errorf("refreshing the shared login for %s: %w", acct.Name, err)
 	}
 	return gateway.Resolution{
@@ -270,7 +273,7 @@ func (u *dbUpstream) Renew(accountID, bad string) (string, error) {
 	if err != nil {
 		log.Printf("gateway: renewing the login for account %s after a 401: %v", accountID, err)
 		u.forget(accountID)
-		u.w.collision(accountID)
+		u.w.collision(accountID, loginNote(err))
 		return "", err
 	}
 	log.Printf("gateway: renewed the login for account %s after Anthropic refused its token", accountID)
@@ -330,6 +333,26 @@ func (u *dbUpstream) readLimit(key, personID, accountID string) {
 		e.status = gateway.QuotaStatus{Over: st.Over, Fraction: st.Fraction, ResetAt: st.ResetAt, Message: st.Message}
 	}
 	u.limitCache[key] = e
+}
+
+// failureLogEvery bounds how often one account's login failure is logged: every
+// member's request fails the same way while a login is down, and the gateway
+// used to say nothing at all, so the reason a login died was never kept.
+const failureLogEvery = 10 * time.Minute
+
+// noteLoginFailure logs why an account's shared login could not serve, in the
+// token service's own words, at most once per failureLogEvery per account.
+func (u *dbUpstream) noteLoginFailure(name string, err error) {
+	u.mu.Lock()
+	last := u.failLogged[name]
+	due := time.Since(last) >= failureLogEvery
+	if due {
+		u.failLogged[name] = time.Now()
+	}
+	u.mu.Unlock()
+	if due {
+		log.Printf("gateway: the shared login for %s cannot serve: %v", name, err)
+	}
 }
 
 // forget drops an account's cached token manager, so the next request rebuilds

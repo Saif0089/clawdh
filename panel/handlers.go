@@ -90,7 +90,8 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 		accounts = append(accounts, v)
 	}
 
-	// Flag any account whose shared login broke in the last day — a sign it is
+	// Flag any account whose shared login broke in the last day — either it ran
+	// out (applyLoginEnds below says so when the credential shows it) or it is
 	// being used first-party, outside the gateway.
 	if s.usage != nil {
 		if col, err := s.usage.RecentCollisions(r.Context(), s.now().Add(-24*time.Hour)); err == nil {
@@ -101,6 +102,8 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	s.applyLoginEnds(d, accounts)
 
 	present := s.presence(r.Context(), d)
 	people := make([]personView, 0, len(d.People))

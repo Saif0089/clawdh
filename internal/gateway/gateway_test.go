@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -414,6 +415,44 @@ func TestGatewayReports502WhenTheLoginIsUnusable(t *testing.T) {
 	}
 }
 
+// What a member is told depends on why the login cannot serve: a login that
+// reached the end of its sign-in is nobody's collision, and the message must not
+// send the owner hunting for another machine that is using it.
+func TestGatewayNamesAnExpiredLogin(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"expired", fmt.Errorf("refreshing the shared login for Saif: %w", &RefreshError{Status: "400 Bad Request", Code: "invalid_grant", Description: "Refresh token expired"}), expiredMessage},
+		{"already used", fmt.Errorf("refreshing the shared login for Saif: %w", &RefreshError{Status: "400 Bad Request", Code: "invalid_grant", Description: "Refresh token not found or invalid"}), collisionMessage},
+		{"anything else", errors.New("no stored login"), collisionMessage},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(New(failingUpstream{c.err}, nil, nil))
+			defer srv.Close()
+			req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", nil)
+			req.Header.Set("Authorization", "Bearer anything")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != 502 {
+				t.Errorf("status = %d, want 502", resp.StatusCode)
+			}
+			if !strings.Contains(string(body), c.want) {
+				t.Errorf("body = %s\nwant it to say %q", body, c.want)
+			}
+		})
+	}
+}
+
+type failingUpstream struct{ err error }
+
+func (f failingUpstream) Resolve(string) (Resolution, error) { return Resolution{}, f.err }
+
 // brokenUpstream stands for a share whose subscription login cannot be refreshed
 // right now — a known key, but no token.
 type brokenUpstream struct{}
@@ -437,6 +476,7 @@ type renewingUpstream struct {
 	token   string
 	renewed []string
 	fail    bool
+	failErr error // what a failing Renew returns; a generic dead token if nil
 }
 
 func (u *renewingUpstream) Resolve(k string) (Resolution, error) {
@@ -449,6 +489,9 @@ func (u *renewingUpstream) Resolve(k string) (Resolution, error) {
 func (u *renewingUpstream) Renew(accountID, bad string) (string, error) {
 	u.renewed = append(u.renewed, bad)
 	if u.fail {
+		if u.failErr != nil {
+			return "", u.failErr
+		}
 		return "", errors.New("refresh token is dead")
 	}
 	u.token = "new"
@@ -499,6 +542,36 @@ func TestGatewayRenewsARevokedTokenAndReplays(t *testing.T) {
 	}
 	if len(up.renewed) != 1 || up.renewed[0] != "old" {
 		t.Errorf("Renew was told bad=%v, want [old]", up.renewed)
+	}
+}
+
+// A login that reached the end of its sign-in is told as that, on the path where
+// Anthropic refused the token and the renewal then failed, not as a collision.
+func TestGatewayNamesAnExpiredLoginWhenAnthropicRefusesTheToken(t *testing.T) {
+	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}`)
+	}))
+	defer anthropic.Close()
+
+	up := &renewingUpstream{token: "old", fail: true,
+		failErr: &RefreshError{Status: "400 Bad Request", Code: "invalid_grant", Description: "Refresh token expired"}}
+	srv := httptest.NewServer(rewriteHost(New(up, nil, nil), anthropic.Listener.Addr().String()))
+	defer srv.Close()
+
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer member-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), expiredMessage) {
+		t.Errorf("status = %d, body = %s; want 502 with the expiry message", resp.StatusCode, body)
+	}
+	if resp.Header.Get("x-should-retry") != "false" {
+		t.Error("an expired login must not be retried into")
 	}
 }
 

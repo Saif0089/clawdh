@@ -3,8 +3,11 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -183,5 +186,58 @@ func TestRenewAdoptsANewerStoredCredential(t *testing.T) {
 	tok, err := m.Renew(context.Background(), "refused")
 	if err != nil || tok != "rotated-elsewhere" {
 		t.Errorf("Renew = %q, %v; want the newer stored credential", tok, err)
+	}
+}
+
+// The token service's reason is kept, because "expired" and "already used" are
+// both a bare 400 and need opposite answers: an expired sign-in is the ordinary
+// end of a login, not a collision. The reply Anthropic gave for the real
+// `anthropic` login on 2 Nov 2026 is the first case below.
+func TestRefreshKeepsTheTokenServicesReason(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		status  int
+		body    string
+		expired bool
+		says    string
+	}{
+		{"expired", 400, `{"error": "invalid_grant", "error_description": "Refresh token expired"}`, true, "invalid_grant (Refresh token expired)"},
+		{"not found", 400, `{"error":"invalid_grant","error_description":"Refresh token not found or invalid"}`, false, "invalid_grant (Refresh token not found or invalid)"},
+		{"bare code", 400, `{"error":"invalid_grant"}`, false, "400 Bad Request: invalid_grant"},
+		{"outage page", 503, `<html>try later</html>`, false, "503 Service Unavailable"},
+		{"empty", 400, ``, false, "400 Bad Request"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(c.status)
+				w.Write([]byte(c.body))
+			}))
+			defer ts.Close()
+			old := testTokenEndpoint
+			testTokenEndpoint = ts.URL
+			defer func() { testTokenEndpoint = old }()
+
+			_, err := refresh(context.Background(), ts.Client(), "spent")
+			if err == nil {
+				t.Fatal("a refused refresh must be an error")
+			}
+			if IsLoginExpired(err) != c.expired {
+				t.Errorf("IsLoginExpired = %v, want %v (%v)", IsLoginExpired(err), c.expired, err)
+			}
+			if !strings.Contains(err.Error(), c.says) || !strings.Contains(err.Error(), "the token service answered") {
+				t.Errorf("error = %q, want it to say %q", err, c.says)
+			}
+			// Wrapped the way the gateway wraps it, the reason survives.
+			if IsLoginExpired(fmt.Errorf("refreshing the shared login for X: %w", err)) != c.expired {
+				t.Error("the reason must survive wrapping")
+			}
+		})
+	}
+}
+
+// An unrelated failure is never mistaken for an expiry.
+func TestIsLoginExpiredIgnoresOtherErrors(t *testing.T) {
+	if IsLoginExpired(nil) || IsLoginExpired(errors.New("Refresh token expired")) || IsLoginExpired(context.DeadlineExceeded) {
+		t.Error("only the token service's own invalid_grant reply counts as an expiry")
 	}
 }

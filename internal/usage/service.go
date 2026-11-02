@@ -384,13 +384,17 @@ func (s *Service) fetch(ctx context.Context, accountID, configDir string) (Snaps
 	// Except for a login the gateway holds, where this file is not the login
 	// any more. Handing an account to the panel leaves a copy here that stops
 	// being refreshed on purpose — the gateway refreshes centrally, and a
-	// second refresher would rotate the token out from under it. That copy
-	// carries the expiry stamped at the original browser sign-in, roughly four
-	// weeks out, and nothing local moves it. So on the day it passes, every
-	// machine still holding one would have announced "This login has expired.
-	// Reconnect the account" about an account that was working perfectly, and
-	// the fix it advises — signing in again — is the one thing that actually
-	// breaks a shared login. The gateway is asked first, and its answer stands.
+	// second refresher would rotate the token out from under it. The expiry in
+	// this copy is stamped at the original browser sign-in, roughly four weeks
+	// out, and nothing local moves it. That date is also when the gateway's
+	// copy ends: Anthropic fixes it at sign-in and refreshing never extends it
+	// (the `anthropic` login died on its stored date, 30 Oct 2026, with
+	// "Refresh token expired"). This machine still stays quiet here — a
+	// "Reconnect the account" card would send people to sign in locally, which
+	// does nothing for the gateway's copy — and leaves the announcing to the
+	// panel, which reads the same date from the login it holds and warns the
+	// people it matters to a week ahead (panel/loginend.go). The gateway is
+	// asked first, and its answer stands.
 	if !creds.RefreshExpiresAt.IsZero() && s.now().After(creds.RefreshExpiresAt) {
 		if report, note, ok := s.gatewayReading(configDir); ok {
 			snapshot.Usage = report

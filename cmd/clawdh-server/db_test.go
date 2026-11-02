@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -80,12 +81,21 @@ type fakeDB struct {
 	usage      []panelpg.UsageEvent
 	usageErr   error
 	usageBlock chan struct{}
+	notes      map[string]string // account id -> the note its last collision carried
 }
 
 func (f *fakeDB) RecordWindows(string, float64, float64, time.Time, time.Time, []panel.ModelWindow) {}
-func (f *fakeDB) RecordCollision(context.Context, string, string) error                             { return nil }
-func (f *fakeDB) AccountWindows(context.Context) ([]panel.AccountWindow, error)                     { return nil, nil }
-func (f *fakeDB) LatestEventAt(context.Context) (time.Time, error)                                  { return time.Time{}, nil }
+func (f *fakeDB) RecordCollision(_ context.Context, id, note string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.notes == nil {
+		f.notes = map[string]string{}
+	}
+	f.notes[id] = note
+	return nil
+}
+func (f *fakeDB) AccountWindows(context.Context) ([]panel.AccountWindow, error) { return nil, nil }
+func (f *fakeDB) LatestEventAt(context.Context) (time.Time, error)              { return time.Time{}, nil }
 func (f *fakeDB) UsageBySubject(context.Context, string, time.Time) ([]panel.SubjectUsage, error) {
 	return nil, nil
 }
@@ -456,5 +466,32 @@ func TestTheUsageQueueDropsItsOldestWhenFull(t *testing.T) {
 	if len(w.events) != maxPendingEvents || w.dropped != 1 || w.events[0].ev.Input != 1 {
 		t.Errorf("queue holds %d (dropped %d, oldest input %d); want %d, 1 dropped, oldest 1",
 			len(w.events), w.dropped, w.events[0].ev.Input, maxPendingEvents)
+	}
+}
+
+// A login that failed to refresh is recorded with the reason Anthropic gave: an
+// expired sign-in is told apart from a collision, because the panel shows the
+// note and the two have different remedies.
+func TestARefreshFailureIsRecordedWithItsRealReason(t *testing.T) {
+	u, _, db, _ := newTestUpstream(t)
+
+	expired := fmt.Errorf("refreshing the shared login for X: %w",
+		&gateway.RefreshError{Status: "400 Bad Request", Code: "invalid_grant", Description: "Refresh token expired"})
+	u.w.collision("expired-acct", loginNote(expired))
+	u.w.collision("other-acct", loginNote(errors.New("the token service answered 400")))
+	if err := u.flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.notes["expired-acct"] != expiredNote {
+		t.Errorf("expired login noted %q, want the expiry note", db.notes["expired-acct"])
+	}
+	if db.notes["other-acct"] != collisionNote {
+		t.Errorf("other failure noted %q, want the collision note", db.notes["other-acct"])
+	}
+	if u.w.pending() != 0 {
+		t.Errorf("%d writes still queued after a flush", u.w.pending())
 	}
 }
