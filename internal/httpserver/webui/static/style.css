@@ -513,6 +513,12 @@ select:disabled { opacity: .55; cursor: default; }
 .session-line { margin: 14px 0 0; font-size: 13px; color: var(--muted); }
 .session-line.warn { color: var(--warn); }
 .session-line.crit { color: var(--crit); }
+/* When a shared login's sign-in runs out. Claude sign-ins last about four weeks
+   and refreshing never extends one, so this says so ahead of time. */
+.login-end-line { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.login-end-line.warn { color: var(--warn); }
+.login-end-line.crit { color: var(--crit); }
+#share-note { white-space: pre-line; }
 
 .card-actions {
   display: flex; gap: 8px; flex-wrap: wrap;

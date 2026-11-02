@@ -51,20 +51,18 @@ func TestFetchParsesLimits(t *testing.T) {
 	if report.Plan != "max" {
 		t.Errorf("Plan = %q, want max", report.Plan)
 	}
-	if len(report.Limits) != 3 {
-		t.Fatalf("got %d limits, want 3", len(report.Limits))
+	// The payload still carries the five-hour "session" entry Anthropic used to
+	// send; that window is gone, so it is dropped and nothing shows or acts on it.
+	if len(report.Limits) != 2 {
+		t.Fatalf("got %d limits, want the 2 weekly ones", len(report.Limits))
+	}
+	for _, l := range report.Limits {
+		if l.Kind == "session" || l.Label == "Current session" {
+			t.Errorf("the removed five-hour window survived: %+v", l)
+		}
 	}
 
-	// The session window is what runs out first, so it is shown first
-	// regardless of the order the API happened to send.
-	if report.Limits[0].Label != "Current session" {
-		t.Errorf("first limit = %q, want %q", report.Limits[0].Label, "Current session")
-	}
-	if report.Limits[0].Percent != 5 {
-		t.Errorf("session percent = %v, want 5", report.Limits[0].Percent)
-	}
-
-	labels := []string{report.Limits[1].Label, report.Limits[2].Label}
+	labels := []string{report.Limits[0].Label, report.Limits[1].Label}
 	want := map[string]bool{"This week, all models": true, "This week, Fable": true}
 	for _, label := range labels {
 		if !want[label] {
@@ -74,9 +72,9 @@ func TestFetchParsesLimits(t *testing.T) {
 
 	reset := report.Limits[0].ResetsAt
 	if reset == nil {
-		t.Fatal("session limit has no reset time")
+		t.Fatal("weekly limit has no reset time")
 	}
-	if got := reset.Format(time.RFC3339); got != "2026-09-07T05:29:59Z" {
+	if got := reset.Format(time.RFC3339); got != "2026-09-08T13:59:59Z" {
 		t.Errorf("reset = %s", got)
 	}
 }

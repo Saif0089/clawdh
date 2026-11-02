@@ -44,7 +44,7 @@ type sharedView struct {
 	Contributed bool `json:"contributed,omitempty"`
 	// ExpiresAt is when this access ends on its own (zero: until revoked).
 	ExpiresAt time.Time `json:"expiresAt,omitzero"`
-	// Window is the gateway's captured 5h/weekly utilisation for this account,
+	// Window is the gateway's captured weekly utilisation for this account,
 	// when the panel has metering — the same bars a local card shows.
 	Window *panel.ShareWindow `json:"window,omitempty"`
 }

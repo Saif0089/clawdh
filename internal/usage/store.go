@@ -11,10 +11,11 @@ import (
 
 // StaleReportAge is how long a saved report is worth showing.
 //
-// The shortest window on the page is the five-hour session allowance,
-// so anything older than six hours has certainly rolled over: its
-// percentages would not be stale, they would be wrong. Past that, an
-// empty card is the honest answer.
+// This was set when the shortest window on the page was the five-hour
+// session allowance, so anything older than six hours had certainly rolled
+// over. That window is gone, and a weekly figure only grows, so an old one is
+// an under-count rather than a wrong one; six hours stays as the line past
+// which an empty card is the more honest answer.
 const StaleReportAge = 6 * time.Hour
 
 // tooOld reports whether a report is missing or past StaleReportAge.
@@ -53,6 +54,9 @@ func (s *Service) loadReports() {
 		if tooOld(report, now) {
 			continue
 		}
+		// A report saved before the five-hour window was removed still carries
+		// it; it must not come back on the card for the hours it stays fresh.
+		report.Limits = withoutSession(report.Limits)
 		s.lastReport[id] = report
 	}
 }

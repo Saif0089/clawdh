@@ -5,9 +5,8 @@ import { PresenceBadge } from "./Presence";
 import { fmtNum, modelLabel, agoFrom, untilReset, windowTone, pct, when } from "./format";
 
 // The board's unit is the account. Each shared login gets one card holding
-// everything about it: its rolling 5-hour and weekly windows — Claude's own
-// numbers for how full they are — and, for the chosen period, who ran it and
-// on which models. A short across-accounts list of people follows.
+// everything about it: its weekly window — Claude's own number for how full
+// it is — and, for the chosen period, who ran it and on which models. A short across-accounts list of people follows.
 //
 // Colour means one thing here: how full a window is (green, amber, red).
 // People and models are never colour-coded — they are labelled rows with one
@@ -151,13 +150,12 @@ function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
     <div className="rounded-2xl border border-line bg-raised p-5">
       <div className="flex items-baseline justify-between gap-3">
         <div className="min-w-0 truncate text-[17px] font-semibold">{a.name}</div>
-        <div className="shrink-0 text-[12px] text-faint">{a.hasReading ? "windows read " + when(a.updatedAt) : ""}</div>
+        <div className="shrink-0 text-[12px] text-faint">{a.hasReading ? "read " + when(a.updatedAt) : ""}</div>
       </div>
 
       {a.hasReading ? (
         <>
           <div className="mt-3.5 flex flex-col gap-4 sm:flex-row sm:gap-8">
-            <WindowMeter label="5-hour window" frac={a.fiveH} reset={a.fiveHReset} />
             <WindowMeter label="Weekly window" frac={a.sevenD} reset={a.sevenDReset} />
           </div>
           {/* The per-model weeks, which usually run out well before the week

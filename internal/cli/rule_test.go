@@ -180,7 +180,6 @@ func TestLocalUsageComesFromTheService(t *testing.T) {
 			return
 		}
 		json.NewEncoder(w).Encode(usage.Snapshot{Usage: &usage.Report{Limits: []usage.Limit{
-			{Kind: "session", Percent: 47},
 			{Kind: "weekly_all", Percent: 33},
 			{Kind: "weekly_scoped", Percent: 81},
 		}}})
@@ -188,9 +187,6 @@ func TestLocalUsageComesFromTheService(t *testing.T) {
 	defer srv.Close()
 	if p, ok := localUsagePercent(srv.URL, "a1", switching.WindowWeek); !ok || p != 33 {
 		t.Errorf("week = %v, %v; want 33 — the all-models weekly limit", p, ok)
-	}
-	if p, ok := localUsagePercent(srv.URL, "a1", switching.Window5h); !ok || p != 47 {
-		t.Errorf("5h = %v, %v; want 47", p, ok)
 	}
 	if _, ok := localUsagePercent(srv.URL, "nobody", switching.WindowWeek); ok {
 		t.Error("an unknown account produced a reading")
@@ -204,12 +200,12 @@ func TestSharedUsageMustBeRecent(t *testing.T) {
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	sess := sessions.Session{Shared: true, Slug: "saif", Account: "saif"}
 
-	panel.SaveWindows([]panel.ShareWindow{{Slug: "saif", FiveH: 0.06, SevenD: 0.15, UpdatedAt: time.Now()}})
+	panel.SaveWindows([]panel.ShareWindow{{Slug: "saif", SevenD: 0.15, UpdatedAt: time.Now()}})
 	if p, ok := usagePercent(sess, switching.WindowWeek); !ok || p < 14.99 || p > 15.01 {
 		t.Errorf("week = %v, %v; want 15", p, ok)
 	}
 
-	panel.SaveWindows([]panel.ShareWindow{{Slug: "saif", FiveH: 0.06, SevenD: 0.15, UpdatedAt: time.Now().Add(-3 * 24 * time.Hour)}})
+	panel.SaveWindows([]panel.ShareWindow{{Slug: "saif", SevenD: 0.15, UpdatedAt: time.Now().Add(-3 * 24 * time.Hour)}})
 	if _, ok := usagePercent(sess, switching.WindowWeek); ok {
 		t.Error("a reading three days old was acted on")
 	}
@@ -285,5 +281,32 @@ func TestSettingARuleOutsideASession(t *testing.T) {
 	t.Setenv(switching.SupervisorEnvVar, "")
 	if _, problem := setRule("saif", true, switching.WindowWeek, 5); !strings.Contains(problem, "Only a session started with clawdh") {
 		t.Errorf("problem = %q", problem)
+	}
+}
+
+// Anthropic removed the five-hour limit in late October 2026. Asking for it is
+// refused with the reason, not quietly turned into a rule that waits on a window
+// that no longer exists (or worse, on the week).
+func TestTheFiveHourWindowIsRefusedWithAReason(t *testing.T) {
+	message, problem := setRule("saif", true, switching.Window5h, 5)
+	if message != "" || !strings.Contains(problem, "no longer has a five-hour usage limit") || !strings.Contains(problem, "clawdh saif at <N>%") {
+		t.Errorf("setRule(5h) = %q, %q; want a refusal that names the weekly alternative", message, problem)
+	}
+}
+
+// A move set on the five-hour window before it was removed is cancelled the
+// next time an answer finishes. Reading it as the week instead could move the
+// session on a number nobody asked about.
+func TestAPendingFiveHourRuleIsCancelledNotReadAsTheWeek(t *testing.T) {
+	handoff := withRule(t, switching.Rule{Account: "saif", Shared: true, Window: switching.Window5h, AtPercent: 5, For: "n1"})
+	msg := applyRule(handoff, "s1", ruleSession(), reads(90)) // the week is far past 5%
+	if !strings.Contains(msg, "cancelled") || !strings.Contains(msg, "5-hour window") {
+		t.Errorf("message = %q, want it to say the move was cancelled and why", msg)
+	}
+	if _, ok := switching.ReadHandoff(handoff); ok {
+		t.Error("a switch was staged from a five-hour rule")
+	}
+	if _, ok := switching.ReadRule(handoff); ok {
+		t.Error("the five-hour rule was kept")
 	}
 }

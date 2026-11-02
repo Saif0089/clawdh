@@ -180,12 +180,12 @@ type Change struct {
 	// Shown as desktop notifications, deduplicated by ID so a standing condition
 	// isn't re-shown on every check-in.
 	Notices []Notice
-	// Windows is the gateway's captured 5h/weekly utilisation for each shared
+	// Windows is the gateway's captured weekly utilisation for each shared
 	// account, for the page's usage bars. Present whenever the panel has metering.
 	Windows []ShareWindow
 }
 
-// ShareWindow is a shared account's real 5h / weekly utilisation as the gateway
+// ShareWindow is a shared account's real weekly utilisation as the gateway
 // captured it from Anthropic's own rate-limit headers — the same numbers /usage
 // shows. A machine uses it to show usage for an account whose login the gateway
 // now refreshes: that login's local token goes stale by design (refreshing it
@@ -194,13 +194,16 @@ type Change struct {
 type ShareWindow struct {
 	Slug        string    `json:"slug"`
 	Email       string    `json:"email,omitempty"`
-	FiveH       float64   `json:"fiveH"`
 	SevenD      float64   `json:"sevenD"`
-	FiveHReset  time.Time `json:"fiveHReset,omitempty"`
 	SevenDReset time.Time `json:"sevenDReset,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// LoginEndsAt is when the sign-in behind this account runs out (zero:
+	// unknown). A Claude sign-in lasts about four weeks and refreshing never
+	// extends it, so the page says so ahead of time and the refresh dialog
+	// compares it with the sign-in on this machine.
+	LoginEndsAt time.Time `json:"loginEndsAt,omitzero"`
 	// Models are the per-model weekly allowances — the "This week, Fable" bar
-	// that /usage shows beside the two totals. See ModelWindow.
+	// that /usage shows beside the weekly total. See ModelWindow.
 	Models []ModelWindow `json:"models,omitempty"`
 	// People is who spent this account's week, largest first. A shared account
 	// is a shared cost: someone about to start a long run should be able to see
@@ -234,9 +237,9 @@ type SharePerson struct {
 // have plenty of its week left and none of its Fable.
 //
 // It reaches a machine only through the gateway. The utilisation headers that
-// ride on forwarded traffic carry the 5-hour and all-models windows and nothing
-// else, so for a shared login this bar was structurally absent — the page drew
-// two bars where /usage draws three, and the missing one was the one that runs
+// ride on forwarded traffic carry the all-models window and nothing else, so
+// for a shared login this bar was structurally absent — the page drew one bar
+// where /usage draws two, and the missing one was the one that runs
 // out first. The gateway holds the login, so it is the one place that can ask
 // the usage endpoint for the full set and pass it down.
 type ModelWindow struct {
@@ -378,6 +381,8 @@ type Contributed struct {
 	AccountID string `json:"accountId"`
 	Name      string `json:"name"`
 	Refreshed bool   `json:"refreshed"`
+	// LoginEndsAt is when the sign-in just handed up runs out (zero: unknown).
+	LoginEndsAt time.Time `json:"loginEndsAt,omitzero"`
 }
 
 // Contribute hands a login signed in on this machine up to the panel, as the

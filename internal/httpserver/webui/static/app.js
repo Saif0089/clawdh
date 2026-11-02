@@ -251,6 +251,7 @@ function buildAccountCard(row) {
     setStatus(node.querySelector(".status-pill"), "linked");
     renderShareWindow(card, share);
   }
+  showLoginEnd(card, share, !!account);
   renderPeople(card.querySelector(".people"), share && share.window ? share.window : null);
   return node;
 }
@@ -340,6 +341,33 @@ document.addEventListener("keydown", (e) => {
   document.querySelectorAll(".kebab-pop").forEach((p) => { p.hidden = true; });
 });
 
+// endMoment writes a moment the way a person reads it: the viewer's own time
+// zone, 12-hour, no UTC ("Mon, Nov 23, 3:52 pm").
+function endMoment(when) {
+  const d = new Date(when);
+  if (isNaN(d)) return "";
+  return d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+    .replace(/\s(AM|PM)$/, (m) => m.toLowerCase());
+}
+
+// showLoginEnd says when a shared login's sign-in runs out. A Claude sign-in
+// lasts about four weeks and refreshing never extends it, so it is stated a
+// week ahead and after the end; the person who can fix it is told how, anyone
+// else is told who has to.
+function showLoginEnd(card, share, canFix) {
+  const line = card.querySelector(".login-end-line");
+  if (!line) return;
+  const when = share && share.window && share.window.loginEndsAt;
+  const left = when ? new Date(when).getTime() - Date.now() : NaN;
+  if (!when || isNaN(left) || left > 7 * 24 * 3600e3) { line.hidden = true; return; }
+  const fix = canFix
+    ? "Choose Reconnect on this card to sign in again, then Refresh on the panel."
+    : "Whoever added it needs to sign in again and refresh it on the panel.";
+  line.hidden = false;
+  line.className = "login-end-line " + (left <= 0 ? "crit" : "warn");
+  line.textContent = (left <= 0 ? "Its sign-in ended " : "Its sign-in ends ") + endMoment(when) + ". " + fix;
+}
+
 // renderShareWindow draws the gateway's reading for an account with no local
 // login behind it — the same bars a local card gets, from the same numbers.
 function renderShareWindow(card, share) {
@@ -348,7 +376,6 @@ function renderShareWindow(card, share) {
   if (!meters || !w) return;
   meters.replaceChildren();
   const limits = [
-    { label: "Current session", percent: (w.fiveH || 0) * 100, resetsAt: w.fiveHReset },
     { label: "This week, all models", percent: (w.sevenD || 0) * 100, resetsAt: w.sevenDReset },
   ];
   for (const m of (w.models || [])) limits.push({ label: m.label, percent: m.percent || 0, resetsAt: m.resetsAt });
@@ -362,6 +389,7 @@ function refreshVisibleUsage(rows) {
     if (!card) continue;
     if (row.account) refreshUsage(row.account, card);
     else renderShareWindow(card, row.share);
+    showLoginEnd(card, row.share, !!row.account);
     renderPeople(card.querySelector(".people"), row.share && row.share.window ? row.share.window : null);
   }
 }
@@ -826,12 +854,32 @@ async function openShareDialog(account, login, there) {
   }
   shareTarget = { account, login };
   const who = login.email || account.name;
+  // Handing up the sign-in the panel already holds changes nothing, so the two
+  // are compared first and the person is told, not left pressing a button that
+  // does nothing.
+  const panelEnd = there && there.window && there.window.loginEndsAt ? new Date(there.window.loginEndsAt) : null;
+  const localEnd = login.endsAt ? new Date(login.endsAt) : null;
+  let blocked = false;
+  let comparison = "";
+  if (there && panelEnd && localEnd) {
+    if (localEnd.getTime() <= panelEnd.getTime() + 60e3) {
+      blocked = true;
+      comparison = `\n\nThe sign-in on this machine ends ${endMoment(localEnd)} — the same one the panel already holds (it ends ${endMoment(panelEnd)}), so refreshing would change nothing. First choose Reconnect on this card and sign in again; then come back here.`;
+    } else {
+      comparison = `\n\nThis machine has a newer sign-in (ends ${endMoment(localEnd)}) than the panel's (ends ${endMoment(panelEnd)}).`;
+    }
+  } else if (localEnd) {
+    comparison = `\n\nThis sign-in ends ${endMoment(localEnd)}. Claude sign-ins last about four weeks and cannot be extended, so it will need doing again then.`;
+  }
   document.getElementById("share-title").textContent = there ? `Refresh ${who} on the panel` : `Add ${who} to the panel`;
-  document.getElementById("share-note").textContent = there
+  document.getElementById("share-note").textContent = (there
     ? `Hands a fresh login for ${there.account} up to ${prettyURL(st.server)}. Everyone sharing it keeps their access; use this after reconnecting a login that stopped working.`
-    : `Adds this login to ${prettyURL(st.server)} as ${st.personName || "you"}, so people you give access to can use it through the gateway, and you can take it back any time. Important: from then on run it through the gateway (its command under “Shared with you”), not this local one — using the same login both ways breaks it for everyone.`;
+    : `Adds this login to ${prettyURL(st.server)} as ${st.personName || "you"}, so people you give access to can use it through the gateway, and you can take it back any time. Important: from then on run it through the gateway (its command under “Shared with you”), not this local one — using the same login both ways breaks it for everyone.`) + comparison;
   document.getElementById("share-err").textContent = "";
-  document.getElementById("share-go").textContent = there ? "Refresh it" : "Add it";
+  const go = document.getElementById("share-go");
+  go.textContent = there ? "Refresh it" : "Add it";
+  go.disabled = blocked;
+  go.title = blocked ? "Sign in again first — this is the sign-in the panel already has." : "";
   shareDialog.showModal();
 }
 
@@ -858,6 +906,10 @@ document.getElementById("share-form").addEventListener("submit", async (e) => {
     shareDialog.close();
     await refreshPanel();
     refreshAccounts();
+    const ends = out.loginEndsAt && !String(out.loginEndsAt).startsWith("0001") ? endMoment(out.loginEndsAt) : "";
+    if (out.refreshed) {
+      alert(`${out.added} is refreshed on the panel.` + (ends ? ` Its new sign-in ends ${ends}; it will need doing again before then.` : ""));
+    }
     if (!out.refreshed) {
       alert(`${out.added} is on the panel. It's under “Shared with you” here — run it from there from now on, not as the local "${shareTarget.account.name}".\n\nOpen the panel to give other people access.`);
     }

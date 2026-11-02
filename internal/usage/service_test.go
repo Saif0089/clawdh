@@ -945,8 +945,8 @@ func TestLastGoodNumbersSurviveARestart(t *testing.T) {
 	}
 }
 
-// Numbers older than the shortest window on the page have rolled over,
-// so they are not stale — they are wrong, and must not come back.
+// Numbers older than StaleReportAge are not brought back from disk: an empty
+// card is the more honest answer than a figure that old.
 func TestReportsTooOldToMeanAnythingAreDropped(t *testing.T) {
 	cache := filepath.Join(t.TempDir(), "usage.json")
 	old := time.Now().Add(-StaleReportAge - time.Hour)
@@ -962,7 +962,26 @@ func TestReportsTooOldToMeanAnythingAreDropped(t *testing.T) {
 	_, kept := svc.lastReport["work"]
 	svc.mu.Unlock()
 	if kept {
-		t.Error("a report from before the session window rolled was kept")
+		t.Error("a report older than StaleReportAge was kept")
+	}
+}
+
+// A report saved before the five-hour window was removed comes back without it.
+func TestSavedReportsLoseTheRemovedFiveHourWindow(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "usage.json")
+	writeFile(t, cache, fmt.Sprintf(
+		`{"accounts":{"work":{"limits":[{"kind":"session","label":"Current session","percent":42},{"kind":"weekly_all","label":"This week, all models","percent":10}],"fetchedAt":%q}}}`,
+		time.Now().UTC().Format(time.RFC3339)))
+
+	svc := NewServiceWithClient(&Client{})
+	svc.CachePath = cache
+	svc.loadReports()
+
+	svc.mu.Lock()
+	report := svc.lastReport["work"]
+	svc.mu.Unlock()
+	if report == nil || len(report.Limits) != 1 || report.Limits[0].Kind != "weekly_all" {
+		t.Errorf("restored report = %+v, want only the weekly limit", report)
 	}
 }
 

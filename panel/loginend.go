@@ -38,6 +38,11 @@ func (s *Server) loginEnd(a Account) (end time.Time, ok bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
+	return loginEndOf(raw)
+}
+
+// loginEndOf reads the end date out of a stored credential's JSON.
+func loginEndOf(raw []byte) (time.Time, bool) {
 	var b struct {
 		O struct {
 			RefreshTokenExpiresAt int64 `json:"refreshTokenExpiresAt"`
@@ -46,7 +51,20 @@ func (s *Server) loginEnd(a Account) (end time.Time, ok bool) {
 	if json.Unmarshal(raw, &b) != nil || b.O.RefreshTokenExpiresAt <= 0 {
 		return time.Time{}, false
 	}
-	return time.UnixMilli(b.O.RefreshTokenExpiresAt), true
+	return time.UnixMilli(b.O.RefreshTokenExpiresAt).UTC(), true
+}
+
+// sameSignInProblem is what a machine is told when it hands up a sign-in that is
+// not newer than the one the panel already holds. Re-adding it would change
+// nothing, and could replace a login the gateway has been keeping alive with
+// this machine's older copy of it.
+func sameSignInProblem(name string, held time.Time, now time.Time) string {
+	when := "ended " + inWords(held.Sub(now)) + " ago"
+	if held.After(now) {
+		when = "ends in " + inWords(held.Sub(now))
+	}
+	return "That is the same sign-in " + name + " already has on the panel (it " + when + "), so adding it again would change nothing. " +
+		"Sign in to the account again on this machine first, then add it."
 }
 
 // inWords is a span the way a person says it: "6 days", "5 hours", "20 minutes".
@@ -171,4 +189,10 @@ func concerns(d Data, a Account, personID string) bool {
 func (s *Server) loginEnded(a Account) bool {
 	end, ok := s.loginEnd(a)
 	return ok && !end.After(s.now())
+}
+
+// loginEndOrZero is loginEnd for a struct literal: the zero time when unknown.
+func loginEndOrZero(s *Server, a Account) time.Time {
+	end, _ := s.loginEnd(a)
+	return end
 }

@@ -246,7 +246,11 @@ func (s *Server) handleContribute(w http.ResponseWriter, r *http.Request, dev De
 		AccountID string `json:"accountId"`
 		Name      string `json:"name"`
 		Refreshed bool   `json:"refreshed"`
+		// LoginEndsAt is when the sign-in just stored runs out, so the machine can
+		// say so; absent when the credential carries no date.
+		LoginEndsAt *time.Time `json:"loginEndsAt,omitempty"`
 	}
+	var problem int
 	err = s.store.Mutate(func(d *Data) error {
 		now := s.now()
 		who := d.personName(dev.PersonID)
@@ -259,6 +263,17 @@ func (s *Server) handleContribute(w http.ResponseWriter, r *http.Request, dev De
 			a = &d.Accounts[len(d.Accounts)-1]
 			d.Log(now, who, "added "+a.Name+" from "+dev.Name)
 		} else {
+			// Only a newer sign-in replaces the one held. The same one (or an older
+			// copy of it, which is what a machine still holds after the gateway has
+			// been refreshing the login) changes nothing for a login that has ended
+			// and would overwrite the live one with a stale one for a login that has
+			// not.
+			if held, ok := s.loginEnd(*a); ok {
+				if incoming, ok := loginEndOf(raw); ok && !incoming.After(held) {
+					problem = 409
+					return errors.New(sameSignInProblem(a.Name, held, now))
+				}
+			}
 			a.Credential = sealed
 			if e := strings.TrimSpace(in.Email); e != "" {
 				a.Email = e
@@ -281,8 +296,14 @@ func (s *Server) handleContribute(w http.ResponseWriter, r *http.Request, dev De
 		return nil
 	})
 	if err != nil {
-		fail(w, 500, err.Error())
+		if problem == 0 {
+			problem = 500
+		}
+		fail(w, problem, err.Error())
 		return
+	}
+	if end, ok := loginEndOf(raw); ok {
+		out.LoginEndsAt = &end
 	}
 	code := 201
 	if out.Refreshed {
@@ -694,7 +715,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 	// Short notices for the person at this machine (quota, a broken login) ride
 	// back too, so the machine can surface them without polling anything else.
 	notices := s.checkinNotices(r.Context(), dev.PersonID, d)
-	// The gateway's real 5h/weekly utilisation for each account this person can
+	// The gateway's real weekly utilisation for each account this person can
 	// use, so their machine shows usage for a shared login without probing it.
 	windows := s.checkinWindows(r.Context(), dev.PersonID, d)
 	writeJSON(w, 200, map[string]any{"gateway": shares, "jobs": jobs, "notices": notices, "windows": windows})

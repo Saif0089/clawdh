@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// The usage board. Its unit is the account: for each shared login, the rolling
-// 5-hour and weekly windows — Anthropic's own figures for how full they are,
+// The usage board. Its unit is the account: for each shared login, the weekly
+// window — Anthropic's own figure for how full it is,
 // read by the gateway off the login — and, for a rolling day, week, or month,
 // who ran it and on which models, from the gateway's own metering. A short
 // across-accounts list of people follows, for the one question a per-account
@@ -70,16 +70,14 @@ type PersonShare struct {
 	Presence *Presence `json:"presence,omitempty"`
 }
 
-// AccountWindow is a subscription's real utilisation of its rolling usage
-// windows, read from Anthropic's own rate-limit headers and usage endpoint by
-// the gateway — the exact "% of the 5h / weekly window" that /usage shows, so
+// AccountWindow is a subscription's real utilisation of its weekly usage
+// window, read from Anthropic's own rate-limit headers and usage endpoint by
+// the gateway — the exact "% of the weekly window" that /usage shows, so
 // the board mirrors it rather than estimating it. Fractions are 0..1.
 type AccountWindow struct {
 	AccountID   string    `json:"accountId"`
 	Name        string    `json:"name"`
-	FiveH       float64   `json:"fiveH"`
 	SevenD      float64   `json:"sevenD"`
-	FiveHReset  time.Time `json:"fiveHReset,omitempty"`
 	SevenDReset time.Time `json:"sevenDReset,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	// Models are the per-model weekly allowances Claude meters separately from
@@ -125,7 +123,7 @@ type UsageReader interface {
 	DeleteLimit(ctx context.Context, id string) error
 	// Health: accounts whose shared login recently broke (used outside the gateway).
 	RecentCollisions(ctx context.Context, since time.Time) (map[string]time.Time, error)
-	// AccountWindows is each account's latest real 5h / weekly utilisation, from
+	// AccountWindows is each account's latest real weekly utilisation, from
 	// Anthropic's own numbers — what the board's bars and every ceiling read.
 	AccountWindows(ctx context.Context) ([]AccountWindow, error)
 
@@ -218,7 +216,7 @@ func (s *Server) handlePeopleUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAccountsUsage serves the board's one view: every account that has a
-// login, with its real 5h / weekly utilisation — the same windows /usage
+// login, with its real weekly utilisation — the same window /usage
 // shows — and, for the asked period, who ran it and on which models. An
 // account the gateway has not read yet is listed all the same, flagged, so the
 // board never mistakes "not read" for "unused".

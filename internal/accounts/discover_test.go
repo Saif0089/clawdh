@@ -1,9 +1,11 @@
 package accounts
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // writeLogin plants a credential (what CaptureLogin reads) and an identity (what
@@ -59,5 +61,21 @@ func TestDiscoverLoginsKeepsSharedEmailAccounts(t *testing.T) {
 	}
 	if l, ok := byDir[other]; !ok || l.Email != "other@dev.co" {
 		t.Errorf("other managed account = %+v (ok=%v)", l, ok)
+	}
+}
+
+// A sign-in's end date is read from the captured credential so the page can
+// compare it with the panel's; only the date leaves, never a token.
+func TestSignInEndIsReadFromTheCredential(t *testing.T) {
+	ends := time.Date(2026, 11, 23, 10, 52, 0, 0, time.UTC)
+	cred := []byte(fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"secret","refreshToken":"secret2","refreshTokenExpiresAt":%d}}`, ends.UnixMilli()))
+	if got := signInEnd(cred); !got.Equal(ends) {
+		t.Errorf("signInEnd = %v, want %v", got, ends)
+	}
+	if got := signInEnd([]byte(`{"claudeAiOauth":{"accessToken":"a"}}`)); !got.IsZero() {
+		t.Errorf("a credential with no date gave %v, want zero", got)
+	}
+	if got := signInEnd([]byte("not json")); !got.IsZero() {
+		t.Errorf("garbage gave %v, want zero", got)
 	}
 }

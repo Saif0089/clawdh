@@ -134,7 +134,7 @@ is the only credential it needs:
   it back. Access stops within seconds — the gateway simply stops honouring their
   key.
 - **Usage** is per account: one card for each shared login, holding its real
-  5-hour and weekly windows (Claude's own numbers, read by the gateway) and,
+  weekly window (Claude's own number, read by the gateway) and,
   for the last day, week or month, who ran it and on which models. Colour means
   one thing there — how full a window is; people and models are labelled, never
   colour-coded. An editor session and a terminal session land on the same rows.

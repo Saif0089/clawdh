@@ -55,6 +55,9 @@ func thisSession() (sessions.Session, bool) {
 // what to tell the person — or Claude, when it ran the command — or the reason
 // it cannot.
 func setRule(name string, shared bool, window string, atPercent float64) (message, problem string) {
+	if window == switching.Window5h {
+		return "", fiveHourGone + " Use `clawdh " + name + " at <N>%` to move at a share of the week, or `at 0%` to move after this answer."
+	}
 	handoff := os.Getenv(switching.HandoffEnvVar)
 	sess, ok := thisSession()
 	if handoff == "" || !ok {
@@ -80,16 +83,16 @@ func setRule(name string, shared bool, window string, atPercent float64) (messag
 		return "", "clawdh could not record the move: " + err.Error()
 	}
 	when := "once " + sess.Account + " has used " + strconv.FormatFloat(atPercent, 'f', -1, 64) + "% of its week"
-	if window == switching.Window5h {
-		when = "once " + sess.Account + " has used " + strconv.FormatFloat(atPercent, 'f', -1, 64) + "% of its 5-hour window"
-	}
 	if atPercent <= 0 {
 		when = "the next time an answer finishes"
 	}
 	return fmt.Sprintf("clawdh will move this session to %s %s — between answers, so nothing is cut off, and the conversation carries over. `clawdh stay` cancels it.", label, when), ""
 }
 
-// setRuleCommand is `clawdh [shared] <name> at <N>% [week|5h]` run as a
+// fiveHourGone is what anyone asking for the five-hour window is told.
+const fiveHourGone = "Anthropic no longer has a five-hour usage limit, so there is nothing to wait for."
+
+// setRuleCommand is `clawdh [shared] <name> at <N>% [week]` run as a
 // command inside a session.
 func setRuleCommand(name string, shared bool, window string, atPercent float64) int {
 	message, problem := setRule(name, shared, window, atPercent)
@@ -161,6 +164,14 @@ func applyRule(handoff, sessionID string, sess sessions.Session, read func(sessi
 		switching.ClearRule(handoff) // left by an earlier session that had this pid
 		return ""
 	}
+	if rule.Window == switching.Window5h {
+		// Set before the window was removed: it can never reach its percentage,
+		// and reading it as the week instead could move the session on a number
+		// nobody asked about.
+		switching.ClearRule(handoff)
+		return "clawdh: this session had a move waiting on the 5-hour window. " + fiveHourGone +
+			" The move was cancelled; set a new one with `clawdh <account> at <N>%`."
+	}
 	if rule.AtPercent > 0 {
 		used, ok := read(sess, rule.Window)
 		if !ok || used < rule.AtPercent {
@@ -181,16 +192,9 @@ func applyRule(handoff, sessionID string, sess sessions.Session, read func(sessi
 	}
 	if rule.AtPercent > 0 {
 		return fmt.Sprintf("clawdh: %s reached %s%% of its %s — moving this session to %s.",
-			sess.Account, strconv.FormatFloat(rule.AtPercent, 'f', -1, 64), windowWord(rule.Window), rule.Account)
+			sess.Account, strconv.FormatFloat(rule.AtPercent, 'f', -1, 64), "week", rule.Account)
 	}
 	return "clawdh: moving this session to " + rule.Account + "."
-}
-
-func windowWord(window string) string {
-	if window == switching.Window5h {
-		return "5-hour window"
-	}
-	return "week"
 }
 
 // stopMessage shows the person a line from the Stop hook.
@@ -205,7 +209,7 @@ func stopMessage(text string) {
 const sessionStartNote = "This Claude Code session runs as the account %[1]s, through clawdh. " +
 	"When the user asks to move it to another account later — for example once usage reaches some level — run " +
 	"`clawdh <account> at <N>%%` for one of their own accounts, or `clawdh shared <account> at <N>%%` for one shared with them. " +
-	"It watches %[1]s's weekly usage; add `5h` after the percentage to watch the five-hour window instead. " +
+	"It watches %[1]s's weekly usage. " +
 	"The move happens after an answer finishes and keeps this conversation; `at 0%%` moves as soon as the current answer finishes. " +
 	"`clawdh stay` cancels a pending move and `clawdh list` names the accounts. " +
 	"A bare `clawdh <account>` restarts the session at once and cuts off the current answer, so do not use it for this."
@@ -240,9 +244,6 @@ func usagePercent(sess sessions.Session, window string) (float64, bool) {
 			if time.Since(w.UpdatedAt) > sharedReadingMaxAge {
 				return 0, false
 			}
-			if window == switching.Window5h {
-				return w.FiveH * 100, true
-			}
 			return w.SevenD * 100, true
 		}
 		return 0, false
@@ -266,12 +267,8 @@ func localUsagePercent(base, accountID, window string) (float64, bool) {
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&snap) != nil || snap.Usage == nil {
 		return 0, false
 	}
-	kind := "weekly_all"
-	if window == switching.Window5h {
-		kind = "session"
-	}
 	for _, l := range snap.Usage.Limits {
-		if l.Kind == kind {
+		if l.Kind == "weekly_all" {
 			return l.Percent, true
 		}
 	}

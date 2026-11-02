@@ -209,7 +209,7 @@ func TestAMachineWithNoPanelDoesNothing(t *testing.T) {
 func TestCheckInCarriesTheWindowsThrough(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"gateway":[],"jobs":null,"notices":null,"windows":[{"slug":"ehtisham","email":"ehtisham@devhouse.co","fiveH":0.12,"sevenD":0.4,"updatedAt":"2026-09-19T20:06:06Z"}]}`)
+		io.WriteString(w, `{"gateway":[],"jobs":null,"notices":null,"windows":[{"slug":"ehtisham","email":"ehtisham@devhouse.co","sevenD":0.4,"updatedAt":"2026-09-19T20:06:06Z"}]}`)
 	}))
 	defer ts.Close()
 	c := &Client{Config: ClientConfig{Server: ts.URL, Token: "t", DeviceID: "d"}, Accounts: newTestManager(t), SharesPath: filepath.Join(t.TempDir(), "shares.json")}

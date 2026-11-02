@@ -21,7 +21,7 @@ import (
 type Rule struct {
 	Account   string  `json:"account"`
 	Shared    bool    `json:"shared,omitempty"`
-	Window    string  `json:"window"` // WindowWeek or Window5h
+	Window    string  `json:"window"` // WindowWeek (Window5h only in a rule written before it was removed)
 	AtPercent float64 `json:"atPercent"`
 	// For is the nonce of the supervisor the rule was set in. A rule outliving
 	// its supervisor must not fire in an unrelated session that inherited the
@@ -30,8 +30,11 @@ type Rule struct {
 	SetAt time.Time `json:"setAt"`
 }
 
-// The windows a rule can watch: the plan's weekly allowance, and the rolling
-// five-hour session allowance.
+// The window a rule watches: the plan's weekly allowance. Window5h is the
+// rolling five-hour session allowance Anthropic removed in late October 2026;
+// it is only still recognised so that someone typing `at 5% 5h`, or a rule
+// written before the removal, is told so instead of waiting on a window that no
+// longer exists.
 const (
 	WindowWeek = "week"
 	Window5h   = "5h"
@@ -82,9 +85,6 @@ func ClearRule(handoffPath string) {
 // Describe says what the rule will do, e.g. "move to saif at 5% of the week".
 func (r Rule) Describe() string {
 	window := "the week"
-	if r.Window == Window5h {
-		window = "the 5-hour window"
-	}
 	if r.AtPercent <= 0 {
 		return "move to " + r.Account + " once this answer finishes"
 	}
@@ -96,11 +96,7 @@ func (r Rule) Badge() string {
 	if r.AtPercent <= 0 {
 		return "→ " + r.Account + " next"
 	}
-	window := "wk"
-	if r.Window == Window5h {
-		window = "5h"
-	}
-	return "→ " + r.Account + " " + trimPercent(r.AtPercent) + "%" + window
+	return "→ " + r.Account + " " + trimPercent(r.AtPercent) + "%wk"
 }
 
 func trimPercent(p float64) string {
@@ -110,7 +106,7 @@ func trimPercent(p float64) string {
 // ParseRuleArgs reads what follows an account name when a rule is being set:
 //
 //	at 5%          -> the week, 5
-//	at 5% 5h       -> the five-hour window, 5
+//	at 5% 5h       -> Window5h, which no longer exists (the caller says so)
 //	at 80 week     -> the week, 80 (the % sign is optional)
 //	at 0%          -> as soon as the current answer finishes
 //
@@ -139,9 +135,9 @@ func ParseRuleArgs(args []string) (window string, atPercent float64, ok bool) {
 
 // ParseRuleTrigger reports whether a submitted prompt sets or clears a rule:
 //
-//	clawdh <name> at <N>% [week|5h]
-//	clawdh switch <name> at <N>% [week|5h]
-//	clawdh shared <name> at <N>% [week|5h]
+//	clawdh <name> at <N>% [week]
+//	clawdh switch <name> at <N>% [week]
+//	clawdh shared <name> at <N>% [week]
 //	clawdh stay                              -> clear
 //
 // Like ParseTrigger, anything else passes through to the model untouched.

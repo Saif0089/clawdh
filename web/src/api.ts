@@ -43,8 +43,8 @@ export interface Telemetry { res: string; person?: string; bucketSeconds: number
 // hasReading is false until the gateway has read the login once), and for the
 // asked period who ran it, each with their model split, plus the account's totals.
 export interface AccountUsage {
-  accountId: string; name: string; fiveH: number; sevenD: number;
-  fiveHReset?: string; sevenDReset?: string; updatedAt: string; hasReading: boolean;
+  accountId: string; name: string; sevenD: number;
+  sevenDReset?: string; updatedAt: string; hasReading: boolean;
   people: { id: string; name: string; weighted: number; byModel: ModelUsage[]; ofWeekly: number; presence?: Presence }[];
   weighted: number; byModel: ModelUsage[];
   // The part of the plan's week (0..1 of the plan) no metered request explains —

@@ -21,8 +21,10 @@ import (
 // usage is unavailable, and nothing else in clawdh is affected.
 const DefaultEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
-// Limit is one usage window: the five-hour session allowance, the
-// weekly allowance, or a weekly allowance scoped to one model.
+// Limit is one usage window: the weekly allowance, or a weekly allowance
+// scoped to one model. (Anthropic also had a five-hour session allowance until
+// late October 2026; its usage reply may still carry an empty "session" entry,
+// which Fetch drops so nothing shows or acts on a window that no longer exists.)
 type Limit struct {
 	Kind     string     `json:"kind"`
 	Group    string     `json:"group"`
@@ -159,6 +161,9 @@ func (c *Client) Fetch(ctx context.Context, creds Credentials) (*Report, error) 
 		ExtraUsage: payload.ExtraUsage.IsEnabled,
 	}
 	for _, l := range payload.Limits {
+		if l.Kind == "session" {
+			continue // the five-hour window, removed in late October 2026
+		}
 		limit := Limit{
 			Kind:     l.Kind,
 			Group:    l.Group,
@@ -181,13 +186,22 @@ func (c *Client) Fetch(ctx context.Context, creds Credentials) (*Report, error) 
 		report.Limits = append(report.Limits, limit)
 	}
 
-	// Session first, then the weekly windows: that is the order they
-	// run out in, and the order someone deciding "can I start this
-	// now?" reads them.
+	// Stable by group, so the API's own order within a group is kept.
 	sort.SliceStable(report.Limits, func(i, j int) bool {
 		return groupRank(report.Limits[i].Group) < groupRank(report.Limits[j].Group)
 	})
 	return report, nil
+}
+
+// withoutSession drops the five-hour "session" entry, which no longer exists.
+func withoutSession(limits []Limit) []Limit {
+	kept := limits[:0:0]
+	for _, l := range limits {
+		if l.Kind != "session" {
+			kept = append(kept, l)
+		}
+	}
+	return kept
 }
 
 // retryAfter reads the header in both forms the spec allows — a count
@@ -214,12 +228,10 @@ func retryAfter(header string) time.Duration {
 
 func groupRank(group string) int {
 	switch group {
-	case "session":
-		return 0
 	case "weekly":
-		return 1
+		return 0
 	default:
-		return 2
+		return 1
 	}
 }
 
@@ -227,8 +239,6 @@ func groupRank(group string) int {
 // showing names like "weekly_scoped".
 func labelFor(kind, model string) string {
 	switch kind {
-	case "session":
-		return "Current session"
 	case "weekly_all":
 		return "This week, all models"
 	case "weekly_scoped":

@@ -148,7 +148,7 @@ func New(up Upstream, rec Recorder, lim Limiter) http.Handler {
 				}
 			}
 			// Capture the subscription's real window utilisation from Anthropic's
-			// own unified rate-limit headers (the authoritative "% of the 5h /
+			// own unified rate-limit headers (the authoritative "% of the
 			// weekly window") before those headers are replaced below. Per account
 			// (the shared login), keyed by the resolved AccountID.
 			if wr, ok := rec.(WindowRecorder); ok {
@@ -456,13 +456,12 @@ func stripUnifiedRateLimit(h http.Header) {
 	}
 }
 
-// Windows is a subscription's real utilisation of its rolling usage windows,
+// Windows is a subscription's real utilisation of its weekly usage window,
 // read from Anthropic's own unified rate-limit headers — the authoritative
-// "% of the 5h / weekly window" that /usage shows. Fractions are 0..1.
+// "% of the weekly window" that /usage shows. Fractions are 0..1. (There was a
+// five-hour window too until Anthropic removed it in late October 2026.)
 type Windows struct {
-	FiveH       float64
 	SevenD      float64
-	FiveHReset  time.Time
 	SevenDReset time.Time
 }
 
@@ -474,7 +473,7 @@ type WindowRecorder interface {
 }
 
 // parseWindows reads the unified utilisation/reset headers off a response. has
-// is false when neither window's utilisation is present (most non-Anthropic or
+// is false when the weekly utilisation is not present (most non-Anthropic or
 // error responses). Anthropic reports utilisation as a percentage; a value >1
 // is treated as one (÷100), a value <=1 as an already-fractional reading, so
 // either encoding lands as 0..1.
@@ -499,13 +498,9 @@ func parseWindows(h http.Header) (w Windows, has bool) {
 		}
 		return time.Time{}
 	}
-	if f, ok := frac("anthropic-ratelimit-unified-5h-utilization"); ok {
-		w.FiveH, has = f, true
-	}
 	if f, ok := frac("anthropic-ratelimit-unified-7d-utilization"); ok {
 		w.SevenD, has = f, true
 	}
-	w.FiveHReset = unix("anthropic-ratelimit-unified-5h-reset")
 	w.SevenDReset = unix("anthropic-ratelimit-unified-7d-reset")
 	return w, has
 }

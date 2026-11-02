@@ -84,7 +84,7 @@ type fakeDB struct {
 	notes      map[string]string // account id -> the note its last collision carried
 }
 
-func (f *fakeDB) RecordWindows(string, float64, float64, time.Time, time.Time, []panel.ModelWindow) {}
+func (f *fakeDB) RecordWindows(string, float64, time.Time, []panel.ModelWindow) {}
 func (f *fakeDB) RecordCollision(_ context.Context, id, note string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -360,7 +360,7 @@ func TestWritesDoNotHoldUpAResponse(t *testing.T) {
 
 	notBlocked(t, "recording a response", func() {
 		u.Record(gateway.Event{AccountID: "acct1", PersonID: "p1", Model: "claude-sonnet-5", Input: 10, Output: 5})
-		u.RecordWindows("acct1", gateway.Windows{FiveH: 0.4, SevenD: 0.7})
+		u.RecordWindows("acct1", gateway.Windows{SevenD: 0.7})
 	})
 	// Even with a flush stuck on the hanging database, the next response's
 	// recording only queues.

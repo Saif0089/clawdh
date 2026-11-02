@@ -68,10 +68,10 @@ func TestAccountUsage(t *testing.T) {
 	if snapshot.Usage == nil {
 		t.Fatalf("no usage returned: %s", snapshot.Error)
 	}
-	if len(snapshot.Usage.Limits) != 2 {
-		t.Fatalf("got %d limits, want 2", len(snapshot.Usage.Limits))
+	if len(snapshot.Usage.Limits) != 1 {
+		t.Fatalf("got %d limits, want 1: the weekly one, the leftover session entry dropped", len(snapshot.Usage.Limits))
 	}
-	if snapshot.Usage.Limits[0].Label != "Current session" {
+	if snapshot.Usage.Limits[0].Label != "This week, all models" {
 		t.Errorf("first label = %q", snapshot.Usage.Limits[0].Label)
 	}
 	if snapshot.Session == nil || snapshot.Session.SessionExpiresAt == nil {

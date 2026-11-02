@@ -145,7 +145,6 @@ func (f fixedLimiter) Status(string, string) QuotaStatus { return f.st }
 func TestParseWindows(t *testing.T) {
 	h := http.Header{}
 	h.Set("anthropic-ratelimit-unified-7d-utilization", "42")   // a percentage
-	h.Set("anthropic-ratelimit-unified-5h-utilization", "0.8")  // already a fraction
 	h.Set("anthropic-ratelimit-unified-7d-reset", "1800000000") // unix seconds
 	w, has := parseWindows(h)
 	if !has {
@@ -154,14 +153,23 @@ func TestParseWindows(t *testing.T) {
 	if w.SevenD != 0.42 {
 		t.Errorf("7d utilisation = %v, want 0.42 (42%% normalised)", w.SevenD)
 	}
-	if w.FiveH != 0.8 {
-		t.Errorf("5h utilisation = %v, want 0.8 (kept as a fraction)", w.FiveH)
-	}
 	if w.SevenDReset.Unix() != 1800000000 {
 		t.Errorf("7d reset = %v, want the unix time parsed", w.SevenDReset.Unix())
 	}
 	if _, has := parseWindows(http.Header{}); has {
 		t.Error("no utilisation headers should report has = false")
+	}
+	// The five-hour headers Anthropic used to send are ignored: only the week counts.
+	old := http.Header{}
+	old.Set("anthropic-ratelimit-unified-5h-utilization", "0.8")
+	if _, has := parseWindows(old); has {
+		t.Error("a five-hour reading alone must not count as a window")
+	}
+	// A fraction is kept as a fraction.
+	frac := http.Header{}
+	frac.Set("anthropic-ratelimit-unified-7d-utilization", "0.8")
+	if w, _ := parseWindows(frac); w.SevenD != 0.8 {
+		t.Errorf("7d utilisation = %v, want 0.8 (kept as a fraction)", w.SevenD)
 	}
 }
 
@@ -254,7 +262,7 @@ func TestGatewayWarnsApproachingQuota(t *testing.T) {
 	anthropic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The upstream reports its own (whole-login) utilization; clawdh replaces it.
 		w.Header().Set("anthropic-ratelimit-unified-status", "allowed")
-		w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "12")
+		w.Header().Set("anthropic-ratelimit-unified-7d-utilization", "12")
 		io.WriteString(w, `{"type":"message","content":[]}`)
 	}))
 	defer anthropic.Close()
@@ -282,7 +290,7 @@ func TestGatewayWarnsApproachingQuota(t *testing.T) {
 	if got := resp.Header.Get("anthropic-ratelimit-unified-reset"); got != strconv.FormatInt(reset.Unix(), 10) {
 		t.Errorf("unified-reset = %q, want the window reset %d", got, reset.Unix())
 	}
-	if resp.Header.Get("anthropic-ratelimit-unified-5h-utilization") != "" {
+	if resp.Header.Get("anthropic-ratelimit-unified-7d-utilization") != "" {
 		t.Error("the upstream's own unified rate-limit headers must be stripped")
 	}
 }

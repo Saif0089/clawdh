@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -182,5 +183,83 @@ func TestAnEndedLoginIsNotAnnouncedTwice(t *testing.T) {
 	}
 	if len(bodies) != 2 || !strings.Contains(bodies[0], "Collided's shared login broke") || !strings.Contains(bodies[1], "Ended's login ended 24 hours ago") {
 		t.Errorf("notices = %q, want the collision for Collided and the ended notice for Ended, once each", bodies)
+	}
+}
+
+// credentialEnding is a stored login (as a machine hands it up, base64) whose
+// refresh token ends at the given time; a zero time leaves the date out.
+func credentialEnding(ends time.Time) string {
+	date := ""
+	if !ends.IsZero() {
+		date = fmt.Sprintf(`,"refreshTokenExpiresAt":%d`, ends.UnixMilli())
+	}
+	return base64.StdEncoding.EncodeToString([]byte(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1` + date + `}}`))
+}
+
+// Handing up the sign-in the panel already holds (or an older copy of it) is
+// refused with the reason, because it changes nothing for a login that has ended
+// and would overwrite the live login with a stale one for one that has not. A
+// newer sign-in replaces it and the machine is told when it ends.
+func TestRefreshingTheLoginNeedsANewerSignIn(t *testing.T) {
+	h := newHarness(t)
+	h.setUp()
+	_, tok := h.join("Alice", "alice-laptop")
+	first := h.clock.Add(10 * 24 * time.Hour)
+
+	post := func(ends time.Time) (int, map[string]any) {
+		return h.do("POST", "/api/v1/accounts", map[string]string{"name": "Team", "email": "team@example.com", "credential": credentialEnding(ends)}, tok)
+	}
+
+	code, body := post(first)
+	if code != 201 || body["loginEndsAt"] == nil {
+		t.Fatalf("first add = %d %v; want 201 with the end date", code, body)
+	}
+	if got, _ := body["loginEndsAt"].(string); !strings.HasPrefix(got, first.UTC().Format("2006-01-02T15:04:05")) {
+		t.Errorf("loginEndsAt = %q, want %v", got, first.UTC())
+	}
+
+	for name, ends := range map[string]time.Time{"the same sign-in": first, "an older copy": first.Add(-24 * time.Hour)} {
+		code, body := post(ends)
+		if code != 409 {
+			t.Errorf("%s: status = %d %v, want 409", name, code, body)
+		}
+		msg, _ := body["error"].(string)
+		if !strings.Contains(msg, "same sign-in Team already has") || !strings.Contains(msg, "Sign in to the account again") {
+			t.Errorf("%s: message = %q, want the reason and what to do", name, msg)
+		}
+	}
+
+	newer := first.Add(28 * 24 * time.Hour)
+	code, body = post(newer)
+	if code != 200 || body["refreshed"] != true {
+		t.Fatalf("newer sign-in = %d %v, want 200 refreshed", code, body)
+	}
+	_, pb := h.do("GET", "/api/panel", nil, "")
+	accts, _ := pb["accounts"].([]any)
+	if len(accts) != 1 {
+		t.Fatalf("accounts = %v", pb["accounts"])
+	}
+
+	// A credential with no date cannot be compared, so it is let through.
+	if code, body := post(time.Time{}); code != 200 {
+		t.Errorf("an undated credential = %d %v, want it accepted", code, body)
+	}
+}
+
+// Every machine is told when each of its accounts' sign-ins ends, in the windows
+// that ride on its check-in, so the page can say so and the refresh dialog can
+// compare it with the sign-in on the machine.
+func TestMachinesAreToldWhenALoginEnds(t *testing.T) {
+	s, secret := loginServer(t)
+	ends := loginNow.Add(3 * 24 * time.Hour)
+	s.usage = &fakeUsage{windows: []AccountWindow{{AccountID: "a1", SevenD: 0.2, UpdatedAt: loginNow}}}
+	d := Data{
+		Accounts: []Account{{ID: "a1", Name: "Saif", Email: "saif@devhouse.co", Credential: sealedLogin(t, secret, ends)}},
+		Shares:   []Share{{AccountID: "a1", PersonID: "p"}},
+	}
+
+	got := s.checkinWindows(context.Background(), "p", d)
+	if len(got) != 1 || !got[0].LoginEndsAt.Equal(ends) {
+		t.Fatalf("windows = %+v, want one carrying the end %v", got, ends)
 	}
 }

@@ -118,7 +118,7 @@ EVERYDAY
 INSIDE A SESSION — type as your prompt, or just ask Claude in plain words:
   clawdh [shared] <name>       Switch now; the conversation carries over
   clawdh [shared] <name> at 5% Switch once this account has used 5% of its week
-                               (add 5h for the 5-hour window) — after an answer, never mid-answer
+                               — after an answer, never mid-answer
   clawdh stay                  Cancel a pending switch
 
 ACCOUNTS live on the web page clawdh opens — add, connect, and remove them there:

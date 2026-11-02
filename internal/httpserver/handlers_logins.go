@@ -79,7 +79,10 @@ func (s *Server) handleAddLoginToPanel(w http.ResponseWriter, r *http.Request) {
 	// Access to it comes back on a check-in; do one now so the page shows it
 	// under "Shared with you" at once, not in half a minute.
 	_, _ = client.CheckIn(ctx)
-	writeJSON(w, http.StatusOK, map[string]any{"added": added.Name, "refreshed": added.Refreshed, "panel": client.Config.Server})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"added": added.Name, "refreshed": added.Refreshed, "panel": client.Config.Server,
+		"loginEndsAt": added.LoginEndsAt,
+	})
 }
 
 // handleWithdrawFromPanel takes back a login this person handed up: the account

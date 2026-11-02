@@ -171,7 +171,7 @@ func (s *Server) checkinWindows(ctx context.Context, personID string, d Data) []
 		}
 		out = append(out, ShareWindow{
 			Slug: slugs[acct.ID], Email: acct.Email,
-			FiveH: w.FiveH, SevenD: w.SevenD, FiveHReset: w.FiveHReset, SevenDReset: w.SevenDReset,
+			SevenD: w.SevenD, SevenDReset: w.SevenDReset, LoginEndsAt: loginEndOrZero(s, *acct),
 			Models: w.Models, People: people, Unaccounted: week.Unaccounted, WeekBasis: week.Basis,
 			UpdatedAt: w.UpdatedAt,
 		})

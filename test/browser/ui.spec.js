@@ -22,12 +22,14 @@ let usageServer;
 
 // A stand-in for Anthropic's usage endpoint. Reset times are relative so
 // the countdowns in the page are always in the future, whenever the
-// suite happens to run.
+// suite happens to run. It still sends the empty five-hour "session" entry
+// Anthropic left behind when it removed that window, so the tests prove the
+// page never draws it.
 function usagePayload() {
   const inHours = (h) => new Date(Date.now() + h * 3600_000).toISOString();
   return JSON.stringify({
     limits: [
-      { kind: "session", group: "session", percent: 12, severity: "normal", resets_at: inHours(3), is_active: true },
+      { kind: "session", group: "session", percent: 0, severity: "normal", resets_at: null, is_active: false },
       { kind: "weekly_all", group: "weekly", percent: 94, severity: "normal", resets_at: inHours(50), is_active: true },
       { kind: "weekly_scoped", group: "weekly", percent: 71, severity: "normal", resets_at: inHours(50), is_active: true, scope: { model: { display_name: "Fable" } } },
     ],
@@ -239,34 +241,32 @@ test("shows plan usage and reset countdowns", async ({ page }) => {
   await page.goto(pageURL);
 
   const meters = page.locator(".meter");
-  await expect(meters).toHaveCount(3);
+  // Two weekly meters; the leftover "session" entry is never drawn.
+  await expect(meters).toHaveCount(2);
+  await expect(page.getByText("Current session")).toHaveCount(0);
 
-  await expect(meters.nth(0).locator(".meter-label")).toHaveText("Current session");
-  await expect(meters.nth(1).locator(".meter-label")).toHaveText("This week, all models");
-  await expect(meters.nth(2).locator(".meter-label")).toHaveText("This week, Fable");
+  await expect(meters.nth(0).locator(".meter-label")).toHaveText("This week, all models");
+  await expect(meters.nth(1).locator(".meter-label")).toHaveText("This week, Fable");
 
-  await expect(meters.nth(0).locator(".meter-pct")).toHaveText("12%");
-  await expect(meters.nth(1).locator(".meter-pct")).toHaveText("94%");
-  await expect(meters.nth(2).locator(".meter-pct")).toHaveText("71%");
+  await expect(meters.nth(0).locator(".meter-pct")).toHaveText("94%");
+  await expect(meters.nth(1).locator(".meter-pct")).toHaveText("71%");
 
   // Colour carries one meaning on this page: how much headroom is left.
   // If these classes stop tracking the numbers, a nearly-exhausted week
   // renders in the same calm green as an untouched one.
-  await expect(meters.nth(0)).toHaveClass(/level-ok/);
-  await expect(meters.nth(1)).toHaveClass(/level-crit/);
-  await expect(meters.nth(2)).toHaveClass(/level-warn/);
+  await expect(meters.nth(0)).toHaveClass(/level-crit/);
+  await expect(meters.nth(1)).toHaveClass(/level-warn/);
 
   // The bar has to actually move; a fill left at zero width would look
   // identical for every account. It grows over a few frames, and a renderer
   // with no GPU (CI) can take a moment to produce the first one — so poll.
   await expect
-    .poll(() => meters.nth(1).locator(".bar-fill").evaluate((el) => el.getBoundingClientRect().width), { timeout: 5000 })
+    .poll(() => meters.nth(0).locator(".bar-fill").evaluate((el) => el.getBoundingClientRect().width), { timeout: 5000 })
     .toBeGreaterThan(0);
 
   // One line per window now: how long is left sits beside the percent, and
   // the exact moment is the title.
-  await expect(meters.nth(0).locator(".meter-reset")).toHaveText(/\d+h \d+m left/);
-  await expect(meters.nth(1).locator(".meter-reset")).toHaveText(/2d \d+h left/);
+  await expect(meters.nth(0).locator(".meter-reset")).toHaveText(/2d \d+h left/);
 
   // A working login says so with the Ready pill and nothing more: the old
   // pair of ticking clocks (a long "login session" and a short "access
@@ -307,7 +307,7 @@ test("re-reads usage on its own, with no button to press", async ({ page }) => {
   // bar is still its full width after several refreshes.
   const width = await card
     .locator(".meter")
-    .nth(1)
+    .nth(0)
     .locator(".bar-fill")
     .evaluate((el) => el.getBoundingClientRect().width);
   expect(width).toBeGreaterThan(0);

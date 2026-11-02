@@ -10,8 +10,10 @@ import (
 )
 
 // account_windows holds each subscription's most recent real utilisation of its
-// rolling 5h / weekly windows, as read from Anthropic's own rate-limit headers
-// by the gateway. One row per account, overwritten each response — it is a
+// weekly window, as read from Anthropic's own rate-limit headers by the gateway.
+// The fiveh_* columns are from the five-hour window Anthropic removed in late
+// October 2026: they stay in the table (dropping them would change a live
+// database for nothing) but nothing writes or reads them any more. One row per account, overwritten each response — it is a
 // snapshot ("42% of the weekly window right now"), not a time series.
 const windowsDDL = `
 CREATE TABLE IF NOT EXISTS account_windows (
@@ -38,7 +40,7 @@ func ensureWindowsSchema(ctx context.Context, db *sql.DB) error {
 // models is nil from the header path, which cannot see per-model allowances at
 // all; COALESCE then keeps whatever the usage poller last stored rather than
 // blanking a bar every time a request is forwarded.
-func (b *Backend) RecordWindows(accountID string, fiveH, sevenD float64, fiveHReset, sevenDReset time.Time, models []panel.ModelWindow) {
+func (b *Backend) RecordWindows(accountID string, sevenD float64, sevenDReset time.Time, models []panel.ModelWindow) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var encoded any
@@ -48,23 +50,21 @@ func (b *Backend) RecordWindows(accountID string, fiveH, sevenD float64, fiveHRe
 		}
 	}
 	_, _ = b.db.ExecContext(ctx, `
-		INSERT INTO account_windows (account_id, fiveh_util, sevend_util, fiveh_reset, sevend_reset, models, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,now())
+		INSERT INTO account_windows (account_id, sevend_util, sevend_reset, models, updated_at)
+		VALUES ($1,$2,$3,$4,now())
 		ON CONFLICT (account_id) DO UPDATE SET
-		    fiveh_util   = EXCLUDED.fiveh_util,
 		    sevend_util  = EXCLUDED.sevend_util,
-		    fiveh_reset  = EXCLUDED.fiveh_reset,
 		    sevend_reset = EXCLUDED.sevend_reset,
 		    models       = COALESCE(EXCLUDED.models, account_windows.models),
 		    updated_at   = now()`,
-		accountID, fiveH, sevenD, nullTime(fiveHReset), nullTime(sevenDReset), encoded)
+		accountID, sevenD, nullTime(sevenDReset), encoded)
 }
 
 // AccountWindows returns every account's latest window reading, most-recently-
 // updated first. Names are filled by the handler from the panel blob.
 func (b *Backend) AccountWindows(ctx context.Context) ([]panel.AccountWindow, error) {
 	rows, err := b.db.QueryContext(ctx, `
-		SELECT account_id, fiveh_util, sevend_util, fiveh_reset, sevend_reset, models, updated_at
+		SELECT account_id, sevend_util, sevend_reset, models, updated_at
 		  FROM account_windows ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
@@ -73,18 +73,15 @@ func (b *Backend) AccountWindows(ctx context.Context) ([]panel.AccountWindow, er
 	var out []panel.AccountWindow
 	for rows.Next() {
 		var a panel.AccountWindow
-		var fr, sr sql.NullTime
+		var sr sql.NullTime
 		var models []byte
-		if err := rows.Scan(&a.AccountID, &a.FiveH, &a.SevenD, &fr, &sr, &models, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.AccountID, &a.SevenD, &sr, &models, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if len(models) > 0 {
 			// Unreadable stored models are simply no models: the two totals
 			// beside them are the point, and a board must not fail over a bar.
 			_ = json.Unmarshal(models, &a.Models)
-		}
-		if fr.Valid {
-			a.FiveHReset = fr.Time
 		}
 		if sr.Valid {
 			a.SevenDReset = sr.Time

@@ -16,7 +16,7 @@ import (
 // this machine goes stale by design (refreshing it here would rotate the token
 // out from under the gateway — the very collision the gateway exists to
 // prevent). So this machine must not probe that login for usage. Instead every
-// check-in brings the gateway's own captured 5h/weekly utilisation for each
+// check-in brings the gateway's own captured weekly utilisation for each
 // account shared with this person, and a local login whose email matches one
 // of them shows that reading. The same numbers /usage shows, from the source
 // that actually serves the account — and the same on every card.
@@ -69,10 +69,9 @@ func windowReport(w panel.ShareWindow) *usage.Report {
 		}
 		r.Limits = append(r.Limits, l)
 	}
-	add("session", "session", "Current session", w.FiveH, w.FiveHReset)
 	add("weekly_all", "weekly", "This week, all models", w.SevenD, w.SevenDReset)
 	// The per-model weeks Claude meters separately. Without these the card drew
-	// two bars where /usage draws three, and the absent one — the top model's —
+	// one bar where /usage draws two, and the absent one — the top model's —
 	// is the one that runs out first, so a person could be told they had half
 	// their week left by a page that could not see the limit stopping them.
 	for _, m := range w.Models {

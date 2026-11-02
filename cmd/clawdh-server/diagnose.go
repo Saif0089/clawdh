@@ -93,8 +93,8 @@ func runDiagnose(ctx context.Context, dsn, keyB64 string) error {
 	}
 	if ws, err := u.pg.AccountWindows(ctx); err == nil {
 		for _, w := range ws {
-			fmt.Printf("  windows   %-20s 5h %3.0f%%  weekly %3.0f%%  (read %s ago)\n",
-				nameOfAccount(d.Accounts, w.AccountID), w.FiveH*100, w.SevenD*100, now.Sub(w.UpdatedAt).Round(time.Second))
+			fmt.Printf("  windows   %-20s weekly %3.0f%%  (read %s ago)\n",
+				nameOfAccount(d.Accounts, w.AccountID), w.SevenD*100, now.Sub(w.UpdatedAt).Round(time.Second))
 		}
 	}
 	fmt.Println()

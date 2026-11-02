@@ -385,6 +385,10 @@ func panelPush(args []string) int {
 	} else {
 		fmt.Printf("%s is on the panel and ready to share, added as %s.\n", added.Name, c.Config.PersonName)
 	}
+	if !added.LoginEndsAt.IsZero() {
+		fmt.Printf("This sign-in ends %s. Claude logins last about four weeks and refreshing does not extend one,\n", added.LoginEndsAt.Local().Format("Mon 2 Jan, 3:04 pm"))
+		fmt.Printf("so it will need signing in to again, and adding here again, before then.\n")
+	}
 	slug := slugifyName(added.Name)
 	for _, sh := range gatewaySharesFor(c.SharesPath) {
 		if sh.AccountID == added.AccountID {

@@ -3,6 +3,7 @@ package accounts
 import (
 	"encoding/json"
 	"os"
+	"time"
 )
 
 // DiscoveredLogin is a Claude login found on this machine, identified by the
@@ -14,6 +15,11 @@ type DiscoveredLogin struct {
 	Plan      string `json:"plan"`
 	ConfigDir string `json:"configDir"`
 	IsDefault bool   `json:"isDefault"`
+	// EndsAt is when this sign-in runs out (zero: the credential carries no
+	// date). A Claude sign-in lasts about four weeks and refreshing never
+	// extends it; the page compares it with the panel's before handing it up,
+	// because handing up the same sign-in again changes nothing.
+	EndsAt time.Time `json:"endsAt,omitzero"`
 }
 
 // DiscoverLogins finds every authenticated Claude login on this machine: the
@@ -42,7 +48,7 @@ func DiscoverLogins(list []Account) []DiscoveredLogin {
 		}
 		seen[configDir] = true
 		email, plan := identityFor(configDir, raw)
-		out = append(out, DiscoveredLogin{Email: email, Plan: plan, ConfigDir: configDir, IsDefault: isDefault})
+		out = append(out, DiscoveredLogin{Email: email, Plan: plan, ConfigDir: configDir, IsDefault: isDefault, EndsAt: signInEnd(raw)})
 	}
 
 	add("", true) // the default ~/.claude login
@@ -80,4 +86,18 @@ func identityFor(configDir string, cred []byte) (email, plan string) {
 		plan = c.O.SubscriptionType
 	}
 	return email, plan
+}
+
+// signInEnd reads when a captured credential's refresh token runs out. Only the
+// date leaves this function, never a token.
+func signInEnd(cred []byte) time.Time {
+	var c struct {
+		O struct {
+			RefreshTokenExpiresAt int64 `json:"refreshTokenExpiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(cred, &c) != nil || c.O.RefreshTokenExpiresAt <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(c.O.RefreshTokenExpiresAt)
 }

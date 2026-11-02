@@ -44,7 +44,7 @@ type dbUpstream struct {
 // state itself. *panelpg.Backend is the real one; tests stand in a database
 // that is slow, or failing, on demand — the only conditions that matter here.
 type panelDB interface {
-	RecordWindows(accountID string, fiveH, sevenD float64, fiveHReset, sevenDReset time.Time, models []panel.ModelWindow)
+	RecordWindows(accountID string, sevenD float64, sevenDReset time.Time, models []panel.ModelWindow)
 	RecordUsage(ctx context.Context, ev panelpg.UsageEvent) error
 	RecordCollision(ctx context.Context, accountID, note string) error
 	MemberLimitStatus(ctx context.Context, personID, accountID string) (panelpg.LimitStatus, error)
@@ -284,7 +284,7 @@ func (u *dbUpstream) Renew(accountID, bad string) (string, error) {
 // written in line: a request must not wait on the database to finish.
 func (u *dbUpstream) Record(ev gateway.Event) { u.w.event(ev) }
 
-// RecordWindows keeps an account's real 5h / weekly utilisation, read off
+// RecordWindows keeps an account's real weekly utilisation, read off
 // Anthropic's headers (gateway.WindowRecorder). Queued, like Record — it used
 // to be written before a response's first byte went back to the member. Nil
 // models: a response's headers carry the two totals and nothing per-model, so
@@ -295,7 +295,7 @@ func (u *dbUpstream) RecordWindows(accountID string, w gateway.Windows) { u.w.wi
 // unlike the headers — reports each model's own weekly allowance too. It is
 // called only by the usage poller, never on a member's request.
 func (u *dbUpstream) RecordWindowsAndModels(accountID string, w gateway.Windows, models []panel.ModelWindow) {
-	u.pg.RecordWindows(accountID, w.FiveH, w.SevenD, w.FiveHReset, w.SevenDReset, models)
+	u.pg.RecordWindows(accountID, w.SevenD, w.SevenDReset, models)
 }
 
 // Status reports a person's quota standing on an account (over the cap, and how

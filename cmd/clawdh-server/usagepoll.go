@@ -114,19 +114,13 @@ func modelsFromReport(r *usage.Report) []panel.ModelWindow {
 	return out
 }
 
-// windowsFromReport lifts the two rolling windows the boards show — the
-// current session and the all-models week — out of a usage report.
+// windowsFromReport lifts the window the boards show — the all-models week —
+// out of a usage report.
 func windowsFromReport(r *usage.Report) (gateway.Windows, bool) {
 	var w gateway.Windows
 	found := false
 	for _, l := range r.Limits {
 		switch l.Kind {
-		case "session":
-			w.FiveH = l.Percent / 100
-			if l.ResetsAt != nil {
-				w.FiveHReset = *l.ResetsAt
-			}
-			found = true
 		case "weekly_all":
 			w.SevenD = l.Percent / 100
 			if l.ResetsAt != nil {

@@ -213,7 +213,7 @@ func (u *dbUpstream) flush() error {
 		w.mu.Unlock()
 	}
 	for id, win := range windows {
-		u.pg.RecordWindows(id, win.FiveH, win.SevenD, win.FiveHReset, win.SevenDReset, nil)
+		u.pg.RecordWindows(id, win.SevenD, win.SevenDReset, nil)
 		w.mu.Lock()
 		if cur, ok := w.windows[id]; ok && cur == win {
 			delete(w.windows, id)

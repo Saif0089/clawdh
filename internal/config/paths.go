@@ -220,7 +220,7 @@ func NewSessionDefaultFile() (string, error) {
 	return filepath.Join(base, "new-sessions.json"), nil
 }
 
-// WindowsFile is where a machine caches the gateway's captured 5h/weekly
+// WindowsFile is where a machine caches the gateway's captured weekly
 // utilisation for the accounts shared with it (from each check-in), so the page
 // can show usage for a login the gateway holds without touching that login's
 // stale local token. Numbers only, no secrets.
