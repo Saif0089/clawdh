@@ -373,3 +373,30 @@ func TestUpdatesThroughDownloadLinksWhenTheAPIIsRateLimited(t *testing.T) {
 		t.Errorf("second check = %v, %v; want nothing to do", again, err)
 	}
 }
+
+// After an update that will not install, the timer waits longer each time —
+// doubling from the check interval, never past half an hour — instead of
+// downloading the same file every two minutes.
+func TestRetryDelayBacksOffAndStops(t *testing.T) {
+	for _, tc := range []struct {
+		failures int
+		want     time.Duration
+	}{
+		{1, 2 * time.Minute}, {2, 4 * time.Minute}, {3, 8 * time.Minute},
+		{4, 16 * time.Minute}, {5, 30 * time.Minute}, {12, 30 * time.Minute},
+	} {
+		if got := retryDelay(2*time.Minute, tc.failures); got != tc.want {
+			t.Errorf("after %d failures: %v, want %v", tc.failures, got, tc.want)
+		}
+	}
+}
+
+// Only an update a person asked for counts as interactive.
+func TestOnlyAPersonsUpdateIsInteractive(t *testing.T) {
+	if interactive(context.Background()) {
+		t.Error("a plain context is interactive, so the timer could raise a prompt")
+	}
+	if !interactive(WithInteractive(context.Background())) {
+		t.Error("an update a person asked for is not interactive")
+	}
+}

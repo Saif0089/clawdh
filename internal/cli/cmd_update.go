@@ -71,7 +71,7 @@ func cmdUpdate(args []string) int {
 		fmt.Fprintln(os.Stderr, "clawdh: the running service could not do it ("+err.Error()+"); updating directly.")
 	}
 
-	release, err := up.CheckAndApply(ctx)
+	release, err := up.CheckAndApply(updater.WithInteractive(ctx))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", updateProblem(err))
 		return 1

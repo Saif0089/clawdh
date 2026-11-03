@@ -201,7 +201,7 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 	// now, or from `clawdh update`. It shares the updater, so the two can
 	// never be downloading over each other.
 	srv.SetUpdater(func(ctx context.Context) (httpserver.UpdateOutcome, error) {
-		release, err := up.CheckAndApply(ctx)
+		release, err := up.CheckAndApply(updater.WithInteractive(ctx))
 		// Recorded like the timer's own attempt: pressing the button on a
 		// machine that cannot update is exactly when the reason matters, and
 		// the panel should hear it on the next check-in either way.

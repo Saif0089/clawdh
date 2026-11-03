@@ -3,6 +3,7 @@
 package updater
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -49,7 +51,7 @@ func TestReplaceBinaryNeverElevatesOnAnOrdinaryInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := replaceBinary(from, to); err != nil {
+	if err := replaceBinary(context.Background(), from, to); err != nil {
 		t.Fatalf("replaceBinary on a writable directory: %v", err)
 	}
 	if *called {
@@ -75,7 +77,7 @@ func TestReplaceBinaryElevatesOnlyOnAccessDenied(t *testing.T) {
 	// The target does not exist, so the first rename fails — but with
 	// "not found", which elevation cannot help with.
 	called := stubElevation(t, nil)
-	if err := replaceBinary(from, filepath.Join(dir, "absent.exe")); err == nil {
+	if err := replaceBinary(context.Background(), from, filepath.Join(dir, "absent.exe")); err == nil {
 		t.Error("replacing a binary that is not there should fail")
 	}
 	if *called {
@@ -209,7 +211,7 @@ func TestReplaceBinaryWorksWhileThePreviousImageIsStillRunning(t *testing.T) {
 		t.Fatal("precondition: a running image was deleted, so this test cannot reproduce the held file")
 	}
 
-	if err := replaceBinary(from, to); err != nil {
+	if err := replaceBinary(context.Background(), from, to); err != nil {
 		t.Fatalf("an update over a still-running previous image failed: %v", err)
 	}
 	if *called {
@@ -218,5 +220,90 @@ func TestReplaceBinaryWorksWhileThePreviousImageIsStillRunning(t *testing.T) {
 	}
 	if got, err := os.ReadFile(to); err != nil || string(got) != "new" {
 		t.Errorf("binary content = %q (err %v), want %q", got, err, "new")
+	}
+}
+
+// refuseSwap makes Windows refuse the swap with ERROR_ACCESS_DENIED and says
+// whether the folder is one this account can write.
+func refuseSwap(t *testing.T, writable bool) {
+	t.Helper()
+	prevSwap, prevWritable := swapInPlace, dirWritable
+	swapInPlace = func(from, to string) error {
+		return &os.LinkError{Op: "rename", Old: to, New: to + ".old", Err: syscall.Errno(5)}
+	}
+	dirWritable = func(string) bool { return writable }
+	t.Cleanup(func() { swapInPlace, dirWritable = prevSwap, prevWritable })
+}
+
+// A refusal in a folder the account CAN write is something holding a file, which
+// administrator rights do not fix: no prompt, even for an update a person asked
+// for.
+func TestARefusalInAWritableFolderNeverAsksForAdministrator(t *testing.T) {
+	called := stubElevation(t, nil)
+	refuseSwap(t, true)
+
+	err := replaceBinary(WithInteractive(context.Background()), `C:\x\clawdh.exe.new`, `C:\x\clawdh.exe`)
+	if err == nil {
+		t.Fatal("a refused swap reported success")
+	}
+	if *called {
+		t.Error("administrator rights were requested for a folder this account can write")
+	}
+}
+
+// The timer's update has nobody to answer a prompt, and it runs every few
+// minutes: it says what is needed and leaves the choice to the person.
+func TestTheTimersUpdateNeverRaisesAnAdministratorPrompt(t *testing.T) {
+	called := stubElevation(t, nil)
+	refuseSwap(t, false)
+
+	err := replaceBinary(context.Background(), `C:\x\clawdh.exe.new`, `C:\x\clawdh.exe`)
+	if err == nil {
+		t.Fatal("a refused swap reported success")
+	}
+	if *called {
+		t.Error("the automatic update raised an administrator prompt")
+	}
+	if !strings.Contains(err.Error(), "Update now") {
+		t.Errorf("the message does not say how to approve it: %v", err)
+	}
+}
+
+// An update a person asked for, into a folder that really needs administrator
+// rights, is the one case that may prompt.
+func TestAnUpdateAPersonAskedForMayAskForAdministrator(t *testing.T) {
+	called := stubElevation(t, nil)
+	refuseSwap(t, false)
+
+	if err := replaceBinary(WithInteractive(context.Background()), `C:\x\clawdh.exe.new`, `C:\x\clawdh.exe`); err != nil {
+		t.Fatalf("an approved elevated update failed: %v", err)
+	}
+	if !*called {
+		t.Error("the elevated path was never reached for a folder that needs it")
+	}
+}
+
+// Startup removes every displaced image nobody is running any more, under any of
+// the names updates have used, and nothing else.
+func TestCleanupOldBinaryRemovesEveryDisplacedImage(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "clawdh.exe")
+	for _, name := range []string{"clawdh.exe", "clawdh.exe.old", "clawdh.exe.old-1700000000000", "clawdh.exe.old-1700000000001", "other.exe", "clawdh.exe.new"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	CleanupOldBinary(bin)
+
+	for _, gone := range []string{"clawdh.exe.old", "clawdh.exe.old-1700000000000", "clawdh.exe.old-1700000000001"} {
+		if _, err := os.Stat(filepath.Join(dir, gone)); err == nil {
+			t.Errorf("%s was left behind", gone)
+		}
+	}
+	for _, kept := range []string{"clawdh.exe", "other.exe", "clawdh.exe.new"} {
+		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
+			t.Errorf("%s was removed: %v", kept, err)
+		}
 	}
 }

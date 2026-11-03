@@ -222,6 +222,46 @@ func AssetName() string {
 	return name
 }
 
+type interactiveKey struct{}
+
+// WithInteractive marks an update as one a person asked for: the page's
+// Update now, or `clawdh update`. Only such an update may raise an
+// administrator prompt. The timer's never does: nobody is there to answer it,
+// and it would come back at every check.
+func WithInteractive(ctx context.Context) context.Context {
+	return context.WithValue(ctx, interactiveKey{}, true)
+}
+
+func interactive(ctx context.Context) bool {
+	v, _ := ctx.Value(interactiveKey{}).(bool)
+	return v
+}
+
+// installError is an update that was downloaded and verified but could not be
+// put in place. It is told apart so the timer waits longer before downloading
+// the same file again, instead of every two minutes.
+type installError struct{ err error }
+
+func (e *installError) Error() string { return e.err.Error() }
+func (e *installError) Unwrap() error { return e.err }
+
+// maxInstallRetry is the longest the timer waits after an update that would not
+// install.
+const maxInstallRetry = 30 * time.Minute
+
+// retryDelay is how long to wait after the failures-th install failure in a
+// row: the check interval, doubled each time, up to maxInstallRetry.
+func retryDelay(interval time.Duration, failures int) time.Duration {
+	d := interval
+	for i := 1; i < failures && d < maxInstallRetry; i++ {
+		d *= 2
+	}
+	if d > maxInstallRetry {
+		d = maxInstallRetry
+	}
+	return d
+}
+
 // Run checks now and again for the life of ctx, applying whatever it
 // finds. onUpdated is called after the new binary is in place, with the
 // release that was installed; it is where the caller notifies the
@@ -245,6 +285,7 @@ func (u *Updater) Run(ctx context.Context, onUpdated func(Release)) {
 
 	timer := time.NewTimer(first)
 	defer timer.Stop()
+	installFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -254,8 +295,16 @@ func (u *Updater) Run(ctx context.Context, onUpdated func(Release)) {
 
 		release, err := u.CheckAndApply(ctx)
 		u.Note(err)
+		delay := interval
 		if err != nil {
 			log.Printf("update check: %v", err)
+			var ie *installError
+			if errors.As(err, &ie) {
+				installFailures++
+				delay = retryDelay(interval, installFailures)
+			} else {
+				installFailures = 0
+			}
 		} else if release != nil {
 			log.Printf("updated to %s", release.Name)
 			if onUpdated != nil {
@@ -265,7 +314,10 @@ func (u *Updater) Run(ctx context.Context, onUpdated func(Release)) {
 			// binary — this loop has nothing left to do.
 			return
 		}
-		timer.Reset(interval)
+		if err == nil {
+			installFailures = 0
+		}
+		timer.Reset(delay)
 	}
 }
 
@@ -517,8 +569,8 @@ func (u *Updater) apply(ctx context.Context, release *Release, expected string) 
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return fmt.Errorf("making the update executable: %w", err)
 	}
-	if err := replaceBinary(tmpName, u.BinaryPath); err != nil {
-		return err
+	if err := replaceBinary(ctx, tmpName, u.BinaryPath); err != nil {
+		return &installError{err}
 	}
 	// The mtime decides what "newer" means on the next check, and a
 	// fresh download's is now — which would make a release published an

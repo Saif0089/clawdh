@@ -10,16 +10,29 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf16"
 )
 
-// OldBinarySuffix names the displaced executable. Windows will not let
-// a running image be overwritten, but it will let it be *renamed*, so
-// the old binary is moved aside and deleted later — by the next start,
-// once nothing has it open.
+// OldBinarySuffix starts the name of the executable an update displaced.
+// Windows will not let a running image be overwritten, but it will let it be
+// *renamed*, so the old binary is moved aside and deleted later — by the next
+// start, once nothing has it open.
+//
+// Every update uses a name of its own (clawdh.exe.old-<time>), never a shared
+// clawdh.exe.old. An image displaced by an earlier update is often still
+// running — a `clawdh run` session keeps one open for hours — and a running
+// image can be neither deleted nor renamed over, so a fixed name made the NEXT
+// update fail with "Access is denied", which was then taken for "this folder
+// needs administrator rights".
 const OldBinarySuffix = ".old"
+
+// displacedName is where this update moves the running executable.
+func displacedName(to string) string {
+	return fmt.Sprintf("%s%s-%d", to, OldBinarySuffix, time.Now().UnixNano())
+}
 
 // elevatedReplaceTimeout bounds the UAC round trip. A prompt that is
 // never answered must not wedge the update loop: the supervisor calls
@@ -30,6 +43,27 @@ const elevatedReplaceTimeout = 2 * time.Minute
 // unprivileged path was enough without ever raising a real UAC prompt.
 var elevatedReplace = replaceBinaryElevated
 
+// swapInPlace and dirWritable are variables so tests can make Windows refuse
+// the swap, and say a folder is not writable, without needing either to be true
+// of a real folder.
+var (
+	swapInPlace = replaceBinaryInPlace
+	dirWritable = canWriteDir
+)
+
+// canWriteDir reports whether this account can create a file in dir, which is
+// what "needs administrator rights" actually means for an update.
+func canWriteDir(dir string) bool {
+	f, err := os.CreateTemp(dir, ".clawdh-write-check-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 // replaceBinary swaps the verified download in on Windows: rename the
 // running executable out of the way, move the new one into its place,
 // and put the old one back if that second step fails, so a failed
@@ -39,18 +73,27 @@ var elevatedReplace = replaceBinaryElevated
 // install.ps1, which writes to %LOCALAPPDATA%. But it can also be put
 // somewhere the user cannot write: an administrator deploying it to
 // Program Files, or an enterprise image. There the renames fail with
-// ERROR_ACCESS_DENIED and the update simply never lands, quietly, for
-// as long as the machine exists.
+// ERROR_ACCESS_DENIED and the update would never land.
 //
-// So: try unprivileged, and ask for elevation only when Windows has
-// actually refused. Nothing prompts on an ordinary per-user install,
-// which is what keeps CI (and every normal machine) prompt-free — the
-// e2e run never reaches this branch because it never hits a directory
-// it cannot write.
-func replaceBinary(from, to string) error {
-	err := replaceBinaryInPlace(from, to)
+// So: try unprivileged, and ask for administrator rights only when the folder
+// really is one this account cannot write, and only when a person asked for the
+// update (the page's Update now, `clawdh update`). A refusal in a folder the
+// account CAN write is something holding a file, which administrator rights do
+// not fix, and the timer's update must never raise a prompt nobody is there to
+// answer. Nothing prompts on an ordinary per-user install, which is what keeps
+// CI (and every normal machine) prompt-free.
+func replaceBinary(ctx context.Context, from, to string) error {
+	err := swapInPlace(from, to)
 	if err == nil || !isAccessDenied(err) {
 		return err
+	}
+	if dirWritable(filepath.Dir(to)) {
+		return err
+	}
+	if !interactive(ctx) {
+		return fmt.Errorf("installing the update over %s needs administrator rights (clawdh is installed "+
+			"somewhere this account cannot write). Press Update now on the clawdh page, or run "+
+			"`clawdh update`, to approve it: %w", to, err)
 	}
 	if elevErr := elevatedReplace(from, to); elevErr != nil {
 		return fmt.Errorf("installing the update over %s needs administrator rights "+
@@ -63,9 +106,7 @@ func replaceBinary(from, to string) error {
 // replaceBinaryInPlace is the swap as an ordinary user, and is the only
 // path an ordinary install ever takes.
 func replaceBinaryInPlace(from, to string) error {
-	old := to + OldBinarySuffix
-	// A previous update's leftover would block the rename.
-	_ = os.Remove(old)
+	old := displacedName(to)
 
 	if err := os.Rename(to, old); err != nil {
 		return fmt.Errorf("moving the running %s aside: %w", to, err)
@@ -108,7 +149,7 @@ func isAccessDenied(err error) bool {
 // removes every layer of quoting between here and there rather than
 // getting it right by inspection.
 func replaceBinaryElevated(from, to string) error {
-	old := to + OldBinarySuffix
+	old := displacedName(to)
 	// Same sequence as the unprivileged path, and the same restore on
 	// failure, so an elevated attempt cannot leave the machine without
 	// a binary either. $ErrorActionPreference makes a failed Move-Item
@@ -164,8 +205,22 @@ func psQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
-// CleanupOldBinary removes the executable a previous update displaced.
-// Called at startup, when the file is no longer anyone's running image.
+// CleanupOldBinary removes the executables previous updates displaced. Called at
+// startup, when the ones nobody is running any more can finally be deleted; one
+// a `clawdh run` session still has open is left for a later start.
 func CleanupOldBinary(binaryPath string) {
-	_ = os.Remove(binaryPath + OldBinarySuffix)
+	dir, base := filepath.Split(binaryPath)
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := strings.ToLower(base + OldBinarySuffix)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(strings.ToLower(e.Name()), prefix) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
