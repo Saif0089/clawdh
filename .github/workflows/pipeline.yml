@@ -198,7 +198,7 @@ jobs:
           $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
           $fns = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
           $names = $fns | ForEach-Object { $_.Name }
-          foreach ($want in @('Invoke-Elevated', 'Test-AccessDenied', 'ps1Quote')) {
+          foreach ($want in @('Invoke-Elevated', 'Test-AccessDenied', 'ps1Quote', 'Test-DirWritable', 'Install-File')) {
             if ($names -notcontains $want) { throw "install.ps1 lost $want" }
           }
           ($fns | Where-Object { $_.Name -in @('Test-AccessDenied','ps1Quote') } |
@@ -217,6 +217,45 @@ jobs:
 
           if ((ps1Quote "C:\Users\O'Brien\clawdh.exe") -ne "'C:\Users\O''Brien\clawdh.exe'") { throw "ps1Quote escaping wrong" }
           Write-Host "elevation trigger + quoting: OK"
+
+      - name: "Re-running the installer while a clawdh session holds the exe needs no administrator"
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          # A `clawdh run` session started before an install keeps the old exe
+          # running for hours, and Windows refuses to overwrite a running image
+          # ("access denied") even in a folder the user owns. That used to be taken
+          # for "needs administrator rights": a UAC prompt and a PowerShell window.
+          $src = Get-Content install.ps1 -Raw
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
+          $fns = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+          ($fns | Where-Object { $_.Name -in @('Test-AccessDenied','Test-DirWritable','Install-File') } |
+            ForEach-Object { $_.Extent.Text }) -join "`n" | Invoke-Expression
+
+          $dir = Join-Path ([System.IO.Path]::GetTempPath()) ("clawdh-held-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          $dest = Join-Path $dir "clawdh.exe"
+          $new = Join-Path $dir "clawdh.download"
+          Copy-Item "$env:SystemRoot\System32\ping.exe" $dest
+          Set-Content -Path $new -Value "new build" -NoNewline
+
+          # The installed exe, running: a stand-in for the earlier session.
+          $held = Start-Process -FilePath $dest -ArgumentList '127.0.0.1', '-n', '60' -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 2
+          try {
+            # Precondition: a plain move over it is refused, or this proves nothing.
+            $refused = $false
+            try { Copy-Item $new "$dir\probe.tmp"; Move-Item -Force -Path "$dir\probe.tmp" -Destination $dest -ErrorAction Stop } catch { $refused = $true }
+            if (-not $refused) { throw "precondition: Windows let a running exe be overwritten, so this cannot reproduce the held file" }
+
+            if (-not (Test-DirWritable $dir)) { throw "the test folder should be writable" }
+            Install-File $new $dest
+            if ((Get-Content $dest -Raw) -ne "new build") { throw "the new build did not land at the install path" }
+            if (-not (Get-ChildItem $dir -Filter "clawdh.exe.old-*")) { throw "the running exe was not moved aside" }
+            Write-Host "held exe: installed without elevation"
+          } finally {
+            Stop-Process -Id $held.Id -Force -ErrorAction SilentlyContinue
+          }
 
       - name: "Default install completes with no elevation prompt"
         if: github.event_name == 'push'

@@ -53,6 +53,45 @@ function Test-AccessDenied($errorRecord) {
 
 function ps1Quote([string]$s) { "'" + $s.Replace("'", "''") + "'" }
 
+# Whether this account can create a file in $dir, which is what "needs
+# administrator rights" actually means for an install. A refusal in a folder it
+# CAN write is something holding a file, and administrator rights do not fix that.
+function Test-DirWritable([string]$dir) {
+  try {
+    $probe = Join-Path $dir (".clawdh-write-check-" + [guid]::NewGuid().ToString("N"))
+    [System.IO.File]::WriteAllText($probe, "")
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch { return $false }
+}
+
+# Puts the downloaded file at $dest. A clawdh session started before this
+# install (`clawdh run` keeps one open for hours) is still running $dest, and
+# Windows will not let a running exe be overwritten, so the move is refused with
+# "access denied" even in a folder the user owns. A running exe CAN be renamed,
+# so it is moved aside and the new one goes in; the old one is deleted by
+# clawdh at its next start, once nothing has it open. Only a folder this
+# account cannot write is left for the caller to elevate.
+function Install-File([string]$src, [string]$dest) {
+  try {
+    Move-Item -Force -Path $src -Destination $dest -ErrorAction Stop
+    return
+  } catch {
+    # A folder this account cannot write is a rights problem: leave it for the
+    # caller to elevate. Anything else (a held file is refused as "access
+    # denied" or as "in use", depending on how it is held) is worked around.
+    if (-not (Test-DirWritable (Split-Path -Parent $dest))) { throw }
+  }
+  $aside = "$dest.old-" + [DateTime]::UtcNow.Ticks
+  Move-Item -Force -Path $dest -Destination $aside -ErrorAction Stop
+  try {
+    Move-Item -Force -Path $src -Destination $dest -ErrorAction Stop
+  } catch {
+    Move-Item -Force -Path $aside -Destination $dest -ErrorAction Stop
+    throw
+  }
+}
+
 $installDir = if ($env:CLAWDH_INSTALL_DIR) { $env:CLAWDH_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "clawdh\bin" }
 try {
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
@@ -118,9 +157,12 @@ try {
 }
 
 try {
-  Move-Item -Force -Path $tmp -Destination $dest
+  Install-File $tmp $dest
 } catch {
   if (-not (Test-AccessDenied $_)) { throw }
+  # Still refused in a folder this account can write: a file is held that even
+  # renaming could not get past. Administrator rights would not change that.
+  if (Test-DirWritable $installDir) { throw }
   Write-Host "$dest needs administrator rights to write - prompting..."
   Invoke-Elevated "Move-Item -Force -LiteralPath $(ps1Quote $tmp) -Destination $(ps1Quote $dest)"
   if (-not (Test-Path $dest)) { throw "the elevated step reported success but $dest is not there" }
