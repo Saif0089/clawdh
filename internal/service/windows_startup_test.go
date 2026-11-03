@@ -112,6 +112,15 @@ func TestStartupScriptActuallyStartsTheService(t *testing.T) {
 	for time.Now().Before(deadline) {
 		if info, _ := Running(); info != nil {
 			t.Logf("service came up on port %d via the startup script", info.Port)
+			// The server started at login is the one that keeps the machine
+			// current. The old script (`start /min clawdh serve`) gave it a
+			// console, which it took for a terminal someone was watching, so it
+			// switched automatic updates off and said so only in its log: PCs
+			// sat on builds weeks old. It decides before it starts serving, so
+			// the line is already there if it is coming.
+			if log, _ := os.ReadFile(filepath.Join(home, ".clawdh", "clawdh.log")); strings.Contains(string(log), "running in a terminal") {
+				t.Errorf("the server started at login switched automatic updates off:\n%s", log)
+			}
 			return
 		}
 		time.Sleep(250 * time.Millisecond)

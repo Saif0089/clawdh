@@ -161,6 +161,18 @@ func resolveBinaryPath() (string, error) {
 // remember. When one lands, the person gets a desktop notification —
 // the binary changing underneath them is not something to discover by
 // accident — and the server restarts into it.
+// updatesOff says why this machine is not updating itself: in the log, on this
+// machine's page, and through the check-in on the panel. These reasons used to go
+// to the log alone, so a machine that had quietly stopped updating looked exactly
+// like one nobody had superseded — which is how Windows PCs started at login by
+// the old `start /min clawdh serve` sat on builds weeks old without anyone
+// knowing.
+func updatesOff(srv *httpserver.Server, why string) {
+	log.Print(why)
+	srv.SetUpdateHealth(func() httpserver.UpdateHealth { return httpserver.UpdateHealth{Error: why} })
+	setUpdateTrouble(func() string { return why })
+}
+
 func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 	// A server someone is watching in their own terminal must not
 	// replace its binary and hand over to a detached process: that
@@ -168,13 +180,14 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 	// daemon left behind that they never asked for. Updating belongs to
 	// the copy started at login, whose output goes to the log file.
 	if isTerminal(os.Stdout) {
-		log.Print("automatic updates are off while running in a terminal")
+		updatesOff(srv, "automatic updates are off: clawdh is running in a terminal (`clawdh serve`). "+
+			"`clawdh stop`, then `clawdh start`, runs it in the background, where it updates itself")
 		return
 	}
 
 	binaryPath, err := service.SelfPath()
 	if err != nil {
-		log.Printf("automatic updates are off: %v", err)
+		updatesOff(srv, fmt.Sprintf("automatic updates are off: %v", err))
 		return
 	}
 	// Finish whatever the last update could not: on Windows the
@@ -184,7 +197,7 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 
 	up := updater.New(binaryPath)
 	if err := up.Validate(); err != nil {
-		log.Printf("automatic updates are off: %v", err)
+		updatesOff(srv, fmt.Sprintf("automatic updates are off: %v", err))
 		return
 	}
 
@@ -221,22 +234,22 @@ func startAutoUpdate(ctx context.Context, srv *httpserver.Server) {
 	})
 
 	// How updating is actually going on this machine, so a build that never
-	// moves can say why instead of looking like a build nobody superseded.
+	// moves can say why instead of looking like a build nobody superseded. With
+	// the timer switched off by CLAWDH_AUTO_UPDATE the last attempt (if any) has
+	// no error, so the switch itself is the reason.
+	why := func() string {
+		if h := up.Health(); h.Error != "" {
+			return h.Error
+		}
+		if !updater.Enabled() {
+			return "automatic updates are turned off on this machine (CLAWDH_AUTO_UPDATE)"
+		}
+		return ""
+	}
 	srv.SetUpdateHealth(func() httpserver.UpdateHealth {
-		h := up.Health()
-		return httpserver.UpdateHealth{CheckedAt: h.CheckedAt, Error: h.Error}
+		return httpserver.UpdateHealth{CheckedAt: up.Health().CheckedAt, Error: why()}
 	})
-	setUpdateTrouble(func() string { return up.Health().Error })
+	setUpdateTrouble(why)
 
 	go up.Run(ctx, onUpdated)
-}
-
-// isTerminal reports whether f is a character device — a real terminal
-// rather than the log file the service's output is redirected to.
-func isTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
 }
