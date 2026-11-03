@@ -38,6 +38,7 @@ type dbUpstream struct {
 	managers     map[string]*gateway.Manager // accountID -> token manager
 	limitCache   map[string]limitCacheEntry  // person+account -> recent quota standing
 	failLogged   map[string]time.Time        // account name -> when its login failure was last logged
+	endedLogins  map[string]string           // account id -> the stored login the usage poller found ended
 }
 
 // panelDB is the part of the panel database the gateway uses besides the panel
@@ -92,13 +93,14 @@ func newDBUpstream(ctx context.Context, dsn, keyB64 string) (*dbUpstream, error)
 // one a start-up waits for. The background writer is not started here.
 func newUpstream(store *panel.Store, db panelDB, secret *panel.Secret) (*dbUpstream, error) {
 	u := &dbUpstream{
-		store:      store,
-		pg:         db,
-		secret:     secret,
-		w:          newWriter(),
-		managers:   map[string]*gateway.Manager{},
-		limitCache: map[string]limitCacheEntry{},
-		failLogged: map[string]time.Time{},
+		store:       store,
+		pg:          db,
+		secret:      secret,
+		w:           newWriter(),
+		managers:    map[string]*gateway.Manager{},
+		limitCache:  map[string]limitCacheEntry{},
+		failLogged:  map[string]time.Time{},
+		endedLogins: map[string]string{},
 	}
 	d, err := store.Load()
 	if err != nil {
@@ -353,6 +355,28 @@ func (u *dbUpstream) noteLoginFailure(name string, err error) {
 	if due {
 		log.Printf("gateway: the shared login for %s cannot serve: %v", name, err)
 	}
+}
+
+// knownEnded reports whether this exact stored login was already found to have
+// reached the end of its sign-in. Retrying it can only fail the same way, so the
+// usage poller leaves it alone until the stored login changes (it was re-added).
+func (u *dbUpstream) knownEnded(acct panel.Account) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	stored, ok := u.endedLogins[acct.ID]
+	return ok && stored == string(acct.Credential)
+}
+
+// markEnded records a login whose refresh token Anthropic says has expired: the
+// reason goes where the panel reads it and the failure is logged once, then the
+// poller stops asking the token service about it.
+func (u *dbUpstream) markEnded(acct panel.Account, err error) {
+	u.mu.Lock()
+	u.endedLogins[acct.ID] = string(acct.Credential)
+	u.mu.Unlock()
+	u.forget(acct.ID)
+	u.w.collision(acct.ID, expiredNote)
+	u.noteLoginFailure(acct.Name, err)
 }
 
 // forget drops an account's cached token manager, so the next request rebuilds

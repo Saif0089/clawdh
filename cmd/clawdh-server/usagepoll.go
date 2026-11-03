@@ -48,7 +48,7 @@ func runUsagePoller(ctx context.Context, u *dbUpstream) {
 func pollUsageOnce(ctx context.Context, u *dbUpstream, client *usage.Client) {
 	d := u.snapshot()
 	for _, acct := range d.Accounts {
-		if !acct.HasLogin() {
+		if !acct.HasLogin() || u.knownEnded(acct) {
 			continue
 		}
 		if err := pollAccountUsage(ctx, u, client, acct); err != nil {
@@ -56,6 +56,12 @@ func pollUsageOnce(ctx context.Context, u *dbUpstream, client *usage.Client) {
 			if errors.As(err, &rl) {
 				log.Printf("usage: Anthropic is rate-limiting usage reads for %s; next round waits", acct.Name)
 				return // the whole endpoint is throttled, not this one login
+			}
+			if gateway.IsLoginExpired(err) {
+				// Its sign-in is over. Say so once and stop asking the token
+				// service every round; a re-added login is read again.
+				u.markEnded(acct, err)
+				continue
 			}
 			log.Printf("usage: reading %s: %v", acct.Name, err)
 		}
