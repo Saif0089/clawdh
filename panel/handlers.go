@@ -27,6 +27,10 @@ type accountView struct {
 	// Warning is set when this account's shared login recently failed to refresh
 	// — a sign it is being used first-party outside the gateway.
 	Warning string `json:"warning,omitempty"`
+	// LoginEndsAt is when the stored sign-in runs out, whatever the date: every
+	// card says it, so an ending is seen weeks ahead rather than on the day.
+	// Absent when the credential carries no date.
+	LoginEndsAt time.Time `json:"loginEndsAt,omitzero"`
 	// Shared is everyone with gateway access to this account right now — many
 	// people can share one login, so this is a list, not one holder.
 	Shared []shareView `json:"shared,omitempty"`

@@ -103,7 +103,8 @@ func loginEndWarning(left time.Duration) string {
 	return ""
 }
 
-// applyLoginEnds puts each account's login end on the board. A login already
+// applyLoginEnds puts each account's login end on the board: always as a date,
+// and as a warning when it is close. A login already
 // past its end replaces the first-party guess a failed refresh leaves behind,
 // since the cause is now known; an approaching one only fills an empty warning.
 func (s *Server) applyLoginEnds(d Data, accounts []accountView) {
@@ -118,6 +119,7 @@ func (s *Server) applyLoginEnds(d Data, accounts []accountView) {
 		if !shown || !ok {
 			continue
 		}
+		accounts[i].LoginEndsAt = end
 		left := end.Sub(now)
 		if left > 0 && accounts[i].Warning != "" {
 			continue

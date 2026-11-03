@@ -192,7 +192,7 @@ function mergedAccounts(accounts, shares) {
     const email = login && login.email ? login.email.toLowerCase() : "";
     const share = email ? shares.find((sh) => shareEmail(sh) === email) : null;
     if (share) claimed.add(share.slug);
-    out.push({ account, share, email: (login && login.email) || "", name: account.name });
+    out.push({ account, share, login, email: (login && login.email) || "", name: account.name });
   }
   // A share of somebody else's login has no local account behind it.
   for (const share of shares) {
@@ -251,7 +251,7 @@ function buildAccountCard(row) {
     setStatus(node.querySelector(".status-pill"), "linked");
     renderShareWindow(card, share);
   }
-  showLoginEnd(card, share, !!account);
+  showLoginEnd(card, share, !!account, row.login);
   renderPeople(card.querySelector(".people"), share && share.window ? share.window : null);
   return node;
 }
@@ -341,31 +341,47 @@ document.addEventListener("keydown", (e) => {
   document.querySelectorAll(".kebab-pop").forEach((p) => { p.hidden = true; });
 });
 
-// endMoment writes a moment the way a person reads it: the viewer's own time
-// zone, 12-hour, no UTC ("Mon, Nov 23, 3:52 pm").
+// endMoment writes a moment the way the team reads it: Pakistan time, 12-hour,
+// never UTC ("Mon, Nov 23, 3:52 pm PKT"). A sign-in's end is one fact for
+// everybody, so it is not left to each viewer's own zone.
 function endMoment(when) {
   const d = new Date(when);
-  if (isNaN(d)) return "";
-  return d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
-    .replace(/\s(AM|PM)$/, (m) => m.toLowerCase());
+  if (isNaN(d) || d.getFullYear() < 2000) return "";
+  return d.toLocaleString("en-US", { timeZone: "Asia/Karachi", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+    .replace(/\s(AM|PM)$/, (m) => m.toLowerCase()) + " PKT";
 }
 
-// showLoginEnd says when a shared login's sign-in runs out. A Claude sign-in
-// lasts about four weeks and refreshing never extends it, so it is stated a
-// week ahead and after the end; the person who can fix it is told how, anyone
-// else is told who has to.
-function showLoginEnd(card, share, canFix) {
+// spanWords is a length of time the way a person says it: "20 days", "5 hours".
+function spanWords(ms) {
+  const d = Math.abs(ms);
+  const unit = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  if (d >= 48 * 3600e3) return unit(Math.floor(d / 86400e3), "day");
+  if (d >= 3600e3) return unit(Math.floor(d / 3600e3), "hour");
+  if (d >= 60e3) return unit(Math.floor(d / 60e3), "minute");
+  return "under a minute";
+}
+
+// showLoginEnd says when a login's sign-in runs out, on every card that has a
+// date: when (Pakistan time) and how long is left. A Claude sign-in lasts about
+// four weeks and refreshing never extends it, so a week out it turns amber and
+// says how to renew it, and past the end it is red. The panel's copy of the
+// sign-in is what serves people, so it is the one shown; a login only on this
+// machine shows this machine's.
+function showLoginEnd(card, share, canFix, login) {
   const line = card.querySelector(".login-end-line");
   if (!line) return;
-  const when = share && share.window && share.window.loginEndsAt;
-  const left = when ? new Date(when).getTime() - Date.now() : NaN;
-  if (!when || isNaN(left) || left > 7 * 24 * 3600e3) { line.hidden = true; return; }
+  const when = (share && share.window && share.window.loginEndsAt) || (login && login.endsAt) || "";
+  const at = when ? endMoment(when) : "";
+  const left = at ? new Date(when).getTime() - Date.now() : NaN;
+  if (!at || isNaN(left)) { line.hidden = true; return; }
+  const soon = left <= 7 * 24 * 3600e3;
   const fix = canFix
     ? "Choose Reconnect on this card to sign in again, then Refresh on the panel."
     : "Whoever added it needs to sign in again and refresh it on the panel.";
   line.hidden = false;
-  line.className = "login-end-line " + (left <= 0 ? "crit" : "warn");
-  line.textContent = (left <= 0 ? "Its sign-in ended " : "Its sign-in ends ") + endMoment(when) + ". " + fix;
+  line.className = "login-end-line" + (left <= 0 ? " crit" : soon ? " warn" : "");
+  const head = left <= 0 ? `Sign-in ended ${at} \u00b7 ${spanWords(left)} ago` : `Sign-in ends ${at} \u00b7 in ${spanWords(left)}`;
+  line.textContent = soon ? head + ". " + fix : head;
 }
 
 // renderShareWindow draws the gateway's reading for an account with no local
@@ -389,7 +405,7 @@ function refreshVisibleUsage(rows) {
     if (!card) continue;
     if (row.account) refreshUsage(row.account, card);
     else renderShareWindow(card, row.share);
-    showLoginEnd(card, row.share, !!row.account);
+    showLoginEnd(card, row.share, !!row.account, row.login);
     renderPeople(card.querySelector(".people"), row.share && row.share.window ? row.share.window : null);
   }
 }

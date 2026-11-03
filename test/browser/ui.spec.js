@@ -274,6 +274,12 @@ test("shows plan usage and reset countdowns", async ({ page }) => {
   // shows no countdown line at all.
   await expect(page.locator(".session-line")).toBeHidden();
 
+  // The one clock that does matter is the hard end of the sign-in, so every card
+  // says it: when, in Pakistan time and 12-hour, and how long is left. Far off,
+  // it is plain text with no instruction attached.
+  await expect(page.locator(".login-end-line")).toHaveText(/^Sign-in ends \w{3}, \w{3} \d{1,2}, \d{1,2}:\d{2} (am|pm) PKT \u00b7 in \d+ days$/);
+  await expect(page.locator(".login-end-line")).not.toHaveClass(/warn|crit/);
+
   await expect(page.locator(".plan-chip")).toHaveText("Max plan");
   await expect(page.locator(".status-pill")).toHaveText("Ready");
 });

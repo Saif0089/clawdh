@@ -111,3 +111,37 @@ export function accessLeft(iso?: string): string {
   if (hrs < 48) return `${hrs}h left`;
   return `${Math.round(hrs / 24)}d left`;
 }
+
+// pktMoment writes an instant the way the team reads it: Pakistan time,
+// 12-hour with am/pm, never UTC ("Mon, Nov 23, 3:52 pm PKT"). A sign-in's end is
+// one fact for everyone, so it is not left to each viewer's own zone.
+export function pktMoment(iso?: string | Date): string {
+  if (!iso) return "";
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (isNaN(d.getTime()) || d.getFullYear() < 2000) return "";
+  const text = d.toLocaleString("en-US", {
+    timeZone: "Asia/Karachi", weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+  return text.replace(/\s(AM|PM)$/, (m) => m.toLowerCase()) + " PKT";
+}
+
+// spanWords is a length of time the way a person says it: "20 days", "5 hours".
+export function spanWords(ms: number): string {
+  const d = Math.abs(ms);
+  const unit = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  if (d >= 48 * 3600e3) return unit(Math.floor(d / 86400e3), "day");
+  if (d >= 3600e3) return unit(Math.floor(d / 3600e3), "hour");
+  if (d >= 60e3) return unit(Math.floor(d / 60e3), "minute");
+  return "under a minute";
+}
+
+// loginEndLine is the card's line about a sign-in's hard end: when, and how long
+// is left. tone says how loud to be: a week or less warns, past the end is red.
+export function loginEndLine(iso?: string): { text: string; tone: "calm" | "warn" | "crit" } | null {
+  const at = pktMoment(iso);
+  if (!iso || !at) return null;
+  const left = new Date(iso).getTime() - Date.now();
+  if (left <= 0) return { text: `Sign-in ended ${at} · ${spanWords(left)} ago`, tone: "crit" };
+  return { text: `Sign-in ends ${at} · in ${spanWords(left)}`, tone: left <= 7 * 86400e3 ? "warn" : "calm" };
+}

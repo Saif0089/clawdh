@@ -119,6 +119,18 @@ func TestTheBoardWarnsAboutLoginsRunningOut(t *testing.T) {
 	if views[4].Warning != "" {
 		t.Errorf("undated: %q, want nothing", views[4].Warning)
 	}
+
+	// Every card carries its end date, near or far, so it is seen weeks ahead; a
+	// credential without a date has none to show.
+	for i, want := range []time.Time{
+		loginNow.Add(2 * 24 * time.Hour), loginNow.Add(20 * 24 * time.Hour),
+		loginNow.Add(-3 * 24 * time.Hour), loginNow.Add(2 * 24 * time.Hour), {},
+	} {
+		got := views[i].LoginEndsAt
+		if want.IsZero() != got.IsZero() || (!want.IsZero() && !got.Equal(want)) {
+			t.Errorf("%s: login end %v, want %v", views[i].ID, got, want)
+		}
+	}
 }
 
 // Whoever added a login and everyone who can use it hear it is running out, once

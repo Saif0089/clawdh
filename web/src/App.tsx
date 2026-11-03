@@ -9,7 +9,7 @@ import { TelemetryTab } from "./Telemetry";
 import { useDialog } from "./Dialog";
 import { DeviceJobs } from "./DeviceJobs";
 import { PresenceBadge } from "./Presence";
-import { when, untilExpiry, accessLeft, dateAndTime } from "./format";
+import { when, untilExpiry, accessLeft, dateAndTime, loginEndLine } from "./format";
 
 type Ask = ReturnType<typeof useDialog>["ask"];
 
@@ -421,6 +421,12 @@ function Accounts({ data, reload, ask }: { data: Panel; reload: () => void; ask:
                       a.addedBy ? `added by ${a.addedBy}` : "",
                     ].filter(Boolean).join(" · ")}
                   </div>
+                  {(() => {
+                    const end = a.hasLogin ? loginEndLine(a.loginEndsAt) : null;
+                    if (!end) return null;
+                    const tone = end.tone === "crit" ? "text-crit" : end.tone === "warn" ? "text-warn" : "text-faint";
+                    return <div data-testid="login-end" className={`mt-1 text-[13px] ${tone}`}>{end.text}</div>;
+                  })()}
                 </div>
                 {a.hasLogin ? <Pill kind="ok">Ready</Pill> : <Pill kind="need">No login</Pill>}
               </div>

@@ -61,7 +61,7 @@ export interface AccountUsage {
 }
 // A ceiling: a 0..1 share of the weekly window past which the subject is turned away.
 export interface Limit { id: string; subjectType: string; subjectId: string; maxPercent: number }
-export interface Account { id: string; name: string; email?: string; plan?: string; hasLogin: boolean; addedBy?: string; warning?: string; shared?: { shareId: string; personId: string; personName: string; expiresAt?: string }[] }
+export interface Account { id: string; name: string; email?: string; plan?: string; hasLogin: boolean; addedBy?: string; warning?: string; loginEndsAt?: string; shared?: { shareId: string; personId: string; personName: string; expiresAt?: string }[] }
 // version is the clawdh build the machine last reported, and what that build covers
 // (`latest · 7b506ea — feat(usage): the board is per account`); a release stamps the
 // subject, an ad-hoc build is just the tag. Absent for a machine still on a build
