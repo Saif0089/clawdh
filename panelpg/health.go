@@ -37,9 +37,20 @@ func (b *Backend) RecordCollision(ctx context.Context, accountID, note string) e
 // RecentCollisions returns, per account id, the last time its shared login broke,
 // for collisions since a cutoff. The panel uses it to flag accounts that are
 // being used outside the gateway.
+//
+// A break counts only until the login reads fine again. The gateway reads every
+// held login every few minutes, and a reading it got AFTER the break proves the
+// login works now, whether it was signed in again, refreshed on the panel or
+// simply recovered. Without this the card kept saying "stopped working in the
+// last day" for up to a day after the person had fixed it, which reads as the fix
+// having failed.
 func (b *Backend) RecentCollisions(ctx context.Context, since time.Time) (map[string]time.Time, error) {
-	rows, err := b.db.QueryContext(ctx,
-		`SELECT account_id, last_collision FROM account_alerts WHERE last_collision >= $1`, since.UTC())
+	rows, err := b.db.QueryContext(ctx, `
+		SELECT a.account_id, a.last_collision
+		  FROM account_alerts a
+		  LEFT JOIN account_windows w ON w.account_id = a.account_id
+		 WHERE a.last_collision >= $1
+		   AND (w.updated_at IS NULL OR w.updated_at < a.last_collision)`, since.UTC())
 	if err != nil {
 		return nil, err
 	}
