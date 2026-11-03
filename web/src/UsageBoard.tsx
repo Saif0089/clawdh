@@ -105,12 +105,13 @@ function TokenRow({ name, detail, value, most, presence }: { name: string; detai
 //
 // ofWeekly is null when the plan's size is not known yet: the tokens are exact,
 // but turning them into a share of the week would be a guess, so the row shows
-// the tokens alone. unmetered draws the part of the week no metered request
-// explains — hatched, with no tokens, because nobody's tokens are behind it.
+// the tokens alone. unmetered is the "Unknown" row: the part of the week no
+// request run through clawdh explains — hatched, with no tokens, because nobody's
+// tokens are behind it.
 function ShareRow({ name, detail, ofWeekly, value, unmetered, presence }: { name: string; detail: string; ofWeekly: number | null; value?: number; unmetered?: boolean; presence?: Presence }) {
   const frac = ofWeekly ?? 0;
   const title = unmetered
-    ? `${pct(frac)} of this week that no metered request explains`
+    ? `${pct(frac)} of this week that nothing run through clawdh explains: at least that much was used outside it, or before the gateway watched this login. It is nobody's share.`
     : ofWeekly === null
       ? `${name} · ${fmtNum(value || 0)} tokens`
       : `${name} · ${pct(frac)} of this week · ${fmtNum(value || 0)} tokens`;
@@ -185,8 +186,8 @@ function AccountCard({ a, period }: { a: AccountUsage; period: Period }) {
             {people.map((p) => <ShareRow key={p.id} name={p.name} detail={modelSplit(p.byModel)} ofWeekly={a.hasReading && sized ? p.ofWeekly : null} value={p.weighted} presence={p.presence} />)}
             {unmetered && (
               <ShareRow
-                name="Not metered"
-                detail={a.meteredSince ? `the gateway has watched this login since ${when(a.meteredSince)}, or it was used outside it` : "used outside the gateway"}
+                name="Unknown"
+                detail={a.meteredSince ? `used outside clawdh, or before the gateway watched this login (since ${when(a.meteredSince)})` : "used outside clawdh"}
                 ofWeekly={a.unaccounted}
                 unmetered
               />

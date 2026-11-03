@@ -25,17 +25,23 @@ import (
 // their weighted tokens over the number of weighted tokens that make a plan's
 // whole week — a size measured from the plan's own finished weeks, never
 // assumed — and whatever is left of Anthropic's figure is reported as what it
-// is: not metered.
+// is: unknown (it appears on the board as "Unknown", named "not metered" in code).
 //
-// Which size, though, decides who gets blamed. Use the gateway cannot see (the
-// owner on claude.ai, the app, a machine outside the gateway) only ever makes a
-// week look smaller: the same metered tokens against a fuller reading. So the
-// size is the largest any watched week has shown, the cleanest evidence there
-// is, and every error left falls on the side of charging people less, never
-// more. Until a week has finished there is nothing to tell the people's use
-// apart from anyone else's, so no percentage is given at all: an earlier build
-// sized the plan from the running week itself, which by construction handed
-// every bit of outside use to whoever the gateway happened to see.
+// Which size, though, decides who is charged what. Use the gateway cannot see
+// (the owner on claude.ai, the app, a machine outside the gateway) only ever makes
+// a week look smaller: the same metered tokens against a fuller reading. So every
+// week's tokens-over-reading is at most the plan's real size, and the largest any
+// watched week has shown is the nearest to it — but still not above it.
+//
+// That fixes the direction of the error, and the board is built around it: a
+// person's share (tokens over that size) is an upper bound, never less than what
+// they really used, and what is left over — shown as "Unknown" — is a lower bound,
+// at least that much of the week was spent where the gateway could not see. Both
+// are exact in the one case the size is exact. Until a week has finished there is
+// nothing to tell the people's use apart from anyone else's, so no percentage is
+// given at all: an earlier build sized the plan from the running week itself,
+// which by construction handed every bit of outside use to whoever the gateway
+// happened to see.
 
 // How a plan's size was learned, for the board to say so.
 const (

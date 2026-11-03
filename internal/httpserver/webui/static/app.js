@@ -661,7 +661,7 @@ function renderPeople(box, win) {
     dot.className = "person-dot";
     const name = document.createElement("span");
     name.className = "person-name";
-    name.textContent = "Not metered";
+    name.textContent = "Unknown";
     const bar = document.createElement("span");
     bar.className = "person-bar";
     const fill = document.createElement("span");
@@ -672,7 +672,7 @@ function renderPeople(box, win) {
     pct.className = "person-pct";
     pct.textContent = formatPercent(win.unaccounted * 100);
     row.append(dot, name, bar, pct);
-    row.title = `${pct.textContent} of this week that no metered request explains — used before the gateway met this login, or outside it. It is nobody's share.`;
+    row.title = `${pct.textContent} of this week that nothing run through clawdh explains: at least that much was used outside it, or before the gateway watched this login. It is nobody's share.`;
     box.appendChild(row);
   } else if (!sized) {
     const note = document.createElement("div");
