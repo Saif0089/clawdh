@@ -5,11 +5,14 @@ package updater
 import (
 	"encoding/base64"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -133,5 +136,87 @@ func TestPsQuoteEscapesPathsWithQuotes(t *testing.T) {
 		if got := psQuote(tc.in); got != tc.want {
 			t.Errorf("psQuote(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// copyFileTo copies src to dst, standing a real program in for an executable.
+func copyFileTo(t *testing.T, src, dst string) {
+	t.Helper()
+	in, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSleepHelper is the long-lived process the next test keeps running: it
+// stands in for a `clawdh run` session started before the previous update.
+func TestSleepHelper(t *testing.T) {
+	if os.Getenv("CLAWDH_SLEEP_HELPER") == "" {
+		t.Skip("only runs as the child of TestReplaceBinaryWorksWhileThePreviousImageIsStillRunning")
+	}
+	time.Sleep(90 * time.Second)
+}
+
+// TestReplaceBinaryWorksWhileThePreviousImageIsStillRunning is the update that
+// asked for administrator rights on an ordinary per-user install.
+//
+// An update moves the running clawdh.exe aside as clawdh.exe.old and deletes it
+// at the next start. But a session started before that update — `clawdh run`
+// keeps one open for hours — is still running that very file, so it can be
+// neither deleted nor renamed over, and the NEXT update's swap failed with
+// "Access is denied". That was read as "this folder needs administrator
+// rights", so a UAC prompt and a PowerShell window appeared on a folder the
+// user owns; and since the update loop retries every two minutes, they came
+// back every two minutes, and the elevated retry hit the same held file.
+func TestReplaceBinaryWorksWhileThePreviousImageIsStillRunning(t *testing.T) {
+	called := stubElevation(t, errors.New("must not be called"))
+
+	dir := t.TempDir()
+	to := filepath.Join(dir, "clawdh.exe")
+	from := filepath.Join(dir, "clawdh.exe.new")
+	old := to + OldBinarySuffix
+	if err := os.WriteFile(to, []byte("live"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(from, []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The displaced image of an earlier update, still running.
+	copyFileTo(t, os.Args[0], old)
+	child := exec.Command(old, "-test.run=^TestSleepHelper$")
+	child.Env = append(os.Environ(), "CLAWDH_SLEEP_HELPER=1")
+	if err := child.Start(); err != nil {
+		t.Fatalf("starting the stand-in session: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+	if err := os.Remove(old); err == nil {
+		t.Fatal("precondition: a running image was deleted, so this test cannot reproduce the held file")
+	}
+
+	if err := replaceBinary(from, to); err != nil {
+		t.Fatalf("an update over a still-running previous image failed: %v", err)
+	}
+	if *called {
+		t.Error("administrator rights were requested for a folder the user can write; " +
+			"a held file is not a rights problem")
+	}
+	if got, err := os.ReadFile(to); err != nil || string(got) != "new" {
+		t.Errorf("binary content = %q (err %v), want %q", got, err, "new")
 	}
 }
