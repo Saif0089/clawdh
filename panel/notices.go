@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,46 @@ func (s *Server) checkinNotices(ctx context.Context, personID string, d Data) []
 	// A login running out is known from the credential itself, so it needs no
 	// metering: it is told even to a panel that has none.
 	out = append(out, s.loginEndNotices(personID, d)...)
+	out = append(out, s.updateStuckNotices(personID, d)...)
+	return out
+}
+
+// updateStuckRepeat is how often a machine that still cannot update is told
+// again: often enough that a notice dismissed by mistake comes back, rare enough
+// not to nag.
+const updateStuckRepeat = 3 * 24 * time.Hour
+
+// updateBlockedByAHeldFile reports whether a machine's update error is the one
+// builds before the fix made on a folder the person owns: the swap was refused
+// because an older clawdh session still had the previous executable open, which
+// those builds took for "needs administrator rights". Such a build cannot
+// update itself out of it — every attempt fails the same way, whatever is
+// answered to the prompt — so the person has to be told what to do. The newer
+// message ("press Update now") is a folder that really is protected, with a
+// different remedy, and is not this.
+func updateBlockedByAHeldFile(updateError string) bool {
+	return strings.Contains(updateError, "needs administrator rights") &&
+		!strings.Contains(updateError, "Update now")
+}
+
+// updateStuckNotices tells a person whose machine is stuck in that state how to
+// get out of it. The panel cannot do it for them: it holds no way to run
+// anything on a machine, by design, and the machine's own updater is the part
+// that is broken. A notice reaches the person on their own screen, which is the
+// one place that works.
+func (s *Server) updateStuckNotices(personID string, d Data) []Notice {
+	window := s.now().Unix() / int64(updateStuckRepeat/time.Second)
+	var out []Notice
+	for _, dev := range d.Devices {
+		if dev.PersonID != personID || !updateBlockedByAHeldFile(dev.UpdateError) {
+			continue
+		}
+		out = append(out, Notice{
+			ID: fmt.Sprintf("updatestuck:%s:%d", dev.ID, window),
+			Body: dev.Name + " can't install clawdh updates: an older clawdh window is still open. " +
+				"Close every Claude / clawdh window, or paste this into PowerShell: irm " + installWin + " | iex",
+		})
+	}
 	return out
 }
 

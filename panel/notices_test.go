@@ -227,3 +227,59 @@ func TestCheckinNoticesMeasureAPersonsCeilingAgainstTheirAccounts(t *testing.T) 
 		t.Errorf("notice ID = %q, want it keyed by the window's own reset", got[0].ID)
 	}
 }
+
+// A machine stuck on the old updater's false "needs administrator rights" is
+// told, on its own person's screen, how to get out; nobody else is, and a
+// machine whose folder really is protected (the newer message) has a different
+// remedy and is not told this one.
+func TestAStuckMachineIsToldHowToGetOut(t *testing.T) {
+	s, _ := loginServer(t)
+	stuck := "installing the update over C:\\Users\\syeda\\AppData\\Local\\clawdh\\bin\\clawdh.exe needs administrator rights " +
+		"(clawdh is installed somewhere this account cannot write) and the elevated retry did not complete: exit status 1"
+	protected := "installing the update over C:\\Program Files\\clawdh\\clawdh.exe needs administrator rights " +
+		"(clawdh is installed somewhere this account cannot write). Press Update now on the clawdh page, or run `clawdh update`, to approve it"
+	d := Data{Devices: []Device{
+		{ID: "d1", PersonID: "p1", Name: "LazySenpai", UpdateError: stuck},
+		{ID: "d2", PersonID: "p1", Name: "Fine", UpdateError: ""},
+		{ID: "d3", PersonID: "p1", Name: "Protected", UpdateError: protected},
+		{ID: "d4", PersonID: "p2", Name: "Other", UpdateError: stuck},
+		{ID: "d5", PersonID: "p1", Name: "RateLimited", UpdateError: "GitHub is rate-limiting update checks from this network"},
+	}}
+
+	got := s.updateStuckNotices("p1", d)
+	if len(got) != 1 {
+		t.Fatalf("p1 got %d notices, want 1: %v", len(got), got)
+	}
+	if !strings.Contains(got[0].Body, "LazySenpai") || !strings.Contains(got[0].Body, "install.ps1") {
+		t.Errorf("body = %q, want the PC's name and the installer line", got[0].Body)
+	}
+	if other := s.updateStuckNotices("p2", d); len(other) != 1 || !strings.Contains(other[0].Body, "Other") {
+		t.Errorf("p2's own stuck machine was not told: %v", other)
+	}
+	if none := s.updateStuckNotices("nobody", d); len(none) != 0 {
+		t.Errorf("a stranger was told: %v", none)
+	}
+
+	// Once per window per machine, and again after a few days if it is still stuck.
+	again := s.updateStuckNotices("p1", d)
+	if again[0].ID != got[0].ID {
+		t.Errorf("the same stuck machine got a new notice id within the window: %q vs %q", again[0].ID, got[0].ID)
+	}
+	realNow := s.now
+	s.now = func() time.Time { return realNow().Add(updateStuckRepeat + time.Hour) }
+	next := s.updateStuckNotices("p1", d)
+	s.now = realNow
+	if len(next) != 1 || next[0].ID == got[0].ID {
+		t.Error("a machine still stuck days later was never told again")
+	}
+
+	// It rides the check-in like every other notice.
+	via := s.checkinNotices(context.Background(), "p1", d)
+	found := false
+	for _, n := range via {
+		found = found || strings.HasPrefix(n.ID, "updatestuck:d1:")
+	}
+	if !found {
+		t.Errorf("the check-in did not carry it: %v", via)
+	}
+}
