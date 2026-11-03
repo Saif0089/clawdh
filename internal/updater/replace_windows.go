@@ -3,13 +3,13 @@
 package updater
 
 import (
+	"clawdh/internal/winproc"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -129,7 +129,7 @@ Remove-Item -LiteralPath %[1]s -Force -ErrorAction SilentlyContinue
 	ctx, cancel := context.WithTimeout(context.Background(), elevatedReplaceTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", outer)
+	cmd := winproc.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", outer)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		// Almost always an unanswered prompt. Say so, rather than

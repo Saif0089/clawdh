@@ -4,6 +4,7 @@ package guard
 
 import (
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -106,5 +107,100 @@ func TestClawdhNeverWritesTheCredentialStore(t *testing.T) {
 func TestCredstorePackageStaysDeleted(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoRoot, "internal", "credstore")); !os.IsNotExist(err) {
 		t.Error("internal/credstore is back. It existed to write credential stores, which clawdh no longer does.")
+	}
+}
+
+// spawnsOnPurpose are the files allowed to start a program with plain os/exec in
+// code that runs on Windows, each for a reason a person could point at: the
+// window is the point.
+var spawnsOnPurpose = map[string]string{
+	"internal/cli/cmd_exec.go":          "hands the person's own terminal to claude",
+	"internal/cli/cmd_run.go":           "hands the person's own terminal to claude",
+	"internal/termlauncher/launcher.go": "opens a terminal because the person pressed the button for one",
+	"internal/winproc/winproc.go":       "is the wrapper every other spawn goes through",
+}
+
+// TestNoBackgroundProgramOpensAWindowOnWindows is the guard on the terminal and
+// PowerShell windows that opened on people's screens around an update.
+//
+// On Windows every helper program clawdh starts in the background (PowerShell
+// for the "updated" notification, schtasks, taskkill, claude's .cmd shim, the
+// restarted server itself) is a console program, and Windows opens a console
+// window for one unless it is told not to. Nothing about that shows on macOS or
+// Linux, and clawdh's own Windows test runs cannot see a window, so the rule is
+// held here at the source: in any file that is part of a Windows build, a
+// program is started through winproc, which sets CREATE_NO_WINDOW, and a plain
+// os/exec call has to be a file listed above with its reason.
+func TestNoBackgroundProgramOpensAWindowOnWindows(t *testing.T) {
+	ctx := build.Default
+	ctx.GOOS, ctx.GOARCH, ctx.CgoEnabled = "windows", "amd64", false
+
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "testdata", "test", "web":
+				if path != repoRoot {
+					return fs.SkipDir
+				}
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		// Only files a Windows build compiles: build tags and _GOOS suffixes decide.
+		if ok, merr := ctx.MatchFile(filepath.Dir(path), d.Name()); merr != nil || !ok {
+			return nil
+		}
+		file, perr := parser.ParseFile(fset, path, nil, 0)
+		if perr != nil {
+			t.Errorf("parsing %s: %v", path, perr)
+			return nil
+		}
+		// The local name os/exec is imported under, if it is imported at all.
+		execName := ""
+		for _, imp := range file.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == "os/exec" {
+				execName = "exec"
+				if imp.Name != nil {
+					execName = imp.Name.Name
+				}
+			}
+		}
+		if execName == "" {
+			return nil
+		}
+		rel, _ := filepath.Rel(repoRoot, path)
+		rel = filepath.ToSlash(rel)
+		if _, ok := spawnsOnPurpose[rel]; ok {
+			return nil
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok || pkg.Name != execName || (sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext") {
+				return true
+			}
+			t.Errorf("%s:%d: exec.%s starts a program with no window flags, so on Windows it can open a console window.\n"+
+				"Use winproc.%s (internal/winproc), which starts it with CREATE_NO_WINDOW. If the window is the point "+
+				"(a terminal the person asked for), list the file in spawnsOnPurpose with the reason.",
+				rel, fset.Position(call.Pos()).Line, sel.Sel.Name, sel.Sel.Name)
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

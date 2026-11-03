@@ -5,11 +5,11 @@ package service
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"clawdh/internal/config"
+	"clawdh/internal/winproc"
 )
 
 const startupScriptName = "clawdh-autostart.cmd"
@@ -22,7 +22,7 @@ const legacyStartupScriptName = "ccam-autostart.cmd"
 // removeLegacyPlatform deletes the old ccam Startup script and scheduled task,
 // if any. All best-effort.
 func removeLegacyPlatform() {
-	_ = exec.Command("schtasks", "/Delete", "/TN", "ccam", "/F").Run()
+	_ = winproc.Command("schtasks", "/Delete", "/TN", "ccam", "/F").Run()
 	if folder, err := startupFolder(); err == nil {
 		_ = os.Remove(filepath.Join(folder, legacyStartupScriptName))
 	}
@@ -69,7 +69,7 @@ func (w *windowsService) Install(binaryPath string, port int) (string, error) {
 	// Clear a Scheduled Task left by an earlier install that had to
 	// fall back to one; otherwise both it and the Startup script fire
 	// at logon and one of the two clawdhs loses the port.
-	_ = exec.Command("schtasks", "/Delete", "/TN", "clawdh", "/F").Run()
+	_ = winproc.Command("schtasks", "/Delete", "/TN", "clawdh", "/F").Run()
 
 	script := autostartScript(binaryPath, port)
 
@@ -80,26 +80,6 @@ func (w *windowsService) Install(binaryPath string, port int) (string, error) {
 		return w.installScheduledTaskFallback(binaryPath, port)
 	}
 	return path, nil
-}
-
-// autostartScript is the batch file that starts clawdh at logon.
-//
-// `start "" /min ...` opens the process in its own minimized window
-// rather than tying it to the .cmd's own (already hidden) console, so
-// it keeps running after the launching script exits. PATH is set first
-// so clawdh can find `claude` (and the node it needs), which a
-// logon-launched process would not otherwise have — and cmd.exe expands
-// %VAR% as it parses the line, so a PATH containing a literal
-// %SOMETHING% (common on Windows) would be silently mangled unless the
-// percent signs are doubled.
-func autostartScript(binaryPath string, port int) string {
-	// Every interpolated value goes through batchEscape, not just PATH:
-	// the home directory and the install path both sit under
-	// C:\Users\<account name>, and % is a legal character in a Windows
-	// account name. Left bare, cmd.exe would eat it at parse time and
-	// silently start clawdh from the wrong directory — or not at all.
-	return fmt.Sprintf("@echo off\r\nset \"PATH=%s\"\r\ncd /d \"%s\"\r\nstart \"\" /min \"%s\" serve --port %d\r\n",
-		batchEscape(servicePATH()), batchEscape(serviceWorkingDir()), batchEscape(binaryPath), port)
 }
 
 // installScheduledTaskFallback covers the rare case where the per-user
@@ -124,7 +104,7 @@ func (w *windowsService) installScheduledTaskFallback(binaryPath string, port in
 		return "", fmt.Errorf("installing autostart: %w", err)
 	}
 
-	cmd := exec.Command("schtasks", "/Create", "/F",
+	cmd := winproc.Command("schtasks", "/Create", "/F",
 		"/SC", "ONLOGON",
 		"/RL", "LIMITED",
 		"/TN", "clawdh",
@@ -148,14 +128,6 @@ func fallbackScriptPath() (string, error) {
 	return filepath.Join(base, startupScriptName), nil
 }
 
-// batchEscape makes a value safe to embed in a .cmd line: cmd.exe
-// expands %VAR% at parse time, and a quote would terminate the set
-// statement early.
-func batchEscape(s string) string {
-	s = strings.ReplaceAll(s, `"`, "")
-	return strings.ReplaceAll(s, "%", "%%")
-}
-
 func (w *windowsService) Uninstall() error {
 	path, err := startupScriptPath()
 	if err == nil {
@@ -164,20 +136,32 @@ func (w *windowsService) Uninstall() error {
 		}
 	}
 	// Removing a task that doesn't exist is a no-op error we can ignore.
-	_ = exec.Command("schtasks", "/Delete", "/TN", "clawdh", "/F").Run()
+	_ = winproc.Command("schtasks", "/Delete", "/TN", "clawdh", "/F").Run()
 	if scriptPath, err := fallbackScriptPath(); err == nil {
 		_ = os.Remove(scriptPath)
 	}
 	return w.generic.Stop()
 }
 
+// IsInstalled reports whether a start-at-login entry of the current kind is in
+// place. A Startup script written by an earlier build does not count: it starts
+// clawdh in a console window that then stays on screen for the server's whole
+// life, so ensureAutostart replaces it, and the first start after an update
+// does the replacing.
 func (w *windowsService) IsInstalled() (bool, error) {
 	path, err := startupScriptPath()
 	if err != nil {
 		return false, err
 	}
-	if _, statErr := os.Stat(path); statErr == nil {
+	if script, readErr := os.ReadFile(path); readErr == nil && isCurrentAutostartScript(string(script)) {
 		return true, nil
 	}
-	return exec.Command("schtasks", "/Query", "/TN", "clawdh").Run() == nil, nil
+	// The Scheduled Task fallback runs a script of its own, which has to be
+	// the current kind too.
+	if fallback, fbErr := fallbackScriptPath(); fbErr == nil {
+		if script, readErr := os.ReadFile(fallback); readErr == nil && isCurrentAutostartScript(string(script)) {
+			return winproc.Command("schtasks", "/Query", "/TN", "clawdh").Run() == nil, nil
+		}
+	}
+	return false, nil
 }

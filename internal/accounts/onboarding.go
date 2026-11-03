@@ -1,10 +1,10 @@
 package accounts
 
 import (
+	"clawdh/internal/winproc"
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -69,7 +69,7 @@ func claudeVersion(claudeBinary string) string {
 	defer cancel()
 
 	name, args := claudebin.Invocation(claudeBinary, []string{"--version"})
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	out, err := winproc.CommandContext(ctx, name, args...).Output()
 	if err != nil {
 		return ""
 	}

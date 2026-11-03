@@ -13,6 +13,9 @@ import (
 func cmdStart(args []string) int {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	port := fs.Int("port", config.DefaultPort, "port to listen on")
+	// The start-at-login entry passes this: it has nobody to report to, and its
+	// own console window stays open for as long as this command runs.
+	noWait := fs.Bool("no-wait", false, "return as soon as the server has been launched, without waiting for it to answer")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -34,6 +37,9 @@ func cmdStart(args []string) int {
 	if err := svc.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "clawdh:", err)
 		return 1
+	}
+	if *noWait {
+		return 0
 	}
 	if info := waitForRunning(15 * time.Second); info != nil {
 		fmt.Printf("clawdh is running: http://127.0.0.1:%d\n", info.Port)

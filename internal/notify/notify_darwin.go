@@ -3,7 +3,6 @@
 package notify
 
 import (
-	"os/exec"
 	"strings"
 )
 
@@ -22,5 +21,3 @@ func appleScriptString(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 	return `"` + r.Replace(s) + `"`
 }
-
-func hideWindow(*exec.Cmd) {}

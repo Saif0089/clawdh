@@ -18,5 +18,3 @@ func notifyCommand(body string) (string, []string, error) {
 	}
 	return path, []string{"--app-name=clawdh", title, body}, nil
 }
-
-func hideWindow(*exec.Cmd) {}

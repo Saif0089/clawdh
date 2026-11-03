@@ -3,9 +3,7 @@
 package notify
 
 import (
-	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // notifyCommand drives Windows' own notification stack through the
@@ -46,10 +44,4 @@ try {
 // only escape is a doubled quote and nothing else is interpreted.
 func psString(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-// hideWindow keeps the helper from flashing a console window on screen,
-// which is worse than the notification is good.
-func hideWindow(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 }

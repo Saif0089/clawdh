@@ -3,6 +3,7 @@
 package ptyio
 
 import (
+	"clawdh/internal/winproc"
 	"context"
 	"os/exec"
 	"strconv"
@@ -68,8 +69,7 @@ func (s *windowsSession) Write(p []byte) (int, error) { return s.cpty.Write(p) }
 // underneath it.
 func (s *windowsSession) Close() error {
 	if s.pid > 0 {
-		kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(s.pid))
-		kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		kill := winproc.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(s.pid))
 		_ = kill.Run()
 	}
 	return s.cpty.Close()

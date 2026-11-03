@@ -199,7 +199,9 @@ func launchWindows(configDir, label string) error {
 		}
 	}
 
-	return startAndReap(exec.Command("powershell", "-NoExit", "-Command", psCmd))
+	ps := exec.Command("powershell", "-NoExit", "-Command", psCmd)
+	ownWindow(ps)
+	return startAndReap(ps)
 }
 
 func psQuote(s string) string {

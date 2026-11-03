@@ -241,6 +241,39 @@ The bundle is plain-text JS inside the binary. Grep it with `/usr/bin/grep -a`
 or python — a shell whose `grep` is aliased to `ugrep` fails on a bounded
 `{0,240}` window and prints nothing, which reads as "not found".
 
+## Windows: nothing clawdh runs in the background shows a window
+
+On Windows a helper program that is not a window (PowerShell for the "updated"
+notification, `schtasks`, `taskkill`, claude's `.cmd` shim) is a console
+program, and Windows opens a console window for one unless it is told not to —
+or lets it share the parent's console, which is no better when that console is
+a visible window. Where Windows Terminal is the default terminal, STARTUPINFO's
+"hide" is not enough either: a console program started without a console can
+still open a Windows Terminal window. So:
+
+- Every background spawn goes through `internal/winproc` (`Command` /
+  `CommandContext`), which sets `CREATE_NO_WINDOW`. `test/guard` fails the build
+  for a plain `os/exec` call in any file a Windows build compiles, except the
+  three listed there on purpose: the two that hand the person's own terminal to
+  claude (`clawdh run`, `clawdh exec`) and the terminal launcher, whose window
+  is what the button is for.
+- The server is started by `service.spawnDetached` with its own window-less
+  console (`CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`). It no longer shares
+  the console of whatever launched it, so closing a terminal cannot end it, and
+  everything it starts inherits a console with no window. The terminal launcher
+  is the one child that asks for a console of its own (`CREATE_NEW_CONSOLE`), or
+  the person would press "open terminal" and get a PowerShell they cannot see.
+- The Startup script runs `clawdh start --port N --no-wait`, which launches that
+  server and returns, so the script's own window is gone at once. It used to be
+  `start "" /min clawdh serve`, which kept a minimized console window in the
+  taskbar for the server's whole life. A script from an earlier build is not
+  "installed" (`autostartScriptMarker`), so the first start after an update
+  rewrites it.
+
+macOS and Linux open no windows in the background: `launchctl`/`systemctl`,
+`osascript`/`notify-send` notifications and the `security` reads have no UI, and
+the only terminal windows are the ones the page's button asks for.
+
 ## Testing strategy
 
 Four layers, because each one has a blind spot that let a real bug through:

@@ -14,6 +14,7 @@ package statusline
 
 import (
 	"bytes"
+	"clawdh/internal/winproc"
 	"context"
 	"encoding/json"
 	"os"
@@ -220,9 +221,9 @@ func runTheirs(theirs map[string]any, stdin []byte) string {
 	defer cancel()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+		cmd = winproc.CommandContext(ctx, "cmd", "/C", command)
 	} else {
-		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
+		cmd = winproc.CommandContext(ctx, "/bin/sh", "-c", command)
 	}
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Stderr = os.Stderr

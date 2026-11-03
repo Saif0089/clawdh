@@ -1,13 +1,13 @@
 package accounts
 
 import (
+	"clawdh/internal/winproc"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 )
@@ -75,7 +75,7 @@ func keychainItemName(configDir string) string {
 // access to an item Claude Code created, rather than prompting under clawdh's own
 // unfamiliar name.
 func readKeychainItem(service string) ([]byte, error) {
-	out, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", service, "-w").Output()
+	out, err := winproc.Command("/usr/bin/security", "find-generic-password", "-s", service, "-w").Output()
 	if err != nil {
 		return nil, fmt.Errorf("reading this account's login from the Keychain: %w", err)
 	}
@@ -107,6 +107,6 @@ func RemoveLogin(configDir string) {
 	if runtime.GOOS == "darwin" {
 		// delete-generic-password removes exactly the named item; nothing is
 		// written. Ignore "not found" — that is the desired end state anyway.
-		_ = exec.Command("/usr/bin/security", "delete-generic-password", "-s", keychainItemName(configDir)).Run()
+		_ = winproc.Command("/usr/bin/security", "delete-generic-password", "-s", keychainItemName(configDir)).Run()
 	}
 }

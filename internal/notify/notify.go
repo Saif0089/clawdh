@@ -13,9 +13,9 @@ package notify
 
 import (
 	"clawdh/internal/config"
+	"clawdh/internal/winproc"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -54,8 +54,7 @@ func SendContext(ctx context.Context, body string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
-	hideWindow(cmd)
+	cmd := winproc.CommandContext(ctx, name, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("showing a desktop notification via %s: %w: %s", name, err, out)
 	}

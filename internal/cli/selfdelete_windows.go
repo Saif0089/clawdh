@@ -3,11 +3,10 @@
 package cli
 
 import (
+	"clawdh/internal/winproc"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // deleteSelfBinary removes path, clawdh's own currently-running
@@ -28,7 +27,6 @@ func deleteSelfBinary(path string) error {
 		`for ($i = 0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 500; try { Remove-Item -LiteralPath '%s' -Force -ErrorAction Stop; break } catch {} }`,
 		strings.ReplaceAll(path, "'", "''"),
 	)
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd := winproc.Command("powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script)
 	return cmd.Start()
 }

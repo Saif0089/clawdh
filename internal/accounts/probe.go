@@ -1,10 +1,10 @@
 package accounts
 
 import (
+	"clawdh/internal/winproc"
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"time"
 
 	"clawdh/internal/claudebin"
@@ -65,7 +65,7 @@ func (p *Prober) Status(ctx context.Context, configDir string) (authStatus, erro
 	defer cancel()
 
 	name, args := claudebin.Invocation(binary, []string{"auth", "status", "--json"})
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := winproc.CommandContext(ctx, name, args...)
 	// An empty configDir means the default account, which is reached by
 	// *removing* the variable — see EnvForConfigDir.
 	cmd.Env = EnvForConfigDir(configDir)

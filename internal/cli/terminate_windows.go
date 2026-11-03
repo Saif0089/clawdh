@@ -1,9 +1,9 @@
 package cli
 
 import (
+	"clawdh/internal/winproc"
 	"os/exec"
 	"strconv"
-	"syscall"
 )
 
 // endChild kills Claude Code and everything under it. Windows has no SIGTERM,
@@ -14,8 +14,7 @@ import (
 // into it. internal/ptyio hit the same shim and kills the tree for the same
 // reason. Falls back to the direct child if taskkill is unavailable.
 func endChild(cmd *exec.Cmd) {
-	kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid))
-	kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	kill := winproc.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid))
 	if err := kill.Run(); err != nil {
 		_ = cmd.Process.Kill()
 	}

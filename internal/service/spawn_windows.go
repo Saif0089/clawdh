@@ -4,16 +4,15 @@ package service
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"syscall"
 
 	"clawdh/internal/config"
+	"clawdh/internal/winproc"
 	"golang.org/x/sys/windows"
 )
 
-// spawnDetached starts binaryPath with its console window hidden (so it
-// doesn't flash on screen at login) and output redirected to clawdh's log
+// spawnDetached starts binaryPath with no console window (so nothing shows on
+// screen at login or after an update) and output redirected to clawdh's log
 // file, and returns its PID.
 func spawnDetached(binaryPath string, args []string) (int, error) {
 	logPath, err := config.LogFile()
@@ -29,13 +28,16 @@ func spawnDetached(binaryPath string, args []string) (int, error) {
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(binaryPath, args...)
+	cmd := winproc.Command(binaryPath, args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
-	}
+	// No console window, and not the launcher's console either. The server used
+	// to share the console of whatever started it — a terminal the person
+	// typed `clawdh start` in, or the minimized window the Startup script made
+	// for it — so closing that window ended clawdh, and a visible window stood
+	// for the server's whole life. A console of its own with no window also
+	// means everything the server starts inherits a window-less console.
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP
 
 	if err := cmd.Start(); err != nil {
 		return 0, err

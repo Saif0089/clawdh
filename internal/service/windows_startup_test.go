@@ -76,6 +76,15 @@ func TestStartupScriptActuallyStartsTheService(t *testing.T) {
 	}
 	t.Logf("startup script:\n%s", script)
 
+	// The entry starts the server through `clawdh start`, which returns at once;
+	// `start /min` is what left a console window on screen for the server's
+	// whole life.
+	if strings.Contains(strings.ToLower(string(script)), "/min") {
+		t.Errorf("the startup script opens a window for the server:\n%s", script)
+	}
+	if !isCurrentAutostartScript(string(script)) {
+		t.Errorf("the script Install wrote is not recognised as current:\n%s", script)
+	}
 	// cmd.exe expands %VAR% as it parses the line, so a literal % has
 	// to arrive doubled or the PATH silently loses entries.
 	if strings.Contains(string(script), "100%dir") {
