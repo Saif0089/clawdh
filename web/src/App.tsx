@@ -578,6 +578,12 @@ function People({ data, reload, ask }: { data: Panel; reload: () => void; ask: A
                           {d.updateError && (
                             <span title={`This machine cannot update itself — ${d.updateError}`} className="rounded-full bg-crit/12 px-1.5 py-px text-[11px] font-medium text-crit">can't update</span>
                           )}
+                          {/* Behind with no reason of its own: a newer build has been running on other
+                              machines for over an hour. Re-running the install line on it fixes it,
+                              whatever the cause. */}
+                          {!d.updateError && d.notUpdating && (
+                            <span title="A newer clawdh build has been running on other machines for over an hour and this one has not installed it, without saying why. Re-run the install line on it (Windows: in PowerShell, irm https://raw.githubusercontent.com/Saif0089/clawdh/main/install.ps1 | iex)." className="rounded-full bg-warn/12 px-1.5 py-px text-[11px] font-medium text-warn">not updating</span>
+                          )}
                           <span className="text-faint">{when(d.lastSeen)}</span>
                           <div className="ml-auto flex gap-1">
                             {d.remote && <button onClick={() => setJobsFor(d)} className="rounded px-1.5 py-0.5 text-[13px] text-primary transition-colors hover:bg-primary/12">Remote help</button>}

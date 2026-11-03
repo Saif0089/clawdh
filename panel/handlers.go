@@ -57,6 +57,9 @@ type deviceView struct {
 	// UpdateError is why this machine cannot move off that build, when it has
 	// been trying and failing.
 	UpdateError string `json:"updateError,omitempty"`
+	// NotUpdating is set when a newer build has been running elsewhere for over
+	// an hour and this machine, giving no reason, has not taken it (builds.go).
+	NotUpdating bool `json:"notUpdating,omitempty"`
 }
 
 type personView struct {
@@ -110,6 +113,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 	s.applyLoginEnds(d, accounts)
 
 	present := s.presence(r.Context(), d)
+	stalled := s.notUpdating(d, s.now())
 	people := make([]personView, 0, len(d.People))
 	for _, p := range d.People {
 		v := personView{ID: p.ID, Name: p.Name, Email: p.Email, Presence: present[p.ID]}
@@ -127,7 +131,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 			if dev.PersonID != p.ID {
 				continue
 			}
-			dv := deviceView{ID: dev.ID, Name: dev.Name, Remote: dev.Remote, Version: dev.Version, UpdateError: dev.UpdateError}
+			dv := deviceView{ID: dev.ID, Name: dev.Name, Remote: dev.Remote, Version: dev.Version, UpdateError: dev.UpdateError, NotUpdating: stalled[dev.ID]}
 			if !dev.LastSeen.IsZero() {
 				seen := dev.LastSeen
 				dv.LastSeen = &seen
@@ -664,6 +668,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request, dev Devic
 	}
 	_ = readJSON(r, &in)
 
+	s.noteBuild(in.Version, s.now())
 	if err := s.store.Mutate(func(d *Data) error {
 		now := s.now()
 		for i := range d.Devices {

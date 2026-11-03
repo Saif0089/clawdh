@@ -44,6 +44,13 @@ type Server struct {
 		linked  map[string]string     // account ID -> the login key it was linked under
 		sampled map[string]WeekSample // account ID -> the last weekly reading filed
 	}
+	// builds is when the panel first saw each clawdh build a machine reported,
+	// to tell a machine that has stopped updating (see builds.go).
+	builds struct {
+		sync.Mutex
+		first map[string]time.Time
+		since time.Time
+	}
 }
 
 // NewServer wires a panel over a store and its key. usage is the metering read
@@ -53,6 +60,7 @@ func NewServer(store *Store, secret *Secret, usage UsageReader, jobs Jobs) *Serv
 	s := &Server{store: store, secret: secret, usage: usage, jobs: jobs, now: time.Now}
 	s.memo.linked = map[string]string{}
 	s.memo.sampled = map[string]WeekSample{}
+	s.builds.first = map[string]time.Time{}
 	return s
 }
 

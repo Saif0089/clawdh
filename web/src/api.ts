@@ -67,7 +67,7 @@ export interface Account { id: string; name: string; email?: string; plan?: stri
 // subject, an ad-hoc build is just the tag. Absent for a machine still on a build
 // older than version reporting, which is itself the news.
 // updateError is why the machine could not move off that build, when it knows.
-export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean; version?: string; updateError?: string }
+export interface Device { id: string; name: string; lastSeen?: string; remote?: boolean; version?: string; updateError?: string; notUpdating?: boolean }
 export interface Person { id: string; name: string; email?: string; can?: string[]; canUntil?: string[]; devices?: Device[]; presence?: Presence }
 export interface Job {
   id: string; kind: string; params?: string; status: string; result?: string;
