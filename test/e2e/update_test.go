@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,7 +105,13 @@ func TestAutoUpdateInstallsAndRestartsIntoIt(t *testing.T) {
 		t.Fatalf("reading the install dir: %v", err)
 	}
 	for _, entry := range entries {
-		if name := entry.Name(); name != exeName("clawdh") && name != exeName("clawdh")+".old" {
+		// The image the update displaced may still be there: it is the running
+		// server's own file until that process exits, and the next start deletes
+		// it. Each update gives it a name of its own (clawdh.exe.old-<time>), so
+		// a displaced image an earlier session still holds cannot block this one.
+		name := entry.Name()
+		displaced := strings.HasPrefix(name, exeName("clawdh")+".old")
+		if name != exeName("clawdh") && !displaced {
 			t.Errorf("left %q behind in the install directory", name)
 		}
 	}
