@@ -27,7 +27,10 @@ hash, so moving to the narrower one keeps every existing login working. clawdh:
   `!clawdh <name>` as a shell command, and the session comes back on the other
   account **with the conversation resumed**. It is a genuine relaunch, so the
   conversation survives but anything running inside the old process —
-  subagents, workflows, background tasks — does not.
+  subagents, workflows, background tasks — does not. So that the work does not
+  stop there, the relaunched session opens with a first prompt, `continue,
+  switched to <account>` (not in an editor chat or a `--print` run, and not for
+  a session switched before its first message, which has nothing to carry on).
 
   This used to happen in place, with nothing restarted: clawdh gave each session a
   private copy of the login and a switch rewrote it. Keeping those copies meant
@@ -41,6 +44,16 @@ hash, so moving to the narrower one keeps every existing login working. clawdh:
   shell rc that runs the same supervisor. It steps aside — running Claude Code
   directly — inside an existing session, with no terminal (scripts, pipes, CI),
   when clawdh is not on PATH, or with `CLAWDH_WRAP=0` set.
+- moves a session later, by usage: `clawdh <name> at 90%` (or `clawdh shared
+  <name> at 90%`) moves it once the account it runs as has used 90% of its
+  week, between answers, so nothing is cut off; `at 0%` moves after the current
+  answer and `clawdh stay` cancels it. An account that reaches its limit stops
+  answering, and Claude Code then runs no after-answer hook, so the move is also
+  made when a turn fails on the limit (the `StopFailure` hook) and, with no
+  hook running at all, by the supervisor itself, which checks a pending move
+  every 30 seconds and acts once the account is at its limit. The session then
+  resumes on the new account with the same `continue, switched to <account>`
+  prompt, which retries what the limit stopped,
 - shows every session it is supervising — terminal or editor chat — and moves
   any of them, or all of them, to another account from the page, with no command
   to remember,

@@ -127,7 +127,7 @@ func TestRemoveHookLeavesOthers(t *testing.T) {
 // Every clawdh hook is installed — the switch, the after-answer move, and the
 // note that tells Claude how to set one — beside the user's own hooks on the
 // same events, and a second run writes nothing.
-func TestEnsureHooksInstallsAllThreeBesideTheUsersOwn(t *testing.T) {
+func TestEnsureHooksInstallsEveryHookBesideTheUsersOwn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	mine := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/usr/local/bin/my-hook stop"}]}],` +
 		`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"remember prompt"}]}]},"model":"opus"}`
@@ -156,6 +156,8 @@ func TestEnsureHooksInstallsAllThreeBesideTheUsersOwn(t *testing.T) {
 		"UserPromptSubmit": {"remember prompt", `"/opt/clawdh/clawdh" hook user-prompt-submit`},
 		"Stop":             {"/usr/local/bin/my-hook stop", `"/opt/clawdh/clawdh" hook stop`},
 		"SessionStart":     {`"/opt/clawdh/clawdh" hook session-start`},
+		// A turn that dies on the usage limit ends in StopFailure, never Stop.
+		"StopFailure": {`"/opt/clawdh/clawdh" hook stop-failure`},
 	}
 	for event, w := range want {
 		if got := commands(event); strings.Join(got, "|") != strings.Join(w, "|") {
@@ -175,7 +177,7 @@ func TestEnsureHooksInstallsAllThreeBesideTheUsersOwn(t *testing.T) {
 		t.Error("a second EnsureHooks rewrote settings.json although nothing changed")
 	}
 
-	// Uninstall takes clawdh's three and nothing of the user's.
+	// Uninstall takes clawdh's hooks and nothing of the user's.
 	if err := RemoveHooks(path); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +188,9 @@ func TestEnsureHooksInstallsAllThreeBesideTheUsersOwn(t *testing.T) {
 	if got := commands("Stop"); len(got) != 1 || got[0] != "/usr/local/bin/my-hook stop" {
 		t.Errorf("after RemoveHooks, Stop = %q; want only the user's own", got)
 	}
-	if _, ok := hooks["SessionStart"]; ok {
-		t.Error("RemoveHooks left clawdh's SessionStart hook behind")
+	for _, event := range []string{"SessionStart", "StopFailure"} {
+		if _, ok := hooks[event]; ok {
+			t.Errorf("RemoveHooks left clawdh's %s hook behind", event)
+		}
 	}
 }

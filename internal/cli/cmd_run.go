@@ -371,6 +371,12 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 			}
 		}
 
+		// A move waiting on this account is normally made by the Stop hook, between
+		// answers. An account at its limit stops answering, so no hook fires and
+		// the session would sit there for good: watch for that from here.
+		stopRuleWatch := make(chan struct{})
+		go watchRule(handoff, sessionID, describeSession(target, sessionID, nonce, handoff), ruleWatchInterval, ruleUsage, stopRuleWatch)
+
 		// Nothing in this callback prints. Claude Code owns the terminal while it
 		// runs, so a write here corrupts the TUI mid-paint; the reply goes back
 		// through the outcome file to the hook that staged the switch.
@@ -391,6 +397,7 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		if stopWatch != nil {
 			close(stopWatch) // the watcher stops here whether or not it staged a switch
 		}
+		close(stopRuleWatch)
 		if !switched {
 			// stderr, not stdout: in a terminal both are the screen, but when an
 			// editor hosts this session stdout is the message channel the extension
@@ -417,7 +424,8 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		}
 		// A relaunch onto the same shared account is the key-watcher recovering from
 		// a revoke+re-grant, not a user switch — say so, since the user did not ask.
-		if !next.local && !target.local && strings.EqualFold(next.display, target.display) {
+		renewed := !next.local && !target.local && strings.EqualFold(next.display, target.display)
+		if renewed {
 			fmt.Fprintf(os.Stderr, "clawdh: your access to %s was renewed — reconnecting; your conversation continues.\n", next.display)
 		}
 		target = next
@@ -436,9 +444,36 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		// launch said about sessions (an editor's --session-id=<id>, a user's
 		// --resume) has to go — two session flags is an error, and the wrong one
 		// winning is a conversation silently left behind.
-		resume := switching.ResumeArgs(h.SessionID, switching.HasTranscript(claudeDir, h.SessionID))
+		recorded := switching.HasTranscript(claudeDir, h.SessionID)
+		resume := switching.ResumeArgs(h.SessionID, recorded)
 		sessionArgs = append(switching.WithoutSessionArgs(passthrough), resume...)
+		// Claude Code comes back idle: what the old process was doing died with
+		// it, and nothing says to carry on. Open with a first prompt so work
+		// resumes without a person at the keyboard. Only where there is a
+		// conversation to carry on (a session switched before its first message
+		// has none), and only where a positional prompt is welcome.
+		if (recorded || strings.TrimSpace(h.SessionID) == "") && continuePromptFits(passthrough) {
+			sessionArgs = append(sessionArgs, switching.ContinuePrompt(target.display, renewed))
+		}
 	}
+}
+
+// continuePromptFits reports whether a relaunch may open with a positional
+// prompt. An editor drives Claude Code over stream-json, where a prompt on the
+// command line would turn the session into a one-shot; --print is one already.
+func continuePromptFits(passthrough []string) bool {
+	if hostedByEditor {
+		return false
+	}
+	for _, a := range passthrough {
+		switch {
+		case a == "-p" || a == "--print",
+			a == "--output-format" || strings.HasPrefix(a, "--output-format="),
+			a == "--input-format" || strings.HasPrefix(a, "--input-format="):
+			return false
+		}
+	}
+	return true
 }
 
 // hostedByEditor is set when an editor, not a terminal, owns this supervisor

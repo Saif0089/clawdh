@@ -221,3 +221,14 @@ func BlockDecisionJSON(reason string) ([]byte, error) {
 		},
 	})
 }
+
+// ContinuePrompt is the first prompt of a session relaunched by a move: Claude
+// Code comes back idle, and this is what tells it to pick the work up again. A
+// relaunch onto the account it was already on (a renewed gateway key) says so
+// instead of claiming a switch.
+func ContinuePrompt(account string, renewed bool) string {
+	if renewed {
+		return "continue, reconnected to " + account
+	}
+	return "continue, switched to " + account
+}

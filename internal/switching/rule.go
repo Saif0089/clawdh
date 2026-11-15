@@ -12,9 +12,12 @@ import (
 // A Rule is a switch the session makes later: once the account it runs as has
 // used AtPercent of Window, it moves to Account — between answers, never in the
 // middle of one. Claude Code's Stop hook fires when an answer has finished, and
-// that is the only place a rule is acted on (see `clawdh hook stop`), so the
+// that is where a rule is normally acted on (see `clawdh hook stop`), so the
 // relaunch never cuts anything off; the conversation carries over exactly as it
-// does for a switch typed by hand.
+// does for a switch typed by hand. An account at its limit stops answering and
+// no Stop hook fires, so a rule is also acted on when a turn fails on the limit
+// (`clawdh hook stop-failure`) and by the supervisor itself, which watches a
+// pending rule and moves a session whose account is at its limit.
 //
 // A rule lives beside the handoff file of the supervisor it was set in, and is
 // one-shot: it is removed as it fires, and when its supervisor exits.

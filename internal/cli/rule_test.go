@@ -310,3 +310,97 @@ func TestAPendingFiveHourRuleIsCancelledNotReadAsTheWeek(t *testing.T) {
 		t.Error("the five-hour rule was kept")
 	}
 }
+
+// An account at its limit stops answering, and Claude Code then ends the turn
+// with StopFailure instead of Stop. A move waiting on that account has to be
+// acted on there too, or the session halts for good.
+func TestAMoveHappensWhenTheTurnFailsOnTheLimit(t *testing.T) {
+	handoff := withRule(t, switching.Rule{Account: "saif", Shared: true, Window: switching.WindowWeek, AtPercent: 97, For: "n1"})
+	// The reading lags (a shared account's arrives with the panel check-in) and
+	// says 96%: the account itself has said it is out, which is the better witness.
+	msg := applyTurnFailure(handoff, "s1", ruleSession(), "rate_limit", reads(96))
+	if !strings.Contains(msg, "limit") || !strings.Contains(msg, "saif") {
+		t.Errorf("message = %q", msg)
+	}
+	h, ok := switching.ReadHandoff(handoff)
+	if !ok || h.Account != "saif" || !h.Shared || h.SessionID != "s1" {
+		t.Fatalf("staged %+v, %v; want the switch to saif, keeping conversation s1", h, ok)
+	}
+	if _, ok := switching.ReadRule(handoff); ok {
+		t.Error("the rule outlived the move it made")
+	}
+}
+
+// Even with no usable reading at all, a limit error is enough.
+func TestALimitErrorNeedsNoReading(t *testing.T) {
+	handoff := withRule(t, switching.Rule{Account: "saif", Window: switching.WindowWeek, AtPercent: 100, For: "n1"})
+	none := func(sessions.Session, string) (float64, bool) { return 0, false }
+	if msg := applyTurnFailure(handoff, "s1", ruleSession(), "rate_limit", none); msg == "" {
+		t.Error("a limit error with no reading did not move the session")
+	}
+	if _, ok := switching.ReadHandoff(handoff); !ok {
+		t.Error("no switch was staged")
+	}
+}
+
+// A failed turn that is not the limit is judged like a finished one: the move
+// happens when enough is used, and not before.
+func TestAnotherFailureIsJudgedByUsage(t *testing.T) {
+	handoff := withRule(t, switching.Rule{Account: "saif", Window: switching.WindowWeek, AtPercent: 50, For: "n1"})
+	if msg := applyTurnFailure(handoff, "s1", ruleSession(), "overloaded", reads(10)); msg != "" {
+		t.Errorf("an overloaded server at 10%% moved a 50%% rule: %q", msg)
+	}
+	if _, ok := switching.ReadHandoff(handoff); ok {
+		t.Fatal("a switch was staged below the threshold")
+	}
+	if msg := applyTurnFailure(handoff, "s1", ruleSession(), "server_error", reads(50)); msg == "" {
+		t.Error("a failed turn that crossed the threshold did not move the session")
+	}
+}
+
+// The payload of Claude Code's StopFailure hook, as read from its stdin.
+func TestStopFailurePayload(t *testing.T) {
+	sid, kind := readStopFailure(strings.NewReader(`{"session_id":"s9","hook_event_name":"StopFailure","error":"rate_limit","error_details":"429"}`))
+	if sid != "s9" || kind != "rate_limit" {
+		t.Errorf("got %q, %q", sid, kind)
+	}
+	if sid, kind := readStopFailure(strings.NewReader(`not json`)); sid != "" || kind != "" {
+		t.Errorf("garbage read as %q, %q", sid, kind)
+	}
+}
+
+// When the limit is hit and the session sits still, no hook of any kind fires.
+// The supervisor watches the pending move itself, and acts once the account is
+// at its limit and the move is due.
+func TestTheSupervisorMovesAStalledSessionAtTheLimit(t *testing.T) {
+	rule := switching.Rule{Account: "saif", Shared: true, Window: switching.WindowWeek, AtPercent: 97, For: "n1"}
+
+	handoff := withRule(t, rule)
+	if watchRuleOnce(handoff, "s1", ruleSession(), reads(98)) {
+		t.Error("moved at 98%: that is for the Stop hook, between answers, not for the supervisor mid-answer")
+	}
+	if watchRuleOnce(handoff, "s1", ruleSession(), func(sessions.Session, string) (float64, bool) { return 0, false }) {
+		t.Error("moved without a reading")
+	}
+	if _, ok := switching.ReadHandoff(handoff); ok {
+		t.Fatal("a switch was staged before the limit")
+	}
+	if !watchRuleOnce(handoff, "s1", ruleSession(), reads(100)) {
+		t.Fatal("the account is at 100% and the move was not made")
+	}
+	h, ok := switching.ReadHandoff(handoff)
+	if !ok || h.Account != "saif" || !h.Shared || h.SessionID != "s1" {
+		t.Errorf("staged %+v, %v", h, ok)
+	}
+	if _, ok := switching.ReadRule(handoff); ok {
+		t.Error("the rule outlived the move it made")
+	}
+
+	// A rule whose threshold is not reached is not hurried by a full account
+	// of... itself: 100% is past any threshold, but a rule for another session
+	// is still never acted on.
+	other := withRule(t, switching.Rule{Account: "saif", Window: switching.WindowWeek, AtPercent: 5, For: "stranger"})
+	if watchRuleOnce(other, "s1", ruleSession(), reads(100)) {
+		t.Error("a stranger's rule was acted on")
+	}
+}

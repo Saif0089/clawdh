@@ -22,6 +22,10 @@ var clawdhHooks = []hookSpec{
 	// An answer has finished: the one moment a pending rule may move the session.
 	// It may read usage from the local service, so it gets a little longer.
 	{"Stop", "hook stop", 10},
+	// A turn that dies on the usage limit ends in StopFailure, not Stop, so the
+	// after-answer hook never runs for it: the move waiting on that account has to
+	// be acted on here, or the session halts on the limit for good.
+	{"StopFailure", "hook stop-failure", 10},
 	// Tells Claude, in a clawdh session only, how to set such a rule when asked.
 	{"SessionStart", "hook session-start", 5},
 }

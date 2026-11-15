@@ -22,11 +22,13 @@ func cmdHook(args []string) int {
 			return hookUserPromptSubmit()
 		case "stop":
 			return hookStop()
+		case "stop-failure":
+			return hookStopFailure()
 		case "session-start":
 			return hookSessionStart()
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: clawdh hook user-prompt-submit|stop|session-start")
+	fmt.Fprintln(os.Stderr, "usage: clawdh hook user-prompt-submit|stop|stop-failure|session-start")
 	return 2
 }
 

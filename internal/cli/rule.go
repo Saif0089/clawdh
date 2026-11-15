@@ -156,13 +156,85 @@ func hookStop() int {
 // session when its account has used enough, and returns what to tell the
 // person ("" when there is nothing to say yet). read is where usage comes from.
 func applyRule(handoff, sessionID string, sess sessions.Session, read func(sessions.Session, string) (float64, bool)) string {
+	message, _ := moveByRule(handoff, sessionID, sess, read, "")
+	return message
+}
+
+// applyTurnFailure is applyRule for a turn that ended in an API error. Claude
+// Code runs StopFailure for it and never Stop, so without this a move waiting on
+// an account that has hit its limit is never made and the session halts there.
+// A rate_limit error is the account itself saying it is out, a better witness
+// than a usage reading that may lag, so it moves the session whatever the
+// threshold or the reading; any other failure is judged like a finished answer.
+func applyTurnFailure(handoff, sessionID string, sess sessions.Session, kind string, read func(sessions.Session, string) (float64, bool)) string {
+	why := ""
+	if kind == "rate_limit" {
+		why = "hit its usage limit"
+	}
+	message, _ := moveByRule(handoff, sessionID, sess, read, why)
+	return message
+}
+
+// limitReachedPercent is the usage at which an account is taken to be out:
+// readings are rounded and arrive late, and a weekly limit stops answering at
+// 100%, so a few tenths short of it is the limit for every practical purpose.
+const limitReachedPercent = 99
+
+// ruleWatchInterval is how often the supervisor looks at a pending move.
+var ruleWatchInterval = 30 * time.Second
+
+// ruleUsage is where the watcher reads usage from; tests stand in for it.
+var ruleUsage = usagePercent
+
+// watchRuleOnce is the supervisor's own look at a pending move, for when no hook
+// can run: an account at its limit stops answering, so neither Stop nor
+// StopFailure may ever fire for the session sitting on it. It acts only when the
+// account is at its limit and the move is due — a move merely due is for the
+// Stop hook, between answers, so an answer in the middle of being written is not
+// cut off for it. It reports whether it staged the move.
+func watchRuleOnce(handoff, sessionID string, sess sessions.Session, read func(sessions.Session, string) (float64, bool)) bool {
+	rule, ok := switching.ReadRule(handoff)
+	if !ok || (rule.For != "" && rule.For != sess.Nonce) || rule.Window == switching.Window5h {
+		return false
+	}
+	used, ok := read(sess, rule.Window)
+	if !ok || used < limitReachedPercent || used < rule.AtPercent {
+		return false
+	}
+	_, moved := moveByRule(handoff, sessionID, sess, read, "hit its usage limit")
+	return moved
+}
+
+// watchRule runs watchRuleOnce on a timer for as long as one launch of the
+// session lives. It says nothing: Claude Code owns the terminal, and a line
+// written here would corrupt it. The relaunch's first prompt tells the model.
+func watchRule(handoff, sessionID string, sess sessions.Session, every time.Duration, read func(sessions.Session, string) (float64, bool), stop <-chan struct{}) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if watchRuleOnce(handoff, sessionID, sess, read) {
+				return
+			}
+		}
+	}
+}
+
+// moveByRule is the decision itself. why is "" for the ordinary case — move once
+// enough is used — and otherwise the reason the account is known to be out, which
+// moves the session whatever the threshold. moved says whether a switch was
+// staged; the message is what to tell the person ("" when there is nothing to say).
+func moveByRule(handoff, sessionID string, sess sessions.Session, read func(sessions.Session, string) (float64, bool), why string) (message string, moved bool) {
 	rule, ok := switching.ReadRule(handoff)
 	if !ok {
-		return ""
+		return "", false
 	}
 	if rule.For != "" && rule.For != sess.Nonce {
 		switching.ClearRule(handoff) // left by an earlier session that had this pid
-		return ""
+		return "", false
 	}
 	if rule.Window == switching.Window5h {
 		// Set before the window was removed: it can never reach its percentage,
@@ -170,31 +242,68 @@ func applyRule(handoff, sessionID string, sess sessions.Session, read func(sessi
 		// nobody asked about.
 		switching.ClearRule(handoff)
 		return "clawdh: this session had a move waiting on the 5-hour window. " + fiveHourGone +
-			" The move was cancelled; set a new one with `clawdh <account> at <N>%`."
+			" The move was cancelled; set a new one with `clawdh <account> at <N>%`.", false
 	}
-	if rule.AtPercent > 0 {
+	if rule.AtPercent > 0 && why == "" {
 		used, ok := read(sess, rule.Window)
 		if !ok || used < rule.AtPercent {
-			return ""
+			return "", false
 		}
 	}
 	// Relaunching into a folder Claude Code cannot read would end the session.
 	// Keep the rule and say why; it fires after a later answer once fixed.
 	if problem := cwdProblem(); problem != "" {
-		return "clawdh did not move this session yet: " + problem
+		return "clawdh did not move this session yet: " + problem, false
 	}
 	if sessionID == "" {
 		sessionID = os.Getenv(switching.SessionIDEnvVar)
 	}
 	switching.ClearRule(handoff)
 	if err := switching.WriteHandoff(handoff, switching.Handoff{Account: rule.Account, Shared: rule.Shared, SessionID: sessionID}); err != nil {
-		return "clawdh could not move this session to " + rule.Account + ": " + err.Error()
+		return "clawdh could not move this session to " + rule.Account + ": " + err.Error(), false
+	}
+	if why != "" {
+		return fmt.Sprintf("clawdh: %s %s — moving this session to %s.", sess.Account, why, rule.Account), true
 	}
 	if rule.AtPercent > 0 {
 		return fmt.Sprintf("clawdh: %s reached %s%% of its %s — moving this session to %s.",
-			sess.Account, strconv.FormatFloat(rule.AtPercent, 'f', -1, 64), "week", rule.Account)
+			sess.Account, strconv.FormatFloat(rule.AtPercent, 'f', -1, 64), "week", rule.Account), true
 	}
-	return "clawdh: moving this session to " + rule.Account + "."
+	return "clawdh: moving this session to " + rule.Account + ".", true
+}
+
+// hookStopFailure is Claude Code's StopFailure hook: the turn ended in an API
+// error, which runs this instead of Stop. Like Stop it returns at once unless a
+// move is pending. Claude Code ignores what a StopFailure hook prints, so there
+// is nothing to say here; the relaunch's first prompt carries the news.
+func hookStopFailure() int {
+	handoff := os.Getenv(switching.HandoffEnvVar)
+	if handoff == "" {
+		return 0
+	}
+	if _, ok := switching.ReadRule(handoff); !ok {
+		return 0
+	}
+	sessionID, kind := readStopFailure(os.Stdin)
+	sess, ok := thisSession()
+	if !ok {
+		return 0
+	}
+	applyTurnFailure(handoff, sessionID, sess, kind, usagePercent)
+	return 0
+}
+
+// readStopFailure reads the StopFailure hook's payload: the session, and the
+// kind of error that ended the turn ("rate_limit", "overloaded", …).
+func readStopFailure(r io.Reader) (sessionID, kind string) {
+	var in struct {
+		SessionID string `json:"session_id"`
+		Error     string `json:"error"`
+	}
+	if data, err := io.ReadAll(r); err == nil && json.Unmarshal(data, &in) == nil {
+		return in.SessionID, in.Error
+	}
+	return "", ""
 }
 
 // stopMessage shows the person a line from the Stop hook.

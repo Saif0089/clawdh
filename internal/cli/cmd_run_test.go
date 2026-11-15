@@ -129,7 +129,7 @@ func TestRunSupervisorRelaunchesOnSwitch(t *testing.T) {
 	if rest := withoutMintedID(calls[0]); len(rest) != 0 {
 		t.Errorf("first launch should carry no resume args, got %v", rest)
 	}
-	want := []string{"--resume", "sess-123"}
+	want := []string{"--resume", "sess-123", "continue, switched to work"}
 	if !reflect.DeepEqual(calls[1], want) {
 		t.Errorf("second launch args = %v, want %v", calls[1], want)
 	}
@@ -164,7 +164,7 @@ func TestRunKeepsLaunchFlagsAcrossASwitch(t *testing.T) {
 	if code := cmdRun([]string{"ehti", "--dangerously-skip-permissions"}); code != 0 {
 		t.Fatalf("cmdRun exit = %d, want 0", code)
 	}
-	want := []string{"--dangerously-skip-permissions", "--resume", "sess-9"}
+	want := []string{"--dangerously-skip-permissions", "--resume", "sess-9", "continue, switched to work"}
 	if len(calls) != 2 || !reflect.DeepEqual(calls[1], want) {
 		t.Errorf("relaunch args = %v, want %v", calls[len(calls)-1], want)
 	}
@@ -571,7 +571,7 @@ func TestSwitchRelaunchesOntoTheOtherAccount(t *testing.T) {
 	}
 	// The minted id must not survive into the relaunch: --session-id names a
 	// new conversation and --resume reopens an existing one.
-	want := []string{"--resume", "sess-1"}
+	want := []string{"--resume", "sess-1", "continue, switched to work"}
 	if !reflect.DeepEqual(launches[1], want) {
 		t.Errorf("relaunch args = %v, want %v", launches[1], want)
 	}
@@ -618,7 +618,7 @@ func TestSwitchRelaunchResumesTheConversation(t *testing.T) {
 	if len(launches) != 2 {
 		t.Fatalf("want a relaunch as the fallback, got %d launch(es)", len(launches))
 	}
-	want := []string{"--resume", "sess-2"}
+	want := []string{"--resume", "sess-2", "continue, switched to work"}
 	if !reflect.DeepEqual(launches[1], want) {
 		t.Errorf("relaunch args = %v, want %v", launches[1], want)
 	}
@@ -816,5 +816,133 @@ func TestSupervisorTakesAHandoffStampedForItself(t *testing.T) {
 	}
 	if live := sessions.List(registerDir); len(live) != 0 {
 		t.Errorf("the register still lists %d sessions after the session ended", len(live))
+	}
+}
+
+// After a move, the relaunched session comes back idle at an empty prompt:
+// whatever it was doing died with the old process and nothing says to carry on.
+// The relaunch therefore opens with a first prompt, so work resumes without a
+// person at the keyboard — after a typed switch and a scheduled one alike, since
+// both come through this one loop.
+func TestRelaunchAfterAMoveCarriesOnWithoutAPerson(t *testing.T) {
+	home := seedRunEnv(t)
+	seedTranscript(t, home, "sess-c")
+
+	var calls [][]string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, _ onSwitch) (int, bool) {
+		calls = append(calls, append([]string{}, args...))
+		if len(calls) == 1 {
+			if err := switching.WriteHandoff(handoff, switching.Handoff{Account: "work", SessionID: "sess-c"}); err != nil {
+				t.Fatal(err)
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+	if code := cmdRun([]string{"ehti"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d, want 0", code)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("want 2 launches, got %d", len(calls))
+	}
+	got := calls[1]
+	if last := got[len(got)-1]; last != "continue, switched to work" {
+		t.Errorf("relaunch args = %v; want the first prompt %q last", got, "continue, switched to work")
+	}
+	if first := calls[0]; slices.Contains(first, "continue, switched to work") {
+		t.Errorf("the first launch carried a continue prompt: %v", first)
+	}
+}
+
+// With no session id at all the relaunch is --continue, which has a conversation
+// to carry on just the same.
+func TestRelaunchByContinueAlsoCarriesOn(t *testing.T) {
+	seedRunEnv(t)
+	var calls [][]string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, _ onSwitch) (int, bool) {
+		calls = append(calls, append([]string{}, args...))
+		if len(calls) == 1 {
+			if err := switching.WriteHandoff(handoff, switching.Handoff{Account: "work"}); err != nil {
+				t.Fatal(err)
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+	if code := cmdRun([]string{"ehti"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d", code)
+	}
+	if want := []string{"--continue", "continue, switched to work"}; len(calls) != 2 || !reflect.DeepEqual(calls[1], want) {
+		t.Errorf("relaunch args = %v, want %v", calls, want)
+	}
+}
+
+// An editor drives Claude Code over stream-json: a positional prompt there would
+// turn its session into a one-shot, so the editor's relaunch is left as it was.
+func TestRelaunchInAnEditorGetsNoPositionalPrompt(t *testing.T) {
+	if !continuePromptFits([]string{"--dangerously-skip-permissions"}) {
+		t.Error("an ordinary terminal session was refused a continue prompt")
+	}
+	for _, args := range [][]string{
+		{"--output-format", "stream-json", "--session-id=x"},
+		{"--input-format=stream-json"},
+		{"-p"},
+		{"--print"},
+	} {
+		if continuePromptFits(args) {
+			t.Errorf("a continue prompt was added to %v", args)
+		}
+	}
+	defer func(prev bool) { hostedByEditor = prev }(hostedByEditor)
+	hostedByEditor = true
+	if continuePromptFits(nil) {
+		t.Error("a continue prompt was added in an editor-hosted session")
+	}
+}
+
+// The whole path for fault two, through the real supervisor loop: the account
+// hits its limit, Claude Code stops answering and runs no hook, and the
+// supervisor itself notices, stages the move and relaunches with the first
+// prompt.
+func TestSupervisorMovesASessionStalledOnTheLimit(t *testing.T) {
+	home := seedRunEnv(t)
+	seedTranscript(t, home, "sess-stall")
+
+	prevInterval, prevUsage := ruleWatchInterval, ruleUsage
+	t.Cleanup(func() { ruleWatchInterval, ruleUsage = prevInterval, prevUsage })
+	ruleWatchInterval = 10 * time.Millisecond
+	ruleUsage = func(sessions.Session, string) (float64, bool) { return 100, true }
+
+	var calls [][]string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, _ onSwitch) (int, bool) {
+		calls = append(calls, append([]string{}, args...))
+		if len(calls) > 1 {
+			return 0, false
+		}
+		// Claude Code sits on the limit error: no hook runs, nobody types. Only the
+		// supervisor can act, and only on the move that was waiting.
+		if err := switching.WriteRule(handoff, switching.Rule{Account: "work", Window: switching.WindowWeek, AtPercent: 97}); err != nil {
+			t.Fatal(err)
+		}
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if _, ok := switching.ReadHandoff(handoff); ok {
+				return 0, true
+			}
+		}
+		t.Error("the supervisor never moved a session stalled on its limit")
+		return 0, false
+	}
+	if code := cmdRun([]string{"ehti", "--session-id", "sess-stall"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d", code)
+	}
+	want := []string{"--resume", "sess-stall", "continue, switched to work"}
+	if len(calls) != 2 || !reflect.DeepEqual(calls[1], want) {
+		t.Errorf("launches = %v; want a relaunch as %v", calls, want)
 	}
 }
