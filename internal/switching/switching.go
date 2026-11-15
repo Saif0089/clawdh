@@ -232,3 +232,86 @@ func ContinuePrompt(account string, renewed bool) string {
 	}
 	return "continue, switched to " + account
 }
+
+// Claude Code's options by how many words follow them, from `claude --help`
+// (2.1.321). Commander takes an optional value from the next word unless it
+// starts with "-", and a variadic one takes every following word that does not.
+var (
+	flagsWithValue = map[string]bool{
+		"--agent": true, "--agents": true, "--append-system-prompt": true, "--append-system-prompt-file": true,
+		"--autocompact": true, "--debug-file": true, "--effort": true, "--environment": true,
+		"--fallback-model": true, "--input-format": true, "--json-schema": true, "--max-budget-usd": true,
+		"--max-turns": true, "--model": true, "-n": true, "--name": true, "--output-format": true,
+		"--permission-mode": true, "--permission-prompts": true, "--plugin-dir": true, "--plugin-url": true,
+		"--remote-control-session-name-prefix": true, "--session-id": true, "--setting-sources": true,
+		"--settings": true, "--system-prompt": true, "--system-prompt-file": true, "--system-prompt-snapshot": true,
+	}
+	flagsWithOptionalValue = map[string]bool{
+		"--cloud": true, "-d": true, "--debug": true, "--from-pr": true, "--prompt-suggestions": true,
+		"--remote-control": true, "-r": true, "--resume": true, "--teleport": true, "-w": true, "--worktree": true,
+	}
+	flagsWithManyValues = map[string]bool{
+		"--add-dir": true, "--allowedTools": true, "--allowed-tools": true, "--betas": true,
+		"--disallowedTools": true, "--disallowed-tools": true, "--file": true, "--mcp-config": true, "--tools": true,
+	}
+	flagsWithNoValue = map[string]bool{
+		"--allow-dangerously-skip-permissions": true, "--ax-screen-reader": true, "--bg": true, "--background": true,
+		"--bare": true, "--brief": true, "--chrome": true, "-c": true, "--continue": true,
+		"--dangerously-skip-permissions": true, "--desktop": true, "--disable-slash-commands": true,
+		"--exclude-dynamic-system-prompt-sections": true, "--fork-session": true, "--forward-subagent-text": true,
+		"-h": true, "--help": true, "--ide": true, "--include-hook-events": true, "--include-partial-messages": true,
+		"--no-chrome": true, "--no-session-persistence": true, "-p": true, "--print": true,
+		"--replay-user-messages": true, "--restricted": true, "--safe-mode": true, "--strict-mcp-config": true,
+		"--tmux": true, "--verbose": true, "-v": true, "--version": true,
+	}
+)
+
+// WithoutPromptArgs drops the positional prompt (`clawdh work "fix x"`) from a
+// launch's arguments and keeps every flag with its values. A relaunch carries a
+// conversation that already received that prompt: replaying it would run it
+// twice, and beside the relaunch's own first prompt it would be a second
+// positional — Claude Code reads the first and ignores the rest, so the one
+// meant to continue the work would be the one lost.
+//
+// An option this table does not know keeps the word after it, which may be its
+// value: leaving a prompt in costs less than dropping a value the relaunch needs.
+func WithoutPromptArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	isFlag := func(a string) bool { return strings.HasPrefix(a, "-") && a != "-" }
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return out // everything after is positional
+		case !isFlag(a):
+			// a positional: the prompt
+		case strings.Contains(a, "="), flagsWithNoValue[a]:
+			out = append(out, a)
+		case flagsWithValue[a]:
+			out = append(out, a)
+			if i+1 < len(args) {
+				i++
+				out = append(out, args[i])
+			}
+		case flagsWithOptionalValue[a]:
+			out = append(out, a)
+			if i+1 < len(args) && !isFlag(args[i+1]) {
+				i++
+				out = append(out, args[i])
+			}
+		case flagsWithManyValues[a]:
+			out = append(out, a)
+			for i+1 < len(args) && !isFlag(args[i+1]) {
+				i++
+				out = append(out, args[i])
+			}
+		default: // unknown: keep what may be its value
+			out = append(out, a)
+			if i+1 < len(args) && !isFlag(args[i+1]) {
+				i++
+				out = append(out, args[i])
+			}
+		}
+	}
+	return out
+}

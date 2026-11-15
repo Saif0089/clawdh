@@ -31,6 +31,8 @@ hash, so moving to the narrower one keeps every existing login working. clawdh:
   stop there, the relaunched session opens with a first prompt, `continue,
   switched to <account>` (not in an editor chat or a `--print` run, and not for
   a session switched before its first message, which has nothing to carry on).
+  A prompt the session was started with (`clawdh work "fix x"`) is not sent again;
+  every flag is kept.
 
   This used to happen in place, with nothing restarted: clawdh gave each session a
   private copy of the login and a switch rewrote it. Keeping those copies meant

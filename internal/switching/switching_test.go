@@ -152,3 +152,34 @@ func TestHasTranscript(t *testing.T) {
 		t.Error("an empty session id is not a recorded session")
 	}
 }
+
+// A session first started with its own prompt (`clawdh work "fix x"`) already
+// sent it. A relaunch that kept it would replay it, and beside the relaunch's own
+// first prompt it would be two positionals: Claude Code reads the first and
+// silently ignores the rest, so the continue prompt would be the one lost.
+func TestWithoutPromptArgsDropsOnlyThePositionalPrompt(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"no prompt", []string{"--dangerously-skip-permissions"}, []string{"--dangerously-skip-permissions"}},
+		{"bare prompt", []string{"fix x"}, []string{}},
+		{"prompt after boolean flags", []string{"--dangerously-skip-permissions", "-c", "fix x"}, []string{"--dangerously-skip-permissions", "-c"}},
+		{"values are not prompts", []string{"--model", "opus", "--effort", "high", "fix x"}, []string{"--model", "opus", "--effort", "high"}},
+		{"prompt before flags", []string{"fix x", "--model", "opus"}, []string{"--model", "opus"}},
+		{"flag=value form", []string{"--model=opus", "fix x"}, []string{"--model=opus"}},
+		{"variadic flag keeps all its values", []string{"--add-dir", "a", "b", "--model", "opus"}, []string{"--add-dir", "a", "b", "--model", "opus"}},
+		{"optional value is taken as the value", []string{"--debug", "api", "--verbose", "fix x"}, []string{"--debug", "api", "--verbose"}},
+		{"everything after -- is positional", []string{"--verbose", "--", "fix x", "and y"}, []string{"--verbose"}},
+		{"an unknown flag keeps what may be its value", []string{"--new-flag", "v", "fix x"}, []string{"--new-flag", "v"}},
+	} {
+		got := WithoutPromptArgs(c.in)
+		if len(got) == 0 && len(c.want) == 0 {
+			continue
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: WithoutPromptArgs(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}

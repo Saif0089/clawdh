@@ -446,13 +446,22 @@ func superviseSession(claudeBin, claudeDir, ledger, handoff string, target sessi
 		// winning is a conversation silently left behind.
 		recorded := switching.HasTranscript(claudeDir, h.SessionID)
 		resume := switching.ResumeArgs(h.SessionID, recorded)
-		sessionArgs = append(switching.WithoutSessionArgs(passthrough), resume...)
+		carryOn := (recorded || strings.TrimSpace(h.SessionID) == "") && continuePromptFits(passthrough)
+		kept := switching.WithoutSessionArgs(passthrough)
+		if carryOn {
+			// The launch's own prompt (`clawdh work "fix x"`) went in the first run;
+			// replaying it would repeat it and leave two positionals beside the
+			// first prompt below. Where there is no conversation to carry on, it
+			// never reached one, so it stays.
+			kept = switching.WithoutPromptArgs(kept)
+		}
+		sessionArgs = append(kept, resume...)
 		// Claude Code comes back idle: what the old process was doing died with
 		// it, and nothing says to carry on. Open with a first prompt so work
 		// resumes without a person at the keyboard. Only where there is a
 		// conversation to carry on (a session switched before its first message
 		// has none), and only where a positional prompt is welcome.
-		if (recorded || strings.TrimSpace(h.SessionID) == "") && continuePromptFits(passthrough) {
+		if carryOn {
 			sessionArgs = append(sessionArgs, switching.ContinuePrompt(target.display, renewed))
 		}
 	}

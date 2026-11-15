@@ -946,3 +946,38 @@ func TestSupervisorMovesASessionStalledOnTheLimit(t *testing.T) {
 		t.Errorf("launches = %v; want a relaunch as %v", calls, want)
 	}
 }
+
+// A session started with its own prompt sent it in the first run. The relaunch
+// keeps every flag but not that prompt, so it is neither replayed nor left
+// beside the continue prompt as a second positional.
+func TestRelaunchDoesNotReplayTheLaunchPrompt(t *testing.T) {
+	home := seedRunEnv(t)
+	seedTranscript(t, home, "sess-p")
+
+	var calls [][]string
+	origRunner := claudeRunner
+	t.Cleanup(func() { claudeRunner = origRunner })
+	claudeRunner = func(bin string, args, env []string, handoff, accountID string, _ onSwitch) (int, bool) {
+		calls = append(calls, append([]string{}, args...))
+		if len(calls) == 1 {
+			if err := switching.WriteHandoff(handoff, switching.Handoff{Account: "work", SessionID: "sess-p"}); err != nil {
+				t.Fatal(err)
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+	if code := cmdRun([]string{"ehti", "--model", "opus", "fix x", "--dangerously-skip-permissions"}); code != 0 {
+		t.Fatalf("cmdRun exit = %d", code)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("want 2 launches, got %d", len(calls))
+	}
+	if !slices.Contains(calls[0], "fix x") {
+		t.Errorf("the first launch lost its prompt: %v", calls[0])
+	}
+	want := []string{"--model", "opus", "--dangerously-skip-permissions", "--resume", "sess-p", "continue, switched to work"}
+	if !reflect.DeepEqual(calls[1], want) {
+		t.Errorf("relaunch args = %v, want %v", calls[1], want)
+	}
+}
